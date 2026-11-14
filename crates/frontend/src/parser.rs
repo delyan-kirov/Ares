@@ -45,6 +45,20 @@ pub struct Parser<'a> {
     last_end: usize,
     /// Errors recovered from at item boundaries, in source order.
     errors: Vec<Diagnostic>,
+    /// A `@ctx T ->` parameter read in the current signature. It is an error,
+    /// raised once the body is parsed, so its fix can rewrite both.
+    ctx_written: Option<CtxWritten>,
+}
+
+/// Where a signature wrote the reserved `@ctx T ->` parameter.
+#[derive(Clone, Copy)]
+struct CtxWritten {
+    /// The `@ctx` keyword.
+    kw: Token,
+    /// The parameter's type, `T`.
+    ty: Aol<Ty>,
+    /// From the keyword to the end of `T`.
+    span: Span,
 }
 
 /// Consume a token of an expected kind, or fail with an `UnexpectedToken`
@@ -71,6 +85,7 @@ impl<'a> Parser<'a> {
             src,
             last_end: 0,
             errors: Vec::new(),
+            ctx_written: None,
         }
     }
 
@@ -658,9 +673,8 @@ impl<'a> Parser<'a> {
                 };
                 expect!(self, Kind::Colon, want_sig);
                 let (sig, ctx) = self.parse_signature()?;
-                expect!(self, Kind::Eq, "expected '=' after the type signature");
-                let body = self.parse_expr(0)?;
-                let body = self.bind_uses(sig, body);
+                let body = self.parse_def_body()?;
+                let body = self.bind_signature(sig, body);
                 Ok(Item::Def {
                     name,
                     sig: Some(sig),
@@ -703,8 +717,7 @@ impl<'a> Parser<'a> {
                 let name = self.intern(self.text(at_tok));
                 self.bump()?; // ':'
                 let (sig, ctx) = self.parse_signature()?;
-                expect!(self, Kind::Eq, "expected '=' after the type signature");
-                let body = self.parse_expr(0)?;
+                let body = self.parse_def_body()?;
                 if !matches!(self.ast.expr(body), Expr::Builtin) {
                     return Err(self.unexpected(
                         &at_tok,
@@ -748,9 +761,8 @@ impl<'a> Parser<'a> {
         expect!(self, Kind::RParen, "expected ')' after the operator");
         expect!(self, Kind::Colon, "expected ':' and a type for the operator");
         let (sig, ctx) = self.parse_signature()?;
-        expect!(self, Kind::Eq, "expected '=' after the type signature");
-        let body = self.parse_expr(0)?;
-        let body = self.bind_uses(sig, body);
+        let body = self.parse_def_body()?;
+        let body = self.bind_signature(sig, body);
         Ok(Item::Def {
             name: op,
             sig: Some(sig),
@@ -889,9 +901,8 @@ impl<'a> Parser<'a> {
         }
         self.require_value_lowercase(self.text(name_tok), &name_tok)?;
         let (sig, ctx) = self.parse_signature()?;
-        expect!(self, Kind::Eq, "expected '=' after the type signature");
-        let body = self.parse_expr(0)?;
-        let body = self.bind_uses(sig, body);
+        let body = self.parse_def_body()?;
+        let body = self.bind_signature(sig, body);
         Ok(Item::Def {
             name,
             sig: Some(sig),
@@ -910,9 +921,18 @@ impl<'a> Parser<'a> {
         let start = self.here()?;
         let mut fields: Vec<UseField> = Vec::new();
         let mut params: Vec<(usize, Option<Token>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
+        self.ctx_written = None;
         let result = loop {
             if self.at_ctx()? {
-                return Err(self.ctx_reserved()?);
+                if self.ctx_written.is_some() {
+                    return Err(self.ctx_reserved()?);
+                }
+                let kw = self.bump()?; // '@ctx'
+                let ty = self.parse_type_app()?;
+                let span = Span::new(kw.span.start, self.last_end);
+                expect!(self, Kind::Arrow, "expected '->' after the `@ctx` parameter");
+                self.ctx_written = Some(CtxWritten { kw, ty, span });
+                continue;
             }
             if self.at_intrinsic("use")? {
                 self.bump()?; // '@use'
@@ -1016,9 +1036,179 @@ impl<'a> Parser<'a> {
     /// The error for `@ctx`, which dependent types (#406) will give its own meaning.
     fn ctx_reserved(&mut self) -> Result<Diagnostic> {
         let t = self.peek()?;
-        Ok(Diagnostic::error(Code::UnexpectedToken, t.span, t.line, "`@ctx` is reserved")
-            .with_note("it becomes the binder of parameters solved by unification (#406)")
+        Ok(Self::ctx_reserved_at(&t)
             .with_help("an instance parameter is a named `@use` field: `@use {d: IOrd t} -> ...`, with `d` in scope in the body"))
+    }
+
+    fn ctx_reserved_at(kw: &Token) -> Diagnostic {
+        Diagnostic::error(Code::UnexpectedToken, kw.span, kw.line, "`@ctx` is reserved")
+            .with_note("it becomes the binder of parameters solved by unification (#406)")
+    }
+
+    /// `= body` after a definition's signature. A `@ctx T ->` parameter in that
+    /// signature is reported here, with the body in hand: the rewrite to
+    /// `@use {d: T} ->` also drops the body's lambda parameter `d`, which the
+    /// field now binds by name.
+    fn parse_def_body(&mut self) -> Result<Aol<Expr>> {
+        let Some(ctx) = self.ctx_written.take() else {
+            expect!(self, Kind::Eq, "expected '=' after the type signature");
+            return self.parse_expr(0);
+        };
+        let body = match self.eat(|k| matches!(k, Kind::Eq))? {
+            true => self.parse_expr(0).ok(),
+            false => None,
+        };
+        Err(match body {
+            Some(body) => self.ctx_use_fix(ctx, body),
+            None => self.ctx_use_help(Self::ctx_reserved_at(&ctx.kw), ctx.ty),
+        })
+    }
+
+    /// The `@ctx` error with the edit to `@use`: the fields are named after the
+    /// lambda parameter that bound the context (a name, or a tuple of names for
+    /// `@ctx {A, B}`), and that parameter is dropped from the body.
+    fn ctx_use_fix(&self, ctx: CtxWritten, body: Aol<Expr>) -> Diagnostic {
+        let d = Self::ctx_reserved_at(&ctx.kw);
+        let Expr::Lambda { params, body: inner } = self.ast.expr(body) else {
+            return self.ctx_use_help(d, ctx.ty);
+        };
+        let params = self.ast.slice(*params);
+        let parts: Vec<Aol<Ty>> = match self.ast.ty(ctx.ty) {
+            Ty::Tuple(tys) => self.ast.slice(*tys).to_vec(),
+            _ => vec![ctx.ty],
+        };
+        let first = params[0];
+        let names: Option<Vec<String>> = match (self.ast.pat(first.pat), parts.len()) {
+            _ if first.sig.is_some() => None,
+            (Pattern::Var(n), 1) => Some(vec![n.as_str().to_string()]),
+            (Pattern::Wild, 1) => Some(vec!["d".to_string()]),
+            (Pattern::Tuple(ps), k) if k > 1 && self.ast.slice(*ps).len() == k => self
+                .ast
+                .slice(*ps)
+                .iter()
+                .map(|p| match self.ast.pat(*p) {
+                    Pattern::Var(n) => Some(n.as_str().to_string()),
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        };
+        let texts: Option<Vec<&str>> = parts.iter().map(|t| self.ast.ty_span(*t).map(|s| &self.src[s.start..s.end])).collect();
+        let (Some(names), Some(texts), Some(p0), Some(lam)) =
+            (names, texts, self.ast.pat_span(first.pat), self.ast.expr_span(body))
+        else {
+            return self.ctx_use_help(d, ctx.ty);
+        };
+        let fields: Vec<String> = names.iter().zip(&texts).map(|(n, t)| format!("{n}: {t}")).collect();
+        let drop = match (params.get(1).and_then(|p| self.ast.pat_span(p.pat)), self.ast.expr_span(*inner)) {
+            (Some(p1), _) => Span::new(p0.start, p1.start),
+            (None, Some(b)) => Span::new(lam.start, b.start),
+            (None, None) => return self.ctx_use_help(d, ctx.ty),
+        };
+        let unnamed = matches!(self.ast.pat(first.pat), Pattern::Wild);
+        d.with_fix(
+            "make it a named `@use` parameter, in scope by name in the body",
+            vec![Edit::new(ctx.span, format!("@use {{{}}}", fields.join(", "))), Edit::new(drop, "")],
+            if unnamed { Applicability::MaybeIncorrect } else { Applicability::MachineApplicable },
+        )
+    }
+
+    /// The `@ctx` error with prose help quoting the written type, for a body
+    /// whose shape gives no field names.
+    fn ctx_use_help(&self, d: Diagnostic, ty: Aol<Ty>) -> Diagnostic {
+        let written = self.ast.ty_span(ty).map_or("IOrd t", |s| &self.src[s.start..s.end]);
+        let fields = match self.ast.ty(ty) {
+            Ty::Tuple(tys) => self
+                .ast
+                .slice(*tys)
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("d{i}: {}", self.ast.ty_span(*t).map_or("T", |s| &self.src[s.start..s.end])))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => format!("d: {written}"),
+        };
+        d.with_help(format!(
+            "an instance parameter is a named `@use` field: `@use {{{fields}}} -> ...`, with each field in scope \
+             by name in the body (drop the lambda parameter that bound `{written}`)"
+        ))
+    }
+
+    /// The body of a definition, with the parameters its signature binds made
+    /// explicit: the `@use` fields, then the leading run of parameters that
+    /// bind by name ([`Self::named_binding`]). The written lambdas bind the rest,
+    /// left to right, so which parameter a lambda binds is read off the
+    /// signature alone (#437).
+    fn bind_signature(&mut self, sig: Aol<Ty>, body: Aol<Expr>) -> Aol<Expr> {
+        if matches!(self.ast.expr(body), Expr::Extern { .. } | Expr::Builtin) {
+            return body;
+        }
+        let mut cur = match (self.ast.use_params.get(sig).is_some(), self.ast.ty(sig)) {
+            (true, Ty::Arrow { to, .. }) => *to,
+            _ => sig,
+        };
+        let mut pats = Vec::new();
+        while let &Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+            let Some(pat) = self.named_binding(cur, from) else { break };
+            pats.push(LamParam { pat, sig: None });
+            cur = to;
+        }
+        let added = pats.len() as u32 + u32::from(self.ast.use_params.get(sig).is_some());
+        let body = self.prepend_params(pats, body);
+        let body = self.bind_uses(sig, body);
+        if added > 0 {
+            self.ast.sig_bound.insert(body, added);
+        }
+        body
+    }
+
+    /// The pattern a signature parameter binds by name, or `None` for a plain
+    /// parameter, which a written lambda binds: `(x: A)` binds `x`, a closed
+    /// record `{x: A, y: B}` its fields, and `{}` nothing.
+    fn named_binding(&mut self, arrow: Aol<Ty>, from: Aol<Ty>) -> Option<Aol<Pattern>> {
+        let binder = match self.ast.ty(arrow) {
+            Ty::Arrow { binder, .. } => *binder,
+            _ => None,
+        };
+        let (pat, span) = match (binder, self.ast.ty(from)) {
+            (Some(name), _) => (Pattern::Var(name), self.ast.binder_spans.get(arrow).copied()),
+            (_, Ty::Unit) => (Pattern::Wild, self.ast.ty_span(from)),
+            (_, Ty::Record { fields, tail: None }) => {
+                let names: Vec<FieldPat> = self.ast.slice(*fields).iter().map(|f| FieldPat::Shorthand(f.name)).collect();
+                let fields = self.ast.make_slice(names);
+                (Pattern::Record { fields, rest: None }, self.ast.ty_span(from))
+            }
+            _ => return None,
+        };
+        let node = self.pat(pat);
+        if let Some(span) = span {
+            self.ast.pat_spans.insert(node, span);
+        }
+        Some(node)
+    }
+
+    /// `body` with `params` bound ahead of its own lambda's parameters.
+    fn prepend_params(&mut self, params: Vec<LamParam>, body: Aol<Expr>) -> Aol<Expr> {
+        if params.is_empty() {
+            return body;
+        }
+        let span = self.ast.expr_span(body);
+        let node = match *self.ast.expr(body) {
+            Expr::Lambda { params: own, body: inner } => {
+                let mut all = params;
+                all.extend_from_slice(self.ast.slice(own));
+                let all = self.ast.make_slice(all);
+                self.expr(Expr::Lambda { params: all, body: inner })
+            }
+            _ => {
+                let params = self.ast.make_slice(params);
+                self.expr(Expr::Lambda { params, body })
+            }
+        };
+        if let Some(span) = span {
+            self.ast.expr_spans.insert(node, span);
+        }
+        node
     }
 
     /// The body of a definition whose signature declares `@use` fields: the
@@ -1038,25 +1228,7 @@ impl<'a> Parser<'a> {
                 self.pat(Pattern::Tuple(parts))
             }
         };
-        let param = LamParam { pat, sig: None };
-        let span = self.ast.expr_span(body);
-        let node = match self.ast.expr(body) {
-            Expr::Lambda { params, body: inner } => {
-                let (params, inner) = (*params, *inner);
-                let mut all = vec![param];
-                all.extend_from_slice(self.ast.slice(params));
-                let params = self.ast.make_slice(all);
-                self.expr(Expr::Lambda { params, body: inner })
-            }
-            _ => {
-                let params = self.ast.make_slice(vec![param]);
-                self.expr(Expr::Lambda { params, body })
-            }
-        };
-        if let Some(span) = span {
-            self.ast.expr_spans.insert(node, span);
-        }
-        node
+        self.prepend_params(vec![LamParam { pat, sig: None }], body)
     }
 
     /// Is the next token the `@ctx` keyword?
@@ -2358,7 +2530,12 @@ impl<'a> Parser<'a> {
                 Ok(self.match_lambda(arms, 1))
             }
             "use" => self.parse_use_arg(),
-            "ctx" => Err(self.ctx_reserved()?),
+            "ctx" => {
+                let t = self.peek()?;
+                Err(Self::ctx_reserved_at(&t).with_help(
+                    "an explicit instance is passed by its `@use` field's name: `f @use {.d = value} ...`",
+                ))
+            }
             "Array" => self.parse_array(),
             "extern" => self.parse_extern(),
             // Any other lowercase `@name` is a reference to a compiler intrinsic

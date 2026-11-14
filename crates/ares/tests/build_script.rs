@@ -16,7 +16,7 @@ fn project(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     write(
         &dir.join("BUILD.ares"),
-        "$ @mod BUILD\n\n$ @build : {} -> <@Meta, @IO> @Code = \\_ => @import_path \"source\"; \"\"\n",
+        "$ @mod BUILD\n\n$ @build : {} -> <@Meta, @IO> @Code = @import_path \"source\"; \"\"\n",
     );
     write(&dir.join("source/GREET.ares"), "$ @mod GREET\n\n$ greeting : @Str = \"hi from source\"\n");
     let main = |m: &str| {
@@ -52,7 +52,7 @@ fn ares(dir: &Path, args: &[&str]) -> std::process::Output {
 fn configured(name: &str, body: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ares-build-options-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    write(&dir.join("BUILD.ares"), &format!("$ @mod BUILD\n\n$ @build : {{}} -> <@Meta, @IO> @Code = \\_ => {body}\n"));
+    write(&dir.join("BUILD.ares"), &format!("$ @mod BUILD\n\n$ @build : {{}} -> <@Meta, @IO> @Code = {body}\n"));
     dir
 }
 

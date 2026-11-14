@@ -17,16 +17,16 @@ $ @shell_reset : {} -> <@Shell> {} = @extern "ares"
 $ @shell_list : {} -> <@Shell> {} = @extern "ares"
 
 # Leave the shell.
-$ quit : {} -> <@Shell> {} = \_ => @shell_quit {}
+$ quit : {} -> <@Shell> {} = @shell_quit {}
 
 # Forget every import and definition.
-$ reset : {} -> <@Shell> {} = \_ => @shell_reset {}
+$ reset : {} -> <@Shell> {} = @shell_reset {}
 
 # Print the session's imports and definitions.
-$ list : {} -> <@Shell> {} = \_ => @shell_list {}
+$ list : {} -> <@Shell> {} = @shell_list {}
 
 # Print the shell's help.
-$ help : {} -> <@IO> {} = \_ => for help_text <| \line => println line
+$ help : {} -> <@IO> {} = for help_text <| \line => println line
 
 # The shell's help, a line per element.
 $ help_text : @Vec @Str = [

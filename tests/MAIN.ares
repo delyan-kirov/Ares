@@ -48,7 +48,7 @@ $ concat : @Vec @Str -> @Str = STR.concat
 
 #- Build -#
 
-$ @build : {} -> <@Meta, @IO> @Code = \_ =>
+$ @build : {} -> <@Meta, @IO> @Code =
     let ms = modules {} in
     let includes = concat (map (\m => "$ @import ?(m)\n") ms) in
     let main = "$ @main : @Vec @Str -> <@IO> @Int = \\args => 0"

@@ -1,0 +1,8 @@
+$ @mod SIG_BOUND_LAMBDA
+
+# A signature binds its leading `{}`, closed-record and `(x: T)` parameters
+# (#437); a lambda that binds one of them again has one parameter too many.
+$ g : {} -> @Int = \_ => 5  #~ error[TYPE_MISMATCH]: the lambda binds a parameter that the signature of `g` already binds
+$ h : {x: @Int, y: @Int} -> @Int = \p => p.x  #~ error[TYPE_MISMATCH]: already binds: `{x: @Int, y: @Int}`
+$ k : (a: @Int) -> {} -> @Int -> @Int = \a u n => a + n  #~ error[TYPE_MISMATCH]: the lambda binds 2 parameters
+$ ok : {} -> @Int -> @Int = \n => n

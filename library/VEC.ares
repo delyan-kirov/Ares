@@ -13,7 +13,7 @@ $ @import OPT
 
 # ---- primitives / access ----
 
-$ new : {} -> @Vec t = \u => @vec_new {}
+$ new : {} -> @Vec t = @vec_new {}
 
 # `n` copies of `x`.
 $ fill : @Int -> t -> @Vec t = \n x => @vec_fill n x

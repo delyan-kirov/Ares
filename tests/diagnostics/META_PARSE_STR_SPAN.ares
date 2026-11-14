@@ -2,6 +2,6 @@ $ @mod META_PARSE_STR_SPAN
 
 # A syntax error in a fragment points into the string literal that spells it,
 # even when that literal is in a helper the `&` calls.
-$ bad : {} -> @Code = \_ =>
+$ bad : {} -> @Code =
     @parse_str "(1 +" #~ error[UNEXPECTED_TOKEN]: expected an expression, found end of input
 $ x : @Int = &bad {}

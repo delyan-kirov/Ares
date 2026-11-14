@@ -168,7 +168,7 @@ $ spec : Command -> Spec = \c =>
         | .Help          => Spec.{ .name = "help", .usage = "", .info = "show this help" }
 
 # `$ commands : @Vec Command = [Command.Build, ...]`, in declaration order.
-$ command_names : {} -> <@Meta> @Code = \_ =>
+$ command_names : {} -> <@Meta> @Code =
     @code <| STR.join ", " <| VEC.map (\v => "Command." ++ v.0) <| @type_variants "Command"
 $ &"$ commands : @Vec Command = [?(command_names {})]"
 
@@ -232,7 +232,7 @@ $ corpus_task : @Bool -> <@IO, Fail> {} = \wasm =>
 
 # The compiler the tasks run: $ARES_BIN (thrax's dev-shell wrapper points it
 # at the workspace build), else `ares` on the PATH.
-$ ares_bin : {} -> <@IO> @Str = \_ =>
+$ ares_bin : {} -> <@IO> @Str =
     native_path (if STR.is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN")
 
 # ---- stats ----
@@ -243,7 +243,7 @@ $ zalmoxis_dir : @Str = "applications/zalmoxis"
 # The repository's line counts, without external/ and applications/. The
 # applications submodule is checked out first if it is not, and the counter
 # built when it has no binary or a source is newer than it.
-$ stats_task : {} -> <@IO, Fail> {} = \_ =>
+$ stats_task : {} -> <@IO, Fail> {} =
     let main = zalmoxis_dir ++ "/MAIN.ares" in
     let exe = native_path (zalmoxis_dir ++ "/ares-out/MAIN") in
     (
@@ -493,21 +493,21 @@ $ new_issue : @Str -> <@IO, Fail> {} = \title =>
 $ step : @Str -> @Str -> <@IO, Fail> {} = \what cmd =>
     if C.system cmd == 0 => {} else Fail.fail (what ++ " FAILED")
 
-$ refresh_ffi : {} -> <@IO, Fail> {} = \u =>
+$ refresh_ffi : {} -> <@IO, Fail> {} =
     if C.system ffi_stale_cmd == 0 =>
         println "thrax: building libffi from external/libffi ...";
         step "libffi build (log: target/libffi-build.log)" (ffi_wrap ffi_build_cmd)
     else
         println "thrax: libffi is up to date"
 
-$ refresh_musl : {} -> <@IO, Fail> {} = \u =>
+$ refresh_musl : {} -> <@IO, Fail> {} =
     if C.system musl_stale_cmd == 0 =>
         println "thrax: building musl from external/musl ...";
         step "musl build (log: target/musl-build.log)" musl_build_cmd
     else
         println "thrax: musl is up to date"
 
-$ is_linux : {} -> <@IO> @Bool = \u => TARGET.os == "linux"
+$ is_linux : {} -> <@IO> @Bool = TARGET.os == "linux"
 
 $ release_build : @Str -> <@IO, Fail> {} = \libc =>
     let musl = libc == "musl" in
@@ -521,7 +521,7 @@ $ release_build : @Str -> <@IO, Fail> {} = \libc =>
         (if musl => step "dist musl" dist_musl_cmd else {});
         println ("thrax: release compiler in " ++ dist_dir ++ "/bin/ares")
 
-$ windows_release : {} -> <@IO, Fail> {} = \u =>
+$ windows_release : {} -> <@IO, Fail> {} =
     step "cross build (tools/windows)" windows_cargo_cmd;
     step "dist" windows_dist_cmd;
     println ("thrax: Windows release in " ++ dist_dir ++ "/bin/ares.exe")

@@ -30,7 +30,7 @@ $ pipeline : @Int -> {} -> <Async> @Int = \n u =>
 $ ck_pipeline : @Int = if unwrap_or (run_async (pipeline 100)) 0 == 5050 => 0 else 1
 
 # Several producers into one channel: every value arrives exactly once.
-$ fan_in : {} -> <Async> @Int = \u =>
+$ fan_in : {} -> <Async> @Int =
     let c = Async.chan 0 in
     let out = Async.chan 1 in
     Async.spawn (\w => produce c 1 10);
@@ -58,7 +58,7 @@ $ logger : Chan @Int -> @Int -> @Int -> <Async> {} = \log tag i =>
 $ read_n : Chan @Int -> @Int -> @Int -> <Async> @Int = \log n acc =>
     if n == 0 => acc else read_n log (n - 1) (acc * 100 + Async.recv log)
 
-$ interleaved : {} -> <Async> @Int = \u =>
+$ interleaved : {} -> <Async> @Int =
     let log = Async.chan 6 in
     Async.spawn (\w => logger log 1 1);
     Async.spawn (\w => logger log 2 1);
@@ -73,13 +73,13 @@ $ ck_interleaved : @Int = if unwrap_or (run_async interleaved) 0 == 112112221323
 # ---- structure ----
 
 # `main` parks on the channel until the child it spawned has sent.
-$ child_runs : {} -> <Async> @Int = \u =>
+$ child_runs : {} -> <Async> @Int =
     let c = Async.chan 1 in Async.spawn (\w => Async.send { c, 7 }); Async.recv c
 
 $ ck_child : @Int = if unwrap_or (run_async child_runs) 0 == 7 => 0 else 1
 
 # Waiting on a channel nobody sends to is a deadlock: `main` never finishes.
-$ stuck : {} -> <Async> @Int = \u => let c = Async.chan 1 in Async.recv c
+$ stuck : {} -> <Async> @Int = let c = Async.chan 1 in Async.recv c
 
 $ ck_deadlock : @Int = if is_none (run_async stuck) => 0 else 1
 
@@ -89,7 +89,7 @@ $ ck_deadlock : @Int = if is_none (run_async stuck) => 0 else 1
 # the handler for the whole group.
 $ shout : Chan @Str -> @Str -> <Async> {} = \c word => Async.send { c, word ++ "!" }
 
-$ words : {} -> <Async> @Str = \u =>
+$ words : {} -> <Async> @Str =
     let c = Async.chan 2 in
     Async.spawn (\w => shout c "hey");
     Async.spawn (\w => shout c "ho");
@@ -106,7 +106,7 @@ $ Tally : @effect = bump : @Int -> {},
 $ worker : Chan @Int -> @Int -> <Async, Tally> {} = \done n =>
     Tally.bump n; Async.yield {}; Tally.bump n; Async.send { done, n }
 
-$ tallied : {} -> <Async, Tally> @Int = \u =>
+$ tallied : {} -> <Async, Tally> @Int =
     let done = Async.chan 0 in
     Async.spawn (\w => worker done 1);
     Async.spawn (\w => worker done 10);

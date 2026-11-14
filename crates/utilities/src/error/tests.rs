@@ -216,6 +216,21 @@ fn edits_apply_back_to_front() {
 }
 
 #[test]
+fn a_copy_edit_moves_source_text() {
+    // `let p = e in b` to `e |> p => b`: the value's text is copied to the front.
+    let src = "let p = e in b";
+    let edits = [
+        Edit::copy(Span::new(0, 4), Span::new(8, 9)),
+        Edit::new(Span::at(4), " |> "),
+        Edit::new(Span::new(5, 13), " => "),
+    ];
+    assert_eq!(apply_edits(src, &edits), "e |> p => b");
+    let d = Diagnostic::error(Code::TypeMismatch, Span::new(4, 5), 1, "bad")
+        .with_fix("move", edits.to_vec(), Applicability::MachineApplicable);
+    assert!(d.render(src, "t.ares").contains("1 | e |> p => b\n"), "{}", d.render(src, "t.ares"));
+}
+
+#[test]
 fn a_sentinel_edit_takes_the_filled_primary_span() {
     let d = Diagnostic::error(Code::TypeMismatch, Span::at(0), 1, "bad").with_fix(
         "x",

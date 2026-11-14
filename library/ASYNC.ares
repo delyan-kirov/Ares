@@ -90,7 +90,7 @@ $ Queue : @struct t =
     front: List t,
     back: List t,
 
-$ q_empty : {} -> Queue t = \u => Queue.{ .front = List.Nil, .back = List.Nil }
+$ q_empty : {} -> Queue t = Queue.{ .front = List.Nil, .back = List.Nil }
 
 $ q_push : Queue t -> t -> Queue t = \q x => Queue.{ .back = List.Cons.{ x, q.back } | q }
 

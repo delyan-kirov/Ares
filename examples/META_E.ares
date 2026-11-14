@@ -37,11 +37,11 @@ $ times : @Int -> @Code -> @Code = \n c => "(?(c)) * ?(n)"
 $ tripled : @Int = &times 3 sum_code
 
 # --- type position: `&` computes the annotation ----------------------------
-$ pick_ty : {} -> @Code = \_ => "@Int"
+$ pick_ty : {} -> @Code = "@Int"
 $ typed : &pick_ty {} = 42
 
 # --- item position: `$ &X` inserts top-level definitions ------------------
-$ gen_def : {} -> @Code = \_ => "$ injected : @Int = 99"
+$ gen_def : {} -> @Code = "$ injected : @Int = 99"
 $ &gen_def {}
 
 # --- compile-time operations -------------------------------------------------

@@ -579,7 +579,7 @@ fn ctx_nullary_instance_resolves_by_expected_type() {
                $ bl_int : Blank @Int = .{ .blank = 0 }\n\
                $ bl_str : Blank @Str = .{ .blank = \"\" }\n\
                $ Pair : @struct a b = fst: a, snd: b,\n\
-               $ mk : @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b = \\u =>\n\
+               $ mk : @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
                \tPair.{ .fst = ba.blank, .snd = bb.blank }\n\
                $ p : Pair @Int @Str = mk {}\n\
                $ r : @Int = if (p.fst == 0) && (p.snd == \"\") => 0 else 1";
@@ -1037,19 +1037,18 @@ fn unit_parameter_thunks_without_a_lambda() {
     // explicit `\u =>` still works (the arity guard leaves it alone).
     let src = "$ @mod M\n\
                $ lazy : {} -> @Int = 40 + 2\n\
-               $ also : {} -> @Int = \\u => 40 + 3\n\
+               $ also : {} -> @Int = 40 + 3\n\
                $ r : @Int = lazy {} + also {}";
     assert_eq!(run(src, "r"), "85"); // 42 + 43
 }
 
 #[test]
-fn closed_record_param_named_by_a_lambda() {
-    // A closed-record parameter may be named by an explicit lambda and read with
-    // field access (`\q => q.y`), instead of the auto-bind sugar. The sugar only
-    // fires when the body has fewer leading lambdas than the signature's arity, so
-    // it still auto-binds a record ahead of a later explicit lambda parameter.
+fn closed_record_param_binds_its_fields() {
+    // The signature binds a closed-record parameter's fields by name, whatever the
+    // body's lambdas; those bind the plain parameters after it. Kept whole, the
+    // record is a named parameter (`(q: {...})`), read with field access.
     let src = "$ @mod M\n\
-               $ label : { y: @Int, z: @Int } -> @Int = \\q => q.y * 100 + q.z\n\
+               $ label : (q: { y: @Int, z: @Int }) -> @Int = q.y * 100 + q.z\n\
                $ add : { x: @Int, y: @Int } -> @Int = x + y\n\
                $ f : { x: @Int, y: @Int } -> @Int -> @Int = \\n => x + y + n\n\
                $ r : @Int = label { .y = 2, .z = 3 } + add { .x = 5, .y = 6 } + f {3, 4} 5";
@@ -1129,7 +1128,7 @@ fn imported_global_does_not_shadow_a_same_named_effect_op() {
     let a = "$ @mod A\n$ get : @Int -> @Int = \\x => x + 1000";
     let b = "$ @mod B\n\
         $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
-        $ getit : {} -> <State> @Int = \\u => get {}\n\
+        $ getit : {} -> <State> @Int = get {}\n\
         $ run : @Int = do getit {} ctl k | State.get u => k 42 | State.put v => k {} | r => r";
     let root = "$ @mod M\n$ @import A\n$ @import B\n$ r : @Int = B.run";
     assert_eq!(run_modules(&[a, b, root], "r"), "42");
@@ -1181,7 +1180,7 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
     // First-class: bound to a name and called through it, with a variable as
     // the cleanup: 1 + 4 = 5.
     let first_class = format!(
-        "{prelude}$ four : {{}} -> <Y> {{}} = \\_ => Y.yield 4\n\
+        "{prelude}$ four : {{}} -> <Y> {{}} = Y.yield 4\n\
          $ r : @Int = sum (\\_ => let f = @finale in f four (\\_ => let _ = Y.yield 1 in 0))"
     );
     assert_eq!(run(&first_class, "r"), "5");

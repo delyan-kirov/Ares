@@ -2,11 +2,14 @@
 
 Every language feature, one entry each, with a simple example and a more
 involved one. The examples use the language's real, current surface syntax
-(branches are `if c => t else e`, matches are `scrut |> \ | pat => e ... else d`).
+(branches are `if c => t else e`, matches are `scrut |> \ | pat => e ...`).
 Where a feature is only partly built, the entry says so.
 
-Every code block below is self-contained and type-checks on its own (verified
-with `ares check`); a block that needs a library imports it (`$ @import LA`, etc.).
+Every code block below is self-contained and type-checks on its own; a block
+that needs a library imports it (`$ @import LA`, etc.). `cargo test` checks
+each one (`crates/ares/tests/docs.rs`). The few that cannot check alone (an
+error being shown, a CORE excerpt, a sketch with `...`) are fenced as
+`ares-fragment`, and the test requires those to fail.
 
 Conventions used throughout: a global is `$ name : Type = expr`; a lambda is
 `\x => e` (curried: `\a b => e`); a branch is `if c => t else e`; a match is
@@ -72,10 +75,11 @@ instance builds the `Cpx` struct (see 15). The `i` counts as a suffix only when 
 identifier character follows, so `3if` is still `3` then `if`.
 
 ```ares
+$ @import CPX
 $ unit : Cpx = 1.0i
-$ whole: Cpx = 3i              # the magnitude is a Real either way
-$ tiny : Cpx = 2.5e-2i         # scientific notation suffixes too
-$ z    : Cpx = 3.4 + 1.2i      # the canonical spelling: real plus imaginary
+$ whole: Cpx = 3i                    # the magnitude is a Real either way
+$ tiny : Cpx = 2.5e-2i               # scientific notation suffixes too
+$ z    : Cpx = CPX.of_real 3.4 + 1.2i  # real plus imaginary
 ```
 
 An operator takes ONE type for both operands, so a real joins a complex only by
@@ -89,9 +93,9 @@ A string is a block of bytes; source text must be well-formed UTF-8. Escapes:
 scalar, UTF-8 encoded).
 
 ```ares
-$ hi   : Str = "hello\n"
-$ raw  : Str = "\x41\x42"            # "AB" via hex bytes
-$ emoji: Str = "\u{1F600} café"      # code point + raw UTF-8
+$ hi   : @Str = "hello\n"
+$ raw  : @Str = "\x41\x42"            # "AB" via hex bytes
+$ emoji: @Str = "\u{1F600} café"      # code point + raw UTF-8
 ```
 
 ## 1.6 String interpolation
@@ -120,7 +124,8 @@ $ msg : @Str = "at ?(Point.{ .x = 3, .y = 4 }), n=?(40 + 2)"   # "at (3, 4), n=4
 through a builder instead, so its holes stay structured: bound parameters,
 escaping, quoting. Three blessed CORE interfaces make up the protocol:
 
-```ares
+```ares-fragment
+# Declared in CORE, which alone may declare a blessed interface.
 $ @IInterp     : @struct b t = interp: (b -> b) -> t,   # start a builder, finish it
 $ @IInterpText : @struct b   = text: b -> @Str -> b,    # append a literal piece
 $ @IInterpHole : @struct b h = hole: b -> h -> b,       # append one hole
@@ -135,8 +140,18 @@ must be known at the literal (a signature, a parameter, an annotation); a string
 whose type is still open is a `@Str`.
 
 ```ares
+$ Param : @union = PInt: @Int, PStr: @Str
 $ Sql : @struct = text: @Str, params: @Vec Param
-# ... the @IInterp, @IInterpText and @IInterpHole instances for Sql ...
+
+$ impl_IInterp_for_Sql : @IInterp Sql Sql =
+    .{ .interp = \build => build Sql.{ .text = "", .params = [] } }
+$ impl_IInterpText_for_Sql : @IInterpText Sql = .{ .text = \q s => Sql.{ .text = q.text ++ s | q } }
+$ impl_IInterpHole_for_Sql_Str : @IInterpHole Sql @Str = .{
+    .hole = \q s =>
+        let params = @vec_push q.params (Param.PStr.{ s }) in
+        Sql.{ .text = q.text ++ "$" ++ to_string (@vec_len params), .params = params },
+}
+
 $ by_name : @Str -> Sql = \name =>
     "SELECT id FROM users WHERE name = ?(name)"   # text `... = $1`, params [name]
 ```
@@ -203,6 +218,12 @@ $ @import LIST = LIST          # LIST.len, never bare len
 An alias is one capitalized name. It may not repeat, nor reuse the name of
 another imported module, of this module, or of the built-in `C` namespace.
 
+A name means one thing in a scope: an alias, or a module imported bare, may not
+share its name with a type in scope. That keeps `A.B.{ .. }` unambiguous: it is
+struct `B` of module `A` when `A` is a module or alias (`V.Box.{ 2, 3 }`, and
+`V.Box.{ .w = w, .h = h }` as a pattern), and variant `B` of union `A`
+otherwise (`Shape.Square.{ 3 }`).
+
 Each `$ @import` names one module; there is no import list.
 
 ## 2.4 Visibility `$ @private`
@@ -245,7 +266,7 @@ They are distinct nullary constructors.
 $ n : @Int = -5
 $ u : @Nat = 5
 $ r : Real = 2.5
-$ s : Str  = "hi"
+$ s : @Str  = "hi"
 ```
 
 Complex numbers are NOT a base type: `Cpx` is an ordinary `CORE` struct
@@ -291,18 +312,26 @@ open row (a row variable), which is what makes a function effect-polymorphic.
 ```ares
 $ State : @effect = get : {} -> @Int, put : @Int -> {},
 $ pure : @Int -> @Int = \x => x                       # pure (empty row)
-$ act  : {} -> <State> @Int = \u => get {}           # may perform State
+$ act  : {} -> <State> @Int = get {}                  # may perform State
 $ poly : (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
 ```
 
-A parameter may be named, `(x: A) -> B`. In a definition's signature the body
-sees each named parameter bound, so it needs no lambda for it; a lambda binds
-the parameters it reaches instead, which are the last ones, as for record
-parameters. The type is the same as `A -> B`, and callers pass plain arguments.
+A parameter may be named, `(x: A) -> B`. The type is the same as `A -> B`, and
+callers pass plain arguments.
+
+A definition's signature binds the parameters it names, so the body needs no
+lambda for them: a named parameter `(x: A)` binds `x`, a closed record
+`{x: A, y: B}` binds its fields, and `{}` binds nothing. This covers the
+leading run of such parameters (after any `@use`). The body's lambdas bind the
+parameters after that run, left to right, so which parameter a lambda binds
+is read off the signature alone. A record kept whole is a named parameter,
+`(r: {x: A, y: B})`.
 
 ```ares
 $ add   : (a: @Int) -> (b: @Int) -> @Int = a + b
 $ scale : (k: @Int) -> @Int -> @Int = \x => k * x
+$ norm  : {x: @Int, y: @Int} -> @Int = x * x + y * y
+$ later : {} -> @Int -> @Int = \x => x + 1
 ```
 
 The result type may not name the parameter yet: `(n: @Nat) -> @Tensor n @Int`
@@ -324,7 +353,7 @@ one-tuple. Elements read positionally with `.0`, `.1`.
 
 Simple:
 ```ares
-$ p : {@Int, Str} = {42, "answer"}
+$ p : {@Int, @Str} = {42, "answer"}
 $ n : @Int = p.0
 ```
 
@@ -377,7 +406,7 @@ Involved (partial instantiation):
 ```ares
 $ Pair : @struct a b = fst: a, snd: b,
 $ IntPair : @alias b = Pair @Int b               # fix the first arg, keep the second open
-$ ip : IntPair Str = .{ .fst = 3, .snd = "z" }  # same as Pair @Int Str
+$ ip : IntPair @Str = .{ .fst = 3, .snd = "z" }  # same as Pair @Int @Str
 ```
 
 An alias names a type. A row has no alias: an effect row or a record row is
@@ -395,10 +424,10 @@ parens, `(x: T)`, even when it is the only parameter, so the type ends at `)`.
 swallow the next parameter as its argument.)
 
 ```ares
-$ Person : @struct = name: Str, age: @Int,
+$ Person : @struct = name: @Str, age: @Int,
 $ inc : @Int -> @Int = \x => x + 1
 $ add : @Int -> @Int -> @Int = \a b => a + b                  # curried
-$ name : Person -> Str = \Person.{ name, _ } => name          # destructuring parameter
+$ name_of : Person -> @Str = \Person.{ name, _ } => name       # destructuring parameter
 $ dec : @Int -> @Int = \(x: @Int) => x - 1                     # annotated parameter
 $ sub : @Int -> @Int -> @Int = \(a: @Int) (b: @Int) => a - b  # one annotation per parameter
 ```
@@ -481,7 +510,7 @@ are `CORE` functions over interfaces (`ICat`, `ICons`), so a sequence of your ow
 joins them with instances of its own.
 
 ```ares
-$ s  : Str = "Hello" ++ " " ++ "world"
+$ s  : @Str = "Hello" ++ " " ++ "world"
 $ xs : @Vec @Int = 1 :: 2 :: 3 :: []
 ```
 
@@ -555,10 +584,11 @@ the way short-circuiting is a property of infix `&&` (§4.10). A single row that
 the union of two variables is not expressible today (issue #200).
 
 ```ares
+$ @import IO
 $ inc : @Int -> @Int = \x => x + 1
 $ double : @Int -> @Int = \x => x * 2
-$ step1 : {} -> @Int = \u => 0
-$ step2 : {} -> @Int = \u => 0
+$ step1 : {} -> @Int = 0
+$ step2 : {} -> @Int = 0
 $ eff : @Int = step1 {} ; step2 {} ; 0     # run for effect, return 0
 $ y   : @Int = 5 |> inc |> double          # double (inc 5)
 $ z   : @Int = double <| inc <| 5          # same
@@ -576,6 +606,7 @@ it takes a context parameter, the type it is used at decides which instance is
 injected, so a bare `(+)` with nothing to pin its type is an error that says so.
 
 ```ares
+$ @import VEC
 $ two   : @Int = (+) 1 1                   # 1 + 1
 $ add1  : @Int -> @Int = (+) 1             # curried
 $ plus  : @Int -> @Int -> @Int = (+)       # the instance comes from the type
@@ -613,7 +644,7 @@ context needs, and it is always a compile error (`TYPED_HOLE`) that names that
 type and lists the names in scope that fit it, each offered as a fix. A hole is
 how to ask the compiler what goes in a spot.
 
-```ares
+```ares-fragment
 $ f : @Int -> @Int = \n => n + ???
 # error[TYPED_HOLE]: hole `???` has type `@Int`
 # note: in scope with this type: `n`
@@ -666,8 +697,8 @@ Match integers (any width), Real, and Str by equality (refutable). A numeric
 literal may be negative (`-1`, `-0.5`), also as a range bound (`-10 ... -1`).
 
 ```ares
-$ describe : @Int -> Str = \n => n |> \ | 0 => "z" | 1 => "o" | -1 => "m1" | _ => "m"
-$ yn : Str -> @Int = \s => s |> \ | "yes" => 1 | "no" => 0 | _ => 99
+$ describe : @Int -> @Str = \n => n |> \ | 0 => "z" | 1 => "o" | -1 => "m1" | _ => "m"
+$ yn : @Str -> @Int = \s => s |> \ | "yes" => 1 | "no" => 0 | _ => 99
 ```
 
 A string literal can be a piece of a `++` pattern (5.7): `"GET " ++ path`
@@ -686,9 +717,9 @@ or named (dotted, any order, others ignored; a lone `.name` puns).
 
 ```ares
 $ Point  : @struct = x: @Int, y: @Int,
-$ Person : @struct = name: Str, age: @Int,
+$ Person : @struct = name: @Str, age: @Int,
 $ sum_xy : Point -> @Int = \p => p |> \ | Point.{ x, y } => x + y
-$ who    : Person -> Str = \p => p |> \ | Person.{ .name } => name
+$ who    : Person -> @Str = \p => p |> \ | Person.{ .name } => name
 ```
 
 ## 5.5 Variant patterns
@@ -707,12 +738,12 @@ scrutinee's type). Open `lo ...` matches `lo <= x`. Refutable, binds nothing.
 
 Simple:
 ```ares
-$ grade : @Int -> Str = \n => n |> \ | 90 ... 100 => "A" | 60 ... 89 => "C" | _ => "F"
+$ grade : @Int -> @Str = \n => n |> \ | 90 ... 100 => "A" | 60 ... 89 => "C" | _ => "F"
 ```
 
 Involved (open range, Real):
 ```ares
-$ sign : @Int -> Str = \n => n |> \ | 0 ... => "nonneg" | _ => "neg"
+$ sign : @Int -> @Str = \n => n |> \ | 0 ... => "nonneg" | _ => "neg"
 $ band : Real -> @Int = \x => x |> \ | 0.0 ... 0.5 => 1 | 0.5 ... 1.0 => 2 | _ => 0
 ```
 
@@ -813,7 +844,7 @@ sugar for applying a lambda.
 
 ```ares
 $ Point  : @struct = x: @Int, y: @Int,
-$ Person : @struct = name: Str, age: @Int,
+$ Person : @struct = name: @Str, age: @Int,
 $ Line   : @struct = from: Point, to: Point,
 $ person : Person = Person.{ .name = "A", .age = 30 }
 $ age : @Int = let Person.{ .age = a } = person in a
@@ -831,9 +862,9 @@ read with `.field`. Nominal (unifies by name).
 
 Simple:
 ```ares
-$ Person : @struct = name: Str, age: @Int,
+$ Person : @struct = name: @Str, age: @Int,
 $ p : Person = Person.{ .name = "Will", .age = 21 }
-$ who : Str = p.name
+$ who : @Str = p.name
 ```
 
 Involved (generic, applied by juxtaposition, nested field types):
@@ -849,7 +880,7 @@ $ deep : @Int = w.inner.val
 comes last; a listed field may read from `base`.
 
 ```ares
-$ Person : @struct = name: Str, age: @Int,
+$ Person : @struct = name: @Str, age: @Int,
 $ base : Person = Person.{ .name = "A", .age = 30 }
 $ older : Person = Person.{ .age = base.age + 1 | base }
 $ clone : Person = .{ | base }
@@ -1053,7 +1084,7 @@ exception) names a type variable as its result.
 
 ```ares
 $ State : @effect = get : {} -> @Int, put : @Int -> {},
-$ Exn   : @effect = throw : Str -> a,
+$ Exn   : @effect = throw : @Str -> a,
 $ Yield : @effect = yield : @Int -> {},
 ```
 
@@ -1068,7 +1099,7 @@ its parameters. Arguments left out of a row (`<State>`) are inferred.
 ```ares
 $ State : @effect s = get : {} -> s, put : s -> {},
 $ Async : @effect m e = spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
-$ count : {} -> <State @Int> @Int = \u => let n = get {} in put (n + 1); n
+$ count : {} -> <State @Int> @Int = let n = get {} in put (n + 1); n
 ```
 
 An operation's type may also use variables the effect does not declare, like
@@ -1089,7 +1120,7 @@ ambient row.
 
 ```ares
 $ State : @effect = get : {} -> @Int, put : @Int -> {},
-$ tick : {} -> <State> @Int = \u => let x = get {} in let _ = put (x + 1) in x
+$ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x
 ```
 
 ## 8.3 Handling `do ... ctl`
@@ -1103,6 +1134,7 @@ operation name is qualified in a clause head.
 
 Exception (ignores `k`, so it resumes zero times):
 ```ares
+$ Exn : @effect = throw : @Str -> @Int,
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
 	do if b == 0 => Exn.throw "div0" else a / b
 	ctl k | Exn.throw msg => -1
@@ -1179,6 +1211,9 @@ $ useFile : @Str -> @Int = \path =>
 Several cleanups nest as separate `@finale`s, and run innermost-first (here
 `close g`, then `close f`):
 ```ares
+$ open  : @Str -> @Int = \path => 0        # stand-ins for real handles
+$ close : @Int -> {} = \h => {}
+$ read  : @Int -> @Int = \h => h
 $ useTwo : @Str -> @Str -> @Int = \a b =>
 	let f = open a in
 	let g = open b in
@@ -1193,6 +1228,9 @@ is the body's, so a pure function passed directly where the body performs
 effects needs a lambda around it (`\_ => closeWindow {}`). A library wraps it
 in a bracket function so callers never see the handle's cleanup:
 ```ares
+$ open  : @Str -> @Int = \path => 0        # stand-ins for real handles
+$ close : @Int -> {} = \h => {}
+$ read  : @Int -> @Int = \h => h
 $ with_file : @Str -> (@Int -> @Int) -> @Int = \path body =>
 	let f = open path in
 	@finale (\_ => close f) <| \_ => body f
@@ -1256,6 +1294,7 @@ by defining an instance. A multi-axis slice stays tensor-only: its result shape 
 computed from the slots.
 
 ```ares
+$ @import LA
 $ transpose : Matrix m n a -> Matrix n m a = \t =>
 	@tensor_create (@tensor_index t 0)
 		(\j => @tensor_create t (\i => @tensor_index (@tensor_index t i) j))
@@ -1281,7 +1320,8 @@ up front. The `List` instances are lazy in the tail, which is what makes a range
 you only walk part of cheap:
 
 ```ares
-$ first5 : <@IO> {} =
+$ @import IO
+$ first5 : {} -> <@IO> {} =
 	for ([1 ... 100000000000000] : List @Int)
 		(\i => if i > 5 => break {} else IO.print "?(i), ")
 ```
@@ -1296,7 +1336,7 @@ signature is required and drives C-ABI marshalling. An extern takes exactly one
 argument (one arrow).
 
 ```ares
-$ puts : Str -> @Int = @extern "C" "puts" "libc"
+$ puts : @Str -> @Int = @extern "C" "puts" "libc"
 $ used : @Int = puts "hi"
 ```
 
@@ -1368,6 +1408,7 @@ C memory reaches Ares two ways, both copies:
   collects the first `n` elements as a vector.
 
 ```ares
+$ @import VEC
 $ Point : @struct @extern "C" = x: @Int32, y: @Int32,
 $ point_at : { p: @Ptr, i: @Int } -> Point = @extern "load"
 $ arg_at : { p: @Ptr, i: @Int } -> @Str = @extern "load"      # a `char**`
@@ -1384,7 +1425,8 @@ The primitives the compiler and runtime implement (`@iadd`, `@vec_push`,
 `@chan_send`, `@lex`, ...) are declared in `library/CORE.ares`, each with its
 signature and a comment:
 
-```ares
+```ares-fragment
+# Declared in CORE, which alone may declare a builtin.
 $ @iadd : t -> t -> t = @extern "ares"
 $ @vec_push : @Vec a -> a -> @Vec a = @extern "ares"
 ```
@@ -1420,6 +1462,7 @@ an application: `&f a b` splices `f a b`, `&f a ++ b` is `(&(f a)) ++ b`, and a
 pipe chain is parenthesized, `&(x |> f)`. It works in every position:
 
 ```ares
+$ fib : @Int -> @Int = \k => if k < 2 => k else fib (k - 1) + fib (k - 2)
 $ fib10 : @Int = &fib 10                            # expression: inserts `55`
 $ n     : &"@Int64" = 1024                          # type
 $ &"$ injected : @Int = 99"                         # item
@@ -1433,6 +1476,7 @@ union payload, an alias body, an effect operation, an effect-row argument, a
 `&` right after an operator lexes on its own, so `<&X>` is `<` then `&X`.
 
 ```ares
+$ pick : {} -> @Code = "@Int"
 $ Point : @struct = x: &pick {}, y: &pick {}
 ```
 
@@ -1514,6 +1558,7 @@ captures the caller's `tmp`. Code the site hands in keeps the site's meaning: a
 quotation written in the `&` operand itself, and `@code` text.
 
 ```ares
+$ @import OPT
 $ plus_one : @Code -> @Code = \c => "let tmp = 1 in tmp + ?(c)"
 $ add_one  : @Int -> @Int = \tmp => &plus_one "tmp"      # tmp + 1, the caller's tmp
 $ some_of  : @Code -> @Code = \v => "Option.Some.{?(v)}"
@@ -1536,7 +1581,7 @@ name what is in scope where the literal is written, which at a `&` is often a
 run-time parameter. `@check` at that `&` sees the locals in scope there, so a
 macro learns a hole's type:
 
-```ares
+```ares-fragment
 $ sql : Template -> <@Meta> @Code = ...   # numbers the holes `$1`, `$2`, ...
 $ by_name : @Str -> @Int -> Query = \name age =>
     &sql "SELECT id FROM users WHERE name = ?(name) AND age > ?(age)"
@@ -1554,6 +1599,8 @@ one line of ordinary Ares over `@abort` that returns empty code, so a module
 states its own invariants and checking it is testing it.
 
 ```ares
+$ fib  : @Int -> @Int = \n => if n < 2 => n else fib (n - 1) + fib (n - 2)
+$ fact : @Int -> @Int = \n => if n == 0 => 1 else n * fact (n - 1)
 $ &assert (fib 10 == 55) "fib 10 should be 55"
 $ &assert (fact 5 == 120) "fact 5 should be 120"
 ```
@@ -1578,7 +1625,7 @@ starts from. The compiler runs it during compilation and adds the items of the
 one accepted signature.
 
 ```ares
-$ @build : {} -> <@Meta, @IO> @Code = \_ =>
+$ @build : {} -> <@Meta, @IO> @Code =
 	"$ answer : @Int = 42"
 
 $ @main : @Vec @Str -> <@IO> @Int = \args => answer      # 42
@@ -1618,7 +1665,7 @@ once per project option it sets.
 ```ares
 $ @mod BUILD
 
-$ @build : {} -> <@Meta, @IO> @Code = \_ =>
+$ @build : {} -> <@Meta, @IO> @Code =
     @import_path "source";
     @option "format.width" "120";
     @option "lints.unreachable_arm" "deny";
@@ -1691,7 +1738,7 @@ $ n : @Int = @array_len "hello"          # 5
 
 Involved (build a string byte by byte, as CORE's integer stringifier does):
 ```ares
-$ digit : @Int -> Str = \d => @array_push "" (48 + d)   # push a byte onto a Str
+$ digit : @Int -> @Str = \d => @array_push "" (48 + d)   # push a byte onto a @Str
 ```
 
 ## 12.3 `@Vec` (growable vector)
@@ -1709,7 +1756,7 @@ and the `Stream`/`range`/`count_from` prelude. String interpolation desugars
 through `to_string`; extend it (7.3) for your own types.
 
 ```ares
-$ s : Str = to_string 42 ++ " " ++ to_string @true      # "42 true"
+$ s : @Str = to_string 42 ++ " " ++ to_string @true      # "42 true"
 ```
 
 ## 12.5 `TARGET` reflection
@@ -1718,7 +1765,7 @@ size, @Int bounds, and os/arch names, fixed at compile time.
 
 ```ares
 $ wide : @Bool = TARGET.int_bits == 64
-$ name : Str = TARGET.arch ++ "-" ++ TARGET.os     # equals TARGET.name
+$ name : @Str = TARGET.arch ++ "-" ++ TARGET.os     # equals TARGET.name
 ```
 
 ---

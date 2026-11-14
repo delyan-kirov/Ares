@@ -1,0 +1,3 @@
+$ @mod SHAPES
+
+$ Box : @struct = w: @Int, h: @Int,

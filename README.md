@@ -123,11 +123,11 @@ $ chance : ({} -> <Prob> @Bool) -> @Str = \model =>
     let m = infer model in let g = gcd m.yes m.all in "?(m.yes / g)/?(m.all / g)"
 
 # Two children, at least one a boy. Both boys? 1/3
-$ two_boys : {} -> <Prob> @Bool = \u =>
+$ two_boys : {} -> <Prob> @Bool =
     let a = pick 2 in let b = pick 2 in observe (a == 0 || b == 0); a == 0 && b == 0
 
 # The same, but that boy was born on a Tuesday: 13/27
-$ tuesday_boy : {} -> <Prob> @Bool = \u =>
+$ tuesday_boy : {} -> <Prob> @Bool =
     let a = pick 2 in
     let a_day = pick 7 in
     let b = pick 2 in
@@ -135,7 +135,7 @@ $ tuesday_boy : {} -> <Prob> @Bool = \u =>
     observe (a == 0 && a_day == 2 || b == 0 && b_day == 2); a == 0 && b == 0
 
 # Monty Hall: does switching win? 2/3
-$ switching_wins : {} -> <Prob> @Bool = \u =>
+$ switching_wins : {} -> <Prob> @Bool =
     let car = pick 3 in
     let guess = pick 3 in
     let left = (guess + 1) % 3 in

@@ -65,7 +65,7 @@ impl<'a> Checker<'a> {
                 &format!("against the signature of `{}`", def.name),
             )?;
             let saved_sig = self.current_sig.replace(sig_ty);
-            let r = self.check_body_against_sig(def.body, sig, sig_ty);
+            let r = self.check(def.body, sig_ty).map_err(|d| self.sig_bound_mismatch(def, sig).unwrap_or(d));
             self.current_sig = saved_sig;
             r?;
             // A row tail stays open on purpose: `<| e>` lets the body perform
@@ -87,6 +87,80 @@ impl<'a> Checker<'a> {
             )?;
             Ok(None)
         }
+    }
+
+    /// The error for a body whose lambda binds more parameters than its
+    /// signature leaves to lambdas, because it binds by hand one the signature
+    /// already binds (`f : {} -> T = \_ => e`, or `\p => p.x` for a record
+    /// parameter). `None` when the lambda fits: the error is a different one.
+    fn sig_bound_mismatch(&self, def: &Def, sig: Aol<Ty>) -> Option<Diagnostic> {
+        let added = *self.ast.sig_bound.get(def.body)? as usize;
+        let Expr::Lambda { params, body: inner } = self.node(def.body) else { return None };
+        let params = self.ast.slice(*params);
+        let written = &params[added..];
+        let mut spine = Vec::new();
+        let mut cur = sig;
+        while let Ty::Arrow { from, to, .. } = self.tnode(cur) {
+            spine.push((cur, *from));
+            cur = *to;
+        }
+        let plain = spine.len() - added;
+        let extra = written.len().checked_sub(plain).filter(|&k| k > 0)?;
+        // The extra lambda parameters were meant for the last `extra` of the
+        // parameters the signature binds.
+        let bound = &spine[added - extra..added];
+        let lam = self.ast.expr_span(def.body)?;
+        let first = self.ast.pat_span(written[0].pat)?;
+        let mut edits = Vec::new();
+        let mut sure = true;
+        for (j, (p, &(arrow, from))) in written[..extra].iter().zip(bound).enumerate() {
+            let binder = match self.tnode(arrow) {
+                Ty::Arrow { binder, .. } => *binder,
+                _ => None,
+            };
+            match (self.pnode(p.pat), binder, self.tnode(from)) {
+                (Pattern::Wild, _, _) => {}
+                (Pattern::Var(n), Some(b), _) if *n == b => {}
+                (Pattern::Var(n), None, Ty::Record { .. } | Ty::Unit) => {
+                    let t = self.ast.ty_span(from)?;
+                    edits.push(Edit::new(Span::at(t.start), format!("({n}: ")));
+                    edits.push(Edit::new(Span::at(t.end), ")"));
+                }
+                _ => sure = false,
+            }
+            let p0 = self.ast.pat_span(p.pat)?;
+            let cut = match written.get(j + 1) {
+                Some(next) => Span::new(p0.start, self.ast.pat_span(next.pat)?.start),
+                None => Span::new(lam.start, self.ast.expr_span(*inner)?.start),
+            };
+            edits.push(Edit::new(cut, ""));
+        }
+        let shown: Vec<String> = bound
+            .iter()
+            .map(|&(arrow, from)| {
+                let ty = self.ast.ty_source(from).unwrap_or_else(|| "_".into());
+                match self.tnode(arrow) {
+                    Ty::Arrow { binder: Some(b), .. } => format!("`({b}: {ty})`"),
+                    _ => format!("`{ty}`"),
+                }
+            })
+            .collect();
+        let what = match extra {
+            1 => "a parameter".to_string(),
+            n => format!("{n} parameters"),
+        };
+        let d = diag!(
+            Code::TypeMismatch, Span::new(lam.start, first.end), 0,
+            "the lambda binds {what} that the signature of `{}` already binds: {}",
+            def.name, shown.join(", ");
+            note: "a signature binds its leading `{{}}`, closed-record and `(x: T)` parameters; \
+                   the body's lambdas bind the parameters after them"
+        );
+        let msg = "let the signature bind it (a record kept whole becomes a named parameter)";
+        Some(match sure {
+            true => d.with_fix(msg, edits, Applicability::MachineApplicable),
+            false => d.with_help(msg),
+        })
     }
 
     /// A signature's variables are the caller's to choose, so the body must
@@ -122,99 +196,6 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
-        }
-        Ok(())
-    }
-
-    /// Check a body against its signature, implicitly consuming leading record
-    /// parameters (`{x: Int, y: Int}` binds its fields directly).
-    pub(super) fn check_body_against_sig(
-        &mut self,
-        body: Aol<Expr>,
-        sig: Aol<Ty>,
-        sig_ty: Type,
-    ) -> Result<()> {
-        // A bare `@extern` takes its whole argument opaquely (a record parameter is
-        // marshalled, not destructured into locals), so it is checked against the
-        // FULL signature arrow rather than having its record/unit parameter stripped
-        // by the sugar below. This keeps the extern node's type the complete arrow,
-        // which `build_extern_specs` reads to plan the marshalling.
-        if matches!(self.node(body), Expr::Extern { .. } | Expr::Builtin) {
-            return self.check(body, sig_ty);
-        }
-        // The body's leading lambdas bind the last k of the m signature parameters,
-        // so the record-parameter sugar only applies when the lambdas do not reach
-        // this one (`k < m`). `\p => p.x` then names a record parameter itself.
-        if self.leading_lam_params(body) >= self.arrow_arity_ty(sig) {
-            return self.check(body, sig_ty);
-        }
-        // A named parameter `(x: A) -> B` binds `x` in the body.
-        if let Ty::Arrow { binder: Some(name), from, to, .. } = *self.tnode(sig) {
-            let (param_ty, result_ty, eff) = self.arrow_parts(sig_ty)?;
-            self.enter_scope();
-            let site = self.ast.binder_spans.get(sig).copied();
-            let out = self
-                .bind_local_at(name, param_ty, site)
-                .map_err(|d| match self.ast.ty_span(from) {
-                    Some(span) => d.fill_span(span),
-                    None => d,
-                })
-                .and_then(|_| {
-                    let saved = std::mem::replace(&mut self.ambient, eff);
-                    let out = self.check_body_against_sig(body, to, result_ty);
-                    self.ambient = saved;
-                    out
-                });
-            self.leave_scope();
-            return out;
-        }
-        let fields: &[RecField] = match self.tnode(sig) {
-            Ty::Arrow { from, .. } => match self.tnode(*from) {
-                // A CLOSED record parameter is the destructuring sugar; an open
-                // `{ x | r }` is a real row-polymorphic record value, bound as-is.
-                Ty::Record { fields, tail: None } => self.ast.slice(*fields),
-                // A unit parameter takes no fields: the sugar just introduces the
-                // (unused) thunk parameter, so `f : {} -> T = <body>` needs no `\u =>`.
-                Ty::Unit => &[],
-                _ => return self.check(body, sig_ty),
-            },
-            _ => return self.check(body, sig_ty),
-        };
-        let to = match self.tnode(sig) {
-            Ty::Arrow { to, .. } => *to,
-            _ => unreachable!("guarded on an arrow above"),
-        };
-        let (param_ty, result_ty, eff) = self.arrow_parts(sig_ty)?;
-        self.enter_scope();
-        self.bind_record_param(fields, param_ty)?;
-        // The body may perform this arrow's latent effect (the declared row).
-        let saved = std::mem::replace(&mut self.ambient, eff);
-        let out = self.check_body_against_sig(body, to, result_ty);
-        self.ambient = saved;
-        self.leave_scope();
-        out
-    }
-
-    pub(super) fn bind_record_param(&mut self, fields: &'a [RecField], param_ty: Type) -> Result<()> {
-        // A unit parameter (the thunk sugar) binds nothing, so it needs no row.
-        if fields.is_empty() {
-            return Ok(());
-        }
-        // The record parameter auto-binds each field name (the "define with an
-        // implicit destructuring" sugar). The parameter is a real record type, so
-        // look each field up by name in its row.
-        let recfields = self.record_fields_of(param_ty)?;
-        for f in fields {
-            let name = f.name;
-            let t = recfields
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, t)| *t)
-                .unwrap_or_else(|| self.unifier.fresh());
-            self.bind_local(name, t).map_err(|d| match self.ast.ty_span(f.ty) {
-                Some(span) => d.fill_span(span),
-                None => d,
-            })?;
         }
         Ok(())
     }
@@ -301,7 +282,7 @@ impl<'a> Checker<'a> {
                         )?;
                     }
                     self.type_pattern(p.pat, param_ty)?;
-                    self.check_irrefutable(p.pat, "a lambda parameter", sole_param(params, *body))?;
+                    self.check_irrefutable(p.pat, Refuted::Param(sole_param(params, *body)))?;
                     exp = rest;
                     body_eff = eff; // the innermost arrow's effect: the body's ambient
                 }
@@ -315,7 +296,7 @@ impl<'a> Checker<'a> {
             Expr::Let { binding, body } => {
                 let (binding, body) = (*binding, *body);
                 self.enter_scope();
-                let out = self.infer_binding(&binding).and_then(|_| self.check(body, expected));
+                let out = self.infer_binding(&binding, e, body).and_then(|_| self.check(body, expected));
                 self.leave_scope();
                 out
             }
@@ -504,7 +485,9 @@ impl<'a> Checker<'a> {
             }
             // A qualified `Union.Tag.{ .. }` takes its parameters from the
             // expected type.
-            Expr::Variant { module, ty: Some(ty), tag, fields } if self.pushes_into_call(expected) => {
+            Expr::Variant { module, ty: Some(ty), tag, fields }
+                if self.pushes_into_call(expected) && self.module_struct(*module, Some(*ty), *tag).is_none() =>
+            {
                 let (module, ty, tag) = (*module, *ty, *tag);
                 if let Some(d) = self.unqualified_alias_ctor(module, Some(ty), tag) {
                     let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
@@ -955,7 +938,7 @@ impl<'a> Checker<'a> {
             Expr::Let { binding, body } => {
                 let (binding, body) = (*binding, *body);
                 self.enter_scope();
-                self.infer_binding(&binding)?;
+                self.infer_binding(&binding, e, body)?;
                 let t = self.infer(body);
                 self.leave_scope();
                 t
@@ -972,7 +955,7 @@ impl<'a> Checker<'a> {
                         None => self.unifier.fresh(),
                     };
                     self.type_pattern(p.pat, pv)?;
-                    self.check_irrefutable(p.pat, "a lambda parameter", sole_param(params, body))?;
+                    self.check_irrefutable(p.pat, Refuted::Param(sole_param(params, body)))?;
                     param_tys.push(pv);
                 }
                 // Constructing the closure performs nothing under the current
@@ -1042,6 +1025,9 @@ impl<'a> Checker<'a> {
             } => {
                 let ty = ty.map(|t| t);
                 let tag = *tag;
+                if let Some(name) = self.module_struct(*module, ty, tag) {
+                    return self.infer_struct_lit(e, Some(name), self.ast.slice(*fields), None, None);
+                }
                 if let Some(d) = self.unqualified_alias_ctor(*module, ty, tag) {
                     let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
                     return Err(d.fill_span(span));
@@ -1533,7 +1519,9 @@ impl<'a> Checker<'a> {
         })
     }
 
-    fn infer_binding(&mut self, b: &Binding) -> Result<()> {
+    /// Type the binding of the `let` node `node` whose body is `body` (both for
+    /// the refutable-pattern fix).
+    fn infer_binding(&mut self, b: &Binding, node: Aol<Expr>, body: Aol<Expr>) -> Result<()> {
         self.unifier.enter_level();
         let declared = match self.pnode(b.pat) {
             Pattern::Var(name) => {
@@ -1570,7 +1558,8 @@ impl<'a> Checker<'a> {
             None => {
                 self.unifier.generalize_except(value_ty, &mono);
                 self.type_pattern(b.pat, value_ty)?;
-                self.check_irrefutable(b.pat, "a `let` binding", None)?;
+                let rewrite = b.sig.is_none().then_some((node, b.value, body));
+                self.check_irrefutable(b.pat, Refuted::Let(rewrite))?;
             }
         }
         Ok(())
@@ -2585,6 +2574,17 @@ pub(super) fn is_numeric_type(name: &str) -> bool {
 pub(super) enum Spliced {
     Data(Type),
     Code,
+}
+
+/// Where a refutable pattern was bound, for the fix that rewrites it to a match.
+#[derive(Clone, Copy)]
+pub(super) enum Refuted {
+    /// A lambda parameter; the lambda's body when the parameter is its only one
+    /// and unannotated (otherwise the rewrite is not mechanical).
+    Param(Option<Aol<Expr>>),
+    /// A `let`; for `let P = value in body` with no annotation, the whole `let`
+    /// node, `value` and `body`.
+    Let(Option<(Aol<Expr>, Aol<Expr>, Aol<Expr>)>),
 }
 
 /// The body of a lambda whose parameters are one unannotated pattern, which a

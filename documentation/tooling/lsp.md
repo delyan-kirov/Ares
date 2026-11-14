@@ -160,7 +160,7 @@ reference, section 11.5, lists them all):
 ```ares
 $ @mod BUILD
 
-$ @build : {} -> <@Meta, @IO> @Code = \_ =>
+$ @build : {} -> <@Meta, @IO> @Code =
     @option "lsp.check" "save";
     @option "lsp.focus" "one";
     ""

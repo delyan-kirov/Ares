@@ -1,0 +1,16 @@
+$ @mod QUALIFIED_LITERALS
+
+# `M.T.{ .. }` builds struct `T` of module `M`, and matches one in a pattern. It
+# reads `M` by what it names: a module or import alias here, a union in
+# `Shape.Square.{ 3 }`. A name means one thing in a scope, so a type may not
+# share its name with an import (#449). Under an alias-only import there is no
+# bare `Box`, so the qualified form is the only one.
+
+$ @import L = TYPE_SPLICE_LIB
+
+$ box : L.Box = L.Box.{ .w = 2, .h = 3, .depth = 4 }
+$ cube : L.Box = L.Box.{ 1, 1, 1 }
+$ volume : L.Box -> @Int = \b => b |> \ | L.Box.{ .w = w, .h = h, .depth = d } => w * h * d
+
+$ test : @Int = (volume box - 24) + (volume cube - 1)
+$ &assert (test == 0) "QUALIFIED_LITERALS: a check failed"

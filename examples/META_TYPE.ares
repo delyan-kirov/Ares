@@ -17,7 +17,7 @@ $ @mod META_TYPE
 $ number_type : @Str -> @Code = \which => if which == "wide" => "@Int64" else "@Int"
 
 # The element type of a vector, computed at build time.
-$ elem_type : {} -> @Code = \_ => "@Int"
+$ elem_type : {} -> @Code = "@Int"
 
 # The annotation is filled in by running the generator: `n : @Int64`.
 $ n : &number_type "wide" = 1000 + 24
@@ -39,15 +39,15 @@ $ annotated : @Int =
     let a : &elem_type {} = 5 in let sq = \(b : &elem_type {}) => b * b in sq (a : &elem_type {})
 
 $ State : @effect s = get : {} -> s
-$ peek : {} -> <State (&elem_type {})> @Int = \_ => State.get {}
+$ peek : {} -> <State (&elem_type {})> @Int = State.get {}
 $ peeked : @Int =
     do peek {}
     ctl k | State.get u => k 7 | v => v
 
 # A whole row entry, or several, can come from a generator too: `<&X>`.
 $ Log : @effect = log : @Int -> {}
-$ row : {} -> @Code = \_ => "Log, State @Int"
-$ logged : {} -> <&row {}> @Int = \_ => Log.log 1; State.get {}
+$ row : {} -> @Code = "Log, State @Int"
+$ logged : {} -> <&row {}> @Int = Log.log 1; State.get {}
 $ logged_value : @Int =
     do logged {}
     ctl k

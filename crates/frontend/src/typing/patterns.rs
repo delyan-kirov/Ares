@@ -124,11 +124,15 @@ impl<'a> Checker<'a> {
                 module, ty, tag, fields,
             } => {
                 let tag = *tag;
+                let fields = self.ast.slice(*fields);
+                if let Some(name) = self.module_struct(*module, *ty, tag) {
+                    self.qualified_struct_pats.insert(pat);
+                    return self.type_struct_pattern(name, fields, expected);
+                }
                 if let Some(d) = self.unqualified_alias_ctor(*module, *ty, tag) {
                     let span = self.ast.pat_span(pat).unwrap_or(Span::at(0));
                     return Err(d.fill_span(span));
                 }
-                let fields = self.ast.slice(*fields);
                 self.type_variant_pattern(pat, *ty, tag, fields, expected)
             }
         }
@@ -501,11 +505,9 @@ impl<'a> Checker<'a> {
     }
 
     /// Reject a typed `let` or lambda-parameter pattern that some value of its
-    /// type fails to match: there is no next arm to fall through to. `arm` is
-    /// the lambda's body when `pat` is its one unannotated parameter: then the
-    /// lambda becomes multi-arm by insertion alone, `\P => B` to
-    /// `\ | P => B | _ => ???`, and the error carries that fix.
-    pub(super) fn check_irrefutable(&mut self, pat: Aol<Pattern>, site: &str, arm: Option<Aol<Expr>>) -> Result<()> {
+    /// type fails to match: there is no next arm to fall through to. The error
+    /// carries the rewrite to a match when it is mechanical (see [`Refuted`]).
+    pub(super) fn check_irrefutable(&mut self, pat: Aol<Pattern>, at: Refuted) -> Result<()> {
         if self.holds_meta_e(pat) {
             return Ok(());
         }
@@ -514,19 +516,62 @@ impl<'a> Checker<'a> {
             return Ok(());
         };
         let span = self.ast.pat_span(pat).unwrap_or(Span::at(0));
+        let site = match at {
+            Refuted::Param(_) => "a lambda parameter",
+            Refuted::Let(_) => "a `let` binding",
+        };
         let d = diag!(
             Code::NonExhaustiveMatch, span, 0,
             "refutable pattern in {site}: it does not match `{}`", usefulness::show(&missing)
         );
-        let body = arm.and_then(|b| self.ast.expr_span(b));
-        Err(match (self.ast.pat_span(pat), body) {
-            (Some(p), Some(b)) => d.with_fix(
-                "match it instead, which can handle every case",
-                vec![Edit::new(Span::at(p.start), " | "), Edit::new(Span::at(b.end), " | _ => ???")],
-                Applicability::HasPlaceholders,
-            ),
-            _ => d.with_help("match it instead, which can handle every case: `e |> \\ | pat => ... | _ => ...`"),
+        let msg = "match it instead, which can handle every case";
+        Err(match self.match_rewrite(pat, at) {
+            Some(edits) => d.with_fix(msg, edits, Applicability::HasPlaceholders),
+            None => d.with_help(format!("{msg}: `e |> \\ | pat => ... | _ => ...`")),
         })
+    }
+
+    /// The edits that turn a refutable binding into a match with a `| _ => ???`
+    /// arm: `\P => B` to `\ | P => B | _ => ???`, and `let P = e in B` to
+    /// `e |> \ | P => B | _ => ???` (`B` parenthesized when its right edge would
+    /// take the new arm as its own).
+    fn match_rewrite(&self, pat: Aol<Pattern>, at: Refuted) -> Option<Vec<Edit>> {
+        let p = self.ast.pat_span(pat)?;
+        match at {
+            Refuted::Param(arm) => {
+                let b = self.ast.expr_span(arm?)?;
+                Some(vec![Edit::new(Span::at(p.start), " | "), Edit::new(Span::at(b.end), " | _ => ???")])
+            }
+            Refuted::Let(rewrite) => {
+                let (node, value, body) = rewrite?;
+                let (l, v, b) = (self.ast.expr_span(node)?, self.ast.expr_span(value)?, self.ast.expr_span(body)?);
+                let wrap = self.open_right(body);
+                let mut edits = vec![
+                    Edit::copy(Span::new(l.start, p.start), v),
+                    Edit::new(Span::at(p.start), " |> \\ | "),
+                    Edit::new(Span::new(p.end, b.start), " => "),
+                ];
+                if wrap {
+                    edits.push(Edit::new(Span::at(b.start), "("));
+                    edits.push(Edit::new(Span::at(b.end), ")"));
+                }
+                edits.push(Edit::new(Span::at(b.end), " | _ => ???"));
+                Some(edits)
+            }
+        }
+    }
+
+    /// Whether `e` ends in a construct that extends rightward over a following
+    /// `| p => a` arm: a lambda, `let`, `if`, match or handler, or an operator
+    /// or application whose last operand does.
+    fn open_right(&self, e: Aol<Expr>) -> bool {
+        match self.ast.expr(e) {
+            Expr::Lambda { .. } | Expr::Let { .. } | Expr::If { .. } | Expr::Match { .. } | Expr::Handle { .. } => true,
+            Expr::BinOp { rhs, .. } => self.open_right(*rhs),
+            Expr::UnOp { operand, .. } => self.open_right(*operand),
+            Expr::App(_, arg) => self.open_right(*arg),
+            _ => false,
+        }
     }
 
     /// The value range of an integer pattern's type, or `None` when it is not a
@@ -599,6 +644,28 @@ impl<'a> Checker<'a> {
             .map(|(i, p)| (StrId::intern(&i.to_string()), self.dpat(p)))
             .collect();
         DPat::Product(ProductKind::Tensor(n), fields)
+    }
+
+    /// The usefulness form of a struct pattern `ty.{ fields }`.
+    fn struct_dpat(&self, ty: StrId, fields: Slice<FieldPat>) -> usefulness::DPat {
+        use usefulness::{DPat, ProductKind};
+        let Some(info) = self.structs.get(&ty) else {
+            return DPat::Opaque;
+        };
+        let mut out = Vec::new();
+        for (i, f) in self.ast.slice(fields).iter().enumerate() {
+            match f {
+                FieldPat::Named { name, pat } => {
+                    out.push((*name, self.dpat(*pat)))
+                }
+                FieldPat::Positional(pat) => match info.fields.get(i) {
+                    Some((name, _)) => out.push((*name, self.dpat(*pat))),
+                    None => return DPat::Opaque,
+                },
+                FieldPat::Shorthand(_) => {}
+            }
+        }
+        DPat::Product(ProductKind::Struct(ty), out)
     }
 
     pub(super) fn dpat(&self, pat: Aol<Pattern>) -> usefulness::DPat {
@@ -681,26 +748,7 @@ impl<'a> Checker<'a> {
                 let fields = pats.iter().enumerate().map(|(i, p)| (StrId::intern(&i.to_string()), self.dpat(*p)));
                 DPat::Product(ProductKind::Tuple, fields.collect())
             }
-            Pattern::Struct { ty, fields } => {
-                let ty = *ty;
-                let Some(info) = self.structs.get(&ty) else {
-                    return DPat::Opaque;
-                };
-                let mut out = Vec::new();
-                for (i, f) in self.ast.slice(*fields).iter().enumerate() {
-                    match f {
-                        FieldPat::Named { name, pat } => {
-                            out.push((*name, self.dpat(*pat)))
-                        }
-                        FieldPat::Positional(pat) => match info.fields.get(i) {
-                            Some((name, _)) => out.push((*name, self.dpat(*pat))),
-                            None => return DPat::Opaque,
-                        },
-                        FieldPat::Shorthand(_) => {}
-                    }
-                }
-                DPat::Product(ProductKind::Struct(ty), out)
-            }
+            Pattern::Struct { ty, fields } => self.struct_dpat(*ty, *fields),
             Pattern::Record { fields, .. } => {
                 let fields = self.ast.slice(*fields).iter().filter_map(|f| match f {
                     FieldPat::Named { name, pat } => {
@@ -709,6 +757,9 @@ impl<'a> Checker<'a> {
                     _ => None,
                 });
                 DPat::Product(ProductKind::Record, fields.collect())
+            }
+            Pattern::Variant { tag, fields, .. } if self.qualified_struct_pats.contains(&pat) => {
+                self.struct_dpat(*tag, *fields)
             }
             Pattern::Variant { ty, tag, fields, .. } => {
                 let tag = *tag;

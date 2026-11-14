@@ -101,6 +101,17 @@ impl<'a> Checker<'a> {
         ))
     }
 
+    /// `A.B` in a literal or pattern, read as struct `B` when `A` qualifies
+    /// imported names (a module or an import alias) rather than naming a union
+    /// (#449). A name means one thing in a scope, so this never competes with
+    /// the union reading.
+    pub(super) fn module_struct(&self, module: Option<StrId>, ty: Option<StrId>, tag: StrId) -> Option<StrId> {
+        let qualifier = ty?;
+        let is_module = self.module_scopes.contains(&qualifier) || qualifier == self.module_name;
+        (module.is_none() && is_module && !self.unions.contains_key(&qualifier) && self.structs.contains_key(&tag))
+            .then_some(tag)
+    }
+
     pub(super) fn is_known_type(&self, name: StrId) -> bool {
         is_base_type(name.as_str())
             || self.structs.contains_key(&name)

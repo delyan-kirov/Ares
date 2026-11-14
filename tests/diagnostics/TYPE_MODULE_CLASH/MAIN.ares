@@ -1,0 +1,8 @@
+$ @mod MAIN
+
+# A name means one thing in a scope: an import's qualifier may not also name a
+# type, or `A.B.{ .. }` could read `A` as a module or as a union (#449).
+$ @import SHAPES
+$ @import Box = LIST  #~ error[DUPLICATE_SYMBOL]: `Box` names both a type and an import alias
+$ @import Pair = VEC  #~ error[DUPLICATE_SYMBOL]: `Pair` names both a type and an import alias
+$ Pair : @struct = a: @Int, b: @Int,

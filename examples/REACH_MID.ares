@@ -8,7 +8,7 @@ $ @import REACH_LIB
 
 $ Bag : @struct = items : @Vec Item, best : Item
 
-$ bag : {} -> Bag = \u => Bag.{
+$ bag : {} -> Bag = Bag.{
     .items = @vec_new {} |> \v => @vec_push v Item.{ 40 } |> \v => @vec_push v Item.{ 2 },
     .best = Item.{ 7 }
 }

@@ -98,6 +98,9 @@ pub struct Resolved {
     /// [`Checker::sequence_pattern_hooks`]). Lowering emits a
     /// `Pat::SeqView` that unfolds the view.
     pub sequence_pattern_hooks: HashMap<Aol<Pattern>, HookImpl>,
+    /// `M.T.{ .. }` pattern sites with `M` a module, which match struct `T` (from
+    /// [`Checker::qualified_struct_pats`]).
+    pub qualified_struct_pats: HashSet<Aol<Pattern>>,
     /// Sequence patterns on a sized tensor, with its static size (from
     /// [`Checker::tensor_patterns`]).
     pub tensor_patterns: HashMap<Aol<Pattern>, u64>,
@@ -171,6 +174,7 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
         for (&site, pair) in checker.literal_pattern_hooks() {
             resolved.literal_pattern_hooks.insert(site, pair.clone());
         }
+        resolved.qualified_struct_pats.extend(checker.qualified_struct_pats().iter().copied());
         for (&site, hook) in checker.sequence_pattern_hooks() {
             resolved.sequence_pattern_hooks.insert(site, hook.clone());
         }
@@ -261,6 +265,11 @@ impl<'a> Checker<'a> {
     /// mapped to the hook's `(module, emitted name)`.
     pub fn sequence_pattern_hooks(&self) -> &HashMap<Aol<Pattern>, HookImpl> {
         &self.sequence_pattern_hooks
+    }
+
+    /// `M.T.{ .. }` patterns with `M` a module, so `T` is a struct.
+    pub fn qualified_struct_pats(&self) -> &HashSet<Aol<Pattern>> {
+        &self.qualified_struct_pats
     }
 
     /// Sequence patterns on a sized tensor, mapped to the tensor's size.

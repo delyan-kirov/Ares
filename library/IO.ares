@@ -29,7 +29,7 @@ $ println_int : @Int -> <@IO> {} = \n => println (from_int n)
 
 # One line from stdin, without the trailing newline. Returns "" at
 # end-of-input (indistinguishable from an empty line).
-$ read_line : {} -> <@IO> @Str = \u => read_line_acc ""
+$ read_line : {} -> <@IO> @Str = read_line_acc ""
 
 # ---- files ----
 
@@ -89,7 +89,7 @@ $ remove_file : @Str -> <@IO> @Bool = \path => (C.remove path) == 0
 $ env : @Str -> <@IO> @Str = \name => C.getenv name
 
 # Seconds since the Unix epoch (libc time(NULL)).
-$ now : {} -> <@IO> @Int = \u => C.time 0
+$ now : {} -> <@IO> @Int = C.time 0
 
 # ---- internal helpers ----
 

@@ -67,6 +67,10 @@ pub struct Ast {
     pub pat_spans: SecondaryMap<Pattern, Span>,
     /// Source span of the name of each named-parameter arrow `(x: A) -> B`.
     pub binder_spans: SecondaryMap<Ty, Span>,
+    /// A definition body's lambda whose leading parameters the parser added for
+    /// its signature (the `@use` fields and the parameters the signature binds),
+    /// with how many: the written ones follow.
+    pub sig_bound: SecondaryMap<Expr, u32>,
 }
 
 /// An element type stored in a run: names the [`Store`] on the [`Ast`] that holds

@@ -44,7 +44,7 @@ $ computer : Chan @Str -> @Int -> @Int -> {} -> <Async, @IO> {} = \out i acc u =
     else
         (Async.yield {}; computer out (i + 1) (acc + fib i) u)
 
-$ both : {} -> <Async, @IO> @Str = \u =>
+$ both : {} -> <Async, @IO> @Str =
     let out = Async.chan 0 in
     Async.spawn (reader out);
     Async.spawn (computer out 0 0);

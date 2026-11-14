@@ -362,7 +362,7 @@ fn build_script_import_path_reaches_the_editor() {
     let dir = dir.canonicalize().unwrap();
     std::fs::write(
         dir.join("BUILD.ares"),
-        "$ @mod BUILD\n$ @build : {} -> <@Meta, @IO> @Code = \\_ => @import_path \"source\"; \"\"\n",
+        "$ @mod BUILD\n$ @build : {} -> <@Meta, @IO> @Code = @import_path \"source\"; \"\"\n",
     )
     .unwrap();
     std::fs::write(dir.join("source/GREET.ares"), "$ @mod GREET\n$ greeting : @Str = \"hi\"\n").unwrap();
