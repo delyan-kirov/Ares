@@ -20,6 +20,7 @@ $ Command : @union =
     Test,
     Install,
     Readme,
+    Logo,
     HelixUpdate,
     EditorsUpdate,
     Edit,
@@ -74,6 +75,11 @@ $ spec : Command -> Spec = \c =>
             .name = "readme",
             .usage = "",
             .info = "regenerate README.md from tools/README_GEN.ares"
+        }
+        | .Logo          => Spec.{
+            .name = "logo",
+            .usage = "",
+            .info = "regenerate documentation/assets/logo.svg from tools/LOGO.ares"
         }
         | .HelixUpdate   => Spec.{
             .name = "helix-update",
@@ -196,6 +202,8 @@ $ help_text : @Str =
         ++ STR.concat (VEC.map help_entry commands)
 
 $ readme_cmd : @Str = "${ARES_BIN:-ares} run tools/README_GEN.ares"
+
+$ logo_cmd : @Str = "${ARES_BIN:-ares} run tools/LOGO.ares"
 
 # A command path in the platform's shell: `cmd.exe` reads `/` as a switch.
 $ native_path : @Str -> @Str = \p => if TARGET.os == "windows" => STR.replace p "/" "\\" else p
@@ -587,6 +595,7 @@ $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
             println "thrax: regenerating README.md ...";
             step "readme" readme_cmd;
             println "thrax: README.md updated"
+        | .Logo          => step "logo" logo_cmd
         | .Corpus =>
             println "thrax: running tests/MAIN.ares on both engines ...";
             corpus_task (arg_or args 2 "" == "wasm");

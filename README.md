@@ -1,3 +1,5 @@
+<p align="center"><img src="documentation/assets/logo.svg" alt="Ares logo" width="128"></p>
+
 # Ares
 
 Ares is a functional language with algebraic data types (structs *and* sum
