@@ -1,0 +1,353 @@
+$ @mod MAIN
+
+# \file LOGO.ares
+# \info Generates the Ares marks from geometry. `logo` is ⦽, a spear through a
+#       shield: a gold ring with a crimson spear running through it, in front.
+#       `spear` and `spear-shield` are the sprites the web playground throws
+#       across its background: a Greek hoplite spear (leaf-shaped head, socket
+#       rings, butt spike) flying right, the second carrying a shield seen
+#       edge-on.
+#
+#       The drawing strategy: nothing is stroked. A design is a stack of
+#       layers, each a color and a set of figures. A layer covers a point when
+#       the point lies inside an odd number of its figures (the even-odd rule),
+#       so every edge in the picture is an exact boundary. A colorless layer
+#       erases what is under it. The same layers are written as vector SVG and
+#       rendered to a raster that ffmpeg scales down to any PNG widths asked for.
+#
+#           ares build tools/LOGO.ares
+#           tools/ares-out/LOGO [design [out.svg [out.png width]...]]
+#
+#       With no arguments it writes the `logo` to documentation/assets/logo.svg,
+#       the README's copy. Only the PNGs need ffmpeg.
+
+$ @import STR
+$ @import IO
+$ @import MATH
+$ @import VEC
+$ @import OPT
+
+$ Rgb : @struct =
+    r: @Int,
+    g: @Int,
+    b: @Int,
+
+$ Point : @alias = { Real, Real }
+
+$ Figure : @union =
+    Oval: { cx: Real, cy: Real, rx: Real, ry: Real },
+    Poly: { corners: @Vec Point, lo: Point, hi: Point },
+
+# `name` becomes the layer's class in the SVG, so a page that inlines the logo
+# can style or animate its parts.
+$ Layer : @struct =
+    name: @Str,
+    color: Option Rgb,
+    figures: @Vec Figure,
+
+# A design's coordinates run from (0, 0) at the top left to (width, height).
+$ Design : @struct =
+    width: Real,
+    height: Real,
+    layers: @Vec Layer,
+
+$ gold : Rgb = Rgb.{ .r = 217, .g = 164, .b = 62 }
+$ crimson : Rgb = Rgb.{ .r = 179, .g = 32, .b = 46 }
+
+# ---- geometry ----
+
+# Lengths are in units of the icon's side, y grows downward, and the mark is
+# symmetric about the vertical line x = mid. The ring is 2 px wide at 16 px,
+# the smallest size a browser asks for; the shaft is a little slimmer, since
+# an equal width looks heavier than the ring.
+$ mid : Real = 0.5
+$ ring_y : Real = 0.575
+$ ring_outer : Real = 0.3
+$ ring_width : Real = 0.105
+$ ring_inner : Real = ring_outer - ring_width
+$ shaft : Real = 0.085
+$ gap : Real = 0.025
+
+# The point: a triangle whose tip touches the top edge, about as wide as it is
+# tall and three times the shaft's width, so it reads at 16 px. The shaft runs
+# from its base through the ring and out below it.
+$ tip : Real = 0.02
+$ head_half : Real = 0.135
+$ head_base : Real = 0.25
+$ butt : Real = 0.98
+
+$ box : Real -> Real -> Real -> Real -> Figure = \x0 y0 x1 y1 =>
+    poly [{ x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 }]
+
+# A polygon with its bounding box, which lets the raster skip it at a glance
+# for the many points nowhere near it.
+$ poly : @Vec Point -> Figure = \ps =>
+    let lo = fold (\b p => { MATH.min b.0 p.0, MATH.min b.1 p.1 }) (@vec_get ps 0) ps in
+    let hi = fold (\b p => { MATH.max b.0 p.0, MATH.max b.1 p.1 }) (@vec_get ps 0) ps in
+    Figure.Poly.{ ps, lo, hi }
+
+$ disc : Real -> Real -> Real -> Figure = \x y r => Figure.Oval.{ x, y, r, r }
+
+$ ring : @Vec Figure = [disc mid ring_y ring_outer, disc mid ring_y ring_inner]
+
+$ spear : Figure =
+    let s = shaft / 2.0 in
+    poly [
+        { mid, tip },
+        { mid + head_half, head_base },
+        { mid + s, head_base },
+        { mid + s, butt },
+        { mid - s, butt },
+        { mid - s, head_base },
+        { mid - head_half, head_base },
+    ]
+
+# The spear lies in front of the ring, which is cut back `gap` on either side
+# of the shaft where they cross, so the two read as separate pieces.
+$ channel : Figure = box (mid - shaft / 2.0 - gap) 0.0 (mid + shaft / 2.0 + gap) 1.0
+
+$ logo : Design = Design.{
+    .width = 1.0,
+    .height = 1.0,
+    .layers = [
+        Layer.{ "shield", Option.Some.{ gold }, ring },
+        Layer.{ "channel", Option.None, [channel] },
+        Layer.{ "spear", Option.Some.{ crimson }, [spear] },
+    ],
+}
+
+# ---- the flying spear ----
+
+# A dory, 40 units long and pointing right along the line y = cy: a crimson
+# shaft, then gold fittings (the butt spike at the back, two rings binding the
+# socket, the leaf-shaped head) and a crimson midrib down the head. The head is
+# about three shafts wide, like the logo's.
+$ dory : Real -> @Vec Layer = \cy =>
+    let s = 0.25 in
+    let spike = poly [
+        { 0.0, cy },
+        { 1.6, cy - 0.3 },
+        { 2.6, cy - 0.3 },
+        { 2.6, cy + 0.3 },
+        { 1.6, cy + 0.3 }
+    ] in
+    let head = poly [
+        { 30.6, cy - 0.3 },
+        { 33.4, cy - 0.82 },
+        { 35.6, cy - 0.7 },
+        { 40.0, cy },
+        { 35.6, cy + 0.7 },
+        { 33.4, cy + 0.82 },
+        { 30.6, cy + 0.3 },
+    ] in
+    let midrib = poly [{ 31.2, cy - 0.09 }, { 38.6, cy }, { 31.2, cy + 0.09 }] in
+    [
+        Layer.{ "shaft", Option.Some.{ crimson }, [box 2.4 (cy - s) 30.9 (cy + s)] },
+        Layer.{
+            "fittings",
+            Option.Some.{ gold },
+            [
+                spike,
+                box 29.4 (cy - 0.36) 29.8 (cy + 0.36),
+                box 30.2 (cy - 0.36) 30.6 (cy + 0.36),
+                head
+            ],
+        },
+        Layer.{ "midrib", Option.Some.{ crimson }, [midrib] },
+    ]
+
+$ spear_sprite : Design = Design.{ .width = 40.0, .height = 2.0, .layers = dory 1.0 }
+
+# The logo turned on its side and set in motion: a gold shield seen edge-on,
+# a third of the way along the shaft, cut back around it like the logo's ring.
+$ spear_shield_sprite : Design =
+    let cy = 4.0 in
+    let rim = [Figure.Oval.{ 13.0, cy, 1.5, 3.7 }, Figure.Oval.{ 13.0, cy, 0.98, 3.18 }] in
+    Design.{
+        .width = 40.0,
+        .height = 8.0,
+        .layers = append [
+            Layer.{ "shield", Option.Some.{ gold }, rim },
+            Layer.{ "channel", Option.None, [box 0.0 (cy - 0.45) 40.0 (cy + 0.45)] },
+        ] (dory cy),
+    }
+
+# ---- vector: SVG ----
+
+$ hex2 : @Int -> @Str = \n =>
+    let digits = "0123456789abcdef" in
+    @array_push (@array_push "" (@array_get digits (n / 16))) (@array_get digits (n % 16))
+
+$ css : Rgb -> @Str = \c => "#?(hex2 c.r)?(hex2 c.g)?(hex2 c.b)"
+
+# Coordinates rounded to 1/10000 of the side, which is finer than any screen.
+$ num : Real -> @Str = \x =>
+    let n = int_of_real (x * 10000.0) in
+    let frac = n % 10000 in
+    let pad = if frac < 10 => "000" else if frac < 100 => "00" else if frac < 1000 => "0" else "" in
+    "?(n / 10000).?(pad)?(frac)"
+
+# Each figure as a closed subpath. An oval is two half-oval arcs, since one
+# arc cannot start and end at the same point.
+$ subpath : Figure -> @Str = \f =>
+    f |> \
+        | Figure.Oval.{ x, y, rx, ry } =>
+            let arc = "a?(num rx) ?(num ry) 0 1 0" in
+            "M?(num (x - rx)) ?(num y)?(arc) ?(num (2.0 * rx)) 0?(arc) -?(num (2.0 * rx)) 0Z"
+        | Figure.Poly.{ ps, _, _ } =>
+            let corner = \s p => s ++ (if s == "" => "M" else "L") ++ "?(num p.0) ?(num p.1)" in
+            fold corner "" ps ++ "Z"
+
+# One path per layer, in order, so later layers paint over earlier ones. An
+# eraser wraps everything drawn so far in a mask that is black on its figures,
+# so the accumulator carries a count to keep mask ids distinct.
+$ svg_layer : Design -> { @Str, @Int } -> Layer -> { @Str, @Int } = \d acc l =>
+    let path = fold (\p f => p ++ subpath f) "" l.figures in
+    l.color |> \
+        | Option.Some.{ c } => {
+            acc.0
+                ++ "<path class=\"?(l.name)\" fill-rule=\"evenodd\" fill=\"?(css c)\" d=\"?(path)\"/>\n",
+            acc.1
+        }
+        | Option.None =>
+            let id = "erase?(acc.1)" in
+            {
+                "<mask id=\"?(id)\"><rect width=\"?(num d.width)\" height=\"?(num d.height)\" fill=\"#fff\"/>"
+                    ++ "<path fill-rule=\"evenodd\" d=\"?(path)\"/></mask>\n"
+                    ++ "<g mask=\"url(#?(id))\">\n"
+                    ++ acc.0
+                    ++ "</g>\n",
+                acc.1 + 1,
+            }
+
+$ svg : Design -> @Str = \d =>
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ?(num d.width) ?(num d.height)\">\n"
+        ++ (fold (svg_layer d) { "", 0 } d.layers).0
+        ++ "</svg>\n"
+
+# ---- raster: the even-odd rule, point by point ----
+
+# A ray from p going right crosses the outline an odd number of times exactly
+# when p is inside, whatever the polygon's shape.
+$ inside_poly : Point -> @Vec Point -> @Bool = \p ps =>
+    let n = @vec_len ps in
+    let go =
+        \i acc =>
+            if i == n =>
+                acc
+            else
+                let a = @vec_get ps i in
+                let b = @vec_get ps (if i == 0 => n - 1 else i - 1) in
+                let straddles = not ((a.1 > p.1) == (b.1 > p.1)) in
+                let crosses = straddles && p.0 < a.0 + (b.0 - a.0) * (p.1 - a.1) / (b.1 - a.1) in
+                go (i + 1) (if crosses => not acc else acc)
+    in
+    go 0 @false
+
+$ inside : Point -> Figure -> @Bool = \p f =>
+    f |> \
+        | Figure.Oval.{ x, y, rx, ry } =>
+            let u = (p.0 - x) / rx in let v = (p.1 - y) / ry in u * u + v * v < 1.0
+        | Figure.Poly.{ ps, lo, hi } =>
+            p.0 > lo.0 && p.0 < hi.0 && p.1 > lo.1 && p.1 < hi.1 && inside_poly p ps
+
+$ covers : Point -> Layer -> @Bool = \p l =>
+    (fold (\n f => if inside p f => n + 1 else n) 0 l.figures) % 2 == 1
+
+$ color_at : @Vec Layer -> Point -> Option Rgb = \layers p =>
+    fold (\c l => if covers p l => l.color else c) Option.None layers
+
+$ push_rgba : @Str -> Option Rgb -> @Str = \acc o =>
+    o |> \
+        | Option.Some.{ c } =>
+            @array_push (@array_push (@array_push (@array_push acc c.r) c.g) c.b) 255
+        | Option.None       => @array_push (@array_push (@array_push (@array_push acc 0) 0) 0) 0
+
+# One row of the image as RGBA bytes. Appending to a string copies it, so the
+# row is built in short chunks that are joined once.
+$ pam_row : Design -> @Int -> @Int -> @Str = \d cols row =>
+    let pixel = d.width / real_of_int cols in
+    let y = (real_of_int row + 0.5) * pixel in
+    let go =
+        \col chunk chunks =>
+            if col == cols =>
+                @vec_push chunks chunk
+            else
+                let px =
+                    push_rgba chunk (color_at d.layers { (real_of_int col + 0.5) * pixel, y }) in
+                if col % 32 == 31 =>
+                    go (col + 1) "" (@vec_push chunks px)
+                else
+                    go (col + 1) px chunks
+    in
+    STR.join "" (go 0 "" (@vec_new {}))
+
+# A PAM (P7): a tiny text header, then RGBA bytes row by row. ffmpeg reads it
+# directly, so no image library is needed. Each pixel is one hard sample; the
+# anti-aliasing comes from ffmpeg averaging many of them when it scales down.
+$ pam : Design -> @Int -> @Str = \d cols =>
+    let rows = int_of_real (real_of_int cols * d.height / d.width) in
+    let go =
+        \row acc => if row == rows => acc else go (row + 1) (@vec_push acc (pam_row d cols row))
+    in
+    let header =
+        "P7\nWIDTH ?(cols)\nHEIGHT ?(rows)\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+    in
+    header ++ STR.join "" (go 0 (@vec_new {}))
+
+# ---- output ----
+
+# Scaling averages neighboring pixels, so it runs on premultiplied color: a
+# clear pixel then adds nothing, instead of its hidden color bleeding into the
+# edge next to it.
+$ ffmpeg : @Str -> @Str -> @Str -> <@IO> @Int = \src width dst =>
+    let chain =
+        "format=rgba,premultiply=inplace=1,scale=?(width):-1:flags=area,unpremultiply=inplace=1"
+    in
+    C.system "ffmpeg -loglevel error -y -i ?(src) -vf ?(chain) ?(dst)"
+
+# The PNGs named by the arguments from `i` on, as `path width` pairs, all
+# scaled down from one master raster. Returns how many failed.
+$ pngs : @Vec @Str -> @Str -> @Int -> <@IO> @Int = \args master i =>
+    if i + 1 >= @vec_len args =>
+        0
+    else
+        let dst = @vec_get args i in
+        let failed = ffmpeg master (@vec_get args (i + 1)) dst in
+        (if failed == 0 => println "wrote ?(dst)" else eprintln "ffmpeg failed on ?(dst)");
+        (if failed == 0 => 0 else 1) + pngs args master (i + 2)
+
+# The widest PNG the arguments ask for, from the width at `i` on. The master
+# raster is three times that, so every PNG averages at least 3x3 samples a pixel.
+$ widest : @Vec @Str -> @Int -> @Int = \args i =>
+    if i >= @vec_len args => 0 else MATH.max (str_to_int (@vec_get args i)) (widest args (i + 2))
+
+$ design_named : @Str -> Option Design = \name =>
+    name |> \
+        | "logo"         => Option.Some.{ logo }
+        | "spear"        => Option.Some.{ spear_sprite }
+        | "spear-shield" => Option.Some.{ spear_shield_sprite }
+        | _              => Option.None
+
+$ usage : @Str = "usage: LOGO [logo|spear|spear-shield [out.svg [out.png width]...]]"
+
+$ @main : @Vec @Str -> <@IO> @Int = \args =>
+    let n = @vec_len args in
+    let name = if n > 1 => @vec_get args 1 else "logo" in
+    let out = if n > 2 => @vec_get args 2 else "documentation/assets/logo.svg" in
+    design_named name |> \
+        | Option.None => eprintln usage; 2
+        | Option.Some.{ d } =>
+            if n > 2 && n % 2 == 0 =>
+                eprintln usage; 2
+            else if not (write_file out (svg d)) =>
+                eprintln "cannot write ?(out)"; 1
+            else
+                println "wrote ?(out)";
+                if n < 5 =>
+                    0
+                else
+                    let master = "?(out).master.pam" in
+                    write_file master (pam d (3 * widest args 4));
+                    let failed = pngs args master 3 in
+                    remove_file master; if failed == 0 => 0 else 1
