@@ -115,6 +115,21 @@ fn parameterized_alias_expands() {
 }
 
 #[test]
+fn a_mismatch_shows_the_aliases_written() {
+    let src = "$ @mod M\n\
+               $ Pair : @alias a = {a, a}\n\
+               $ Matrix : @alias m n t = @Tensor m (@Tensor n t)\n\
+               $ swap : Pair @Int -> Pair @Int = \\{a, b} => {b, a}\n\
+               $ bad : Pair @Int -> @Str = \\p => p\n";
+    assert!(errors(src).contains("expected @Str, found Pair @Int"), "{}", errors(src));
+    let src = "$ @mod M\n\
+               $ Matrix : @alias m n t = @Tensor m (@Tensor n t)\n\
+               $ flip : Matrix 2 3 @Int -> Matrix 3 2 @Int = \\x => x\n";
+    let e = rendered_errors(src);
+    assert!(e.contains("expected type `Matrix 3 2 @Int`") && e.contains("found type `Matrix 2 3 @Int`"), "{e}");
+}
+
+#[test]
 fn monomorphic_arithmetic() {
     assert_eq!(type_of("$ @mod M\n$ x = 1 + 2", "x"), "@Int");
 }

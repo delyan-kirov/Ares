@@ -72,7 +72,28 @@ pub enum TypeNode {
     /// carries the field's type; scoped like effect rows (duplicate labels stack,
     /// first wins). Only appears inside a [`TypeNode::Record`].
     RowField(StrId, Type, Type),
+    /// A saturated alias application `Name args`, glued to its unfolding `body`:
+    /// the name and arguments are what the user wrote and what a message shows,
+    /// the body is what everything else sees. [`Types::node`] looks through it,
+    /// so only display and the walkers that rebuild a type ever meet this node.
+    /// See Note [Glued aliases].
+    Alias(StrId, Slice<Type>, Type),
 }
+
+// Note [Glued aliases]
+//
+// An alias is a definition, and comparing two types means comparing their
+// unfoldings. Expanding the alias while elaborating the signature gets that
+// right but forgets the name, so a mismatch shows `@Tensor 2 (@Tensor 3 @Int)`
+// where the user wrote `Matrix 2 3 @Int`. Keeping only the folded form needs
+// every consumer to unfold on demand.
+//
+// So an alias application is kept glued to its unfolding, as normalisation by
+// evaluation keeps a value glued to the neutral term it came from: the
+// `Alias` node holds both. Conversion and every structural match read the
+// unfolding (`Types::node` and `Unifier::resolve` step through), while `zonk`,
+// `instantiate` and `display` keep the folded form. An under-applied alias has
+// no single unfolding and is still expanded in place.
 
 /// Every type node. Constructor and label names are [`StrId`]s.
 ///
@@ -126,8 +147,27 @@ impl Types {
 
     /// The node a handle addresses, by value: `TypeNode` is `Copy`, so a caller
     /// can match on it without holding a borrow that would block building a type.
+    /// Looks through a glued alias to its unfolding. See Note [Glued aliases].
     pub fn node(&self, t: Type) -> TypeNode {
+        let nodes = self.nodes.borrow();
+        let mut t = t;
+        loop {
+            match *nodes.lookup(t) {
+                TypeNode::Alias(_, _, body) => t = body,
+                n => return n,
+            }
+        }
+    }
+
+    /// The node a handle addresses, a glued alias included.
+    pub fn node_raw(&self, t: Type) -> TypeNode {
         *self.nodes.borrow().lookup(t)
+    }
+
+    /// The alias application `name args`, glued to its unfolding `body`.
+    pub fn alias(&self, name: StrId, args: Vec<Type>, body: Type) -> Type {
+        let args = self.tuples.borrow_mut().create_slice(args);
+        self.add(TypeNode::Alias(name, args, body))
     }
 
     /// The text of an interned name.
@@ -299,7 +339,17 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
         out: &mut String,
         prec: u8,
     ) {
-        match types.node(ty) {
+        match types.node_raw(ty) {
+            TypeNode::Alias(name, args, _) => {
+                let args = types.items(args);
+                paren(out, prec > 1 && !args.is_empty(), |out| {
+                    out.push_str(types.name(name));
+                    for arg in args {
+                        out.push(' ');
+                        go(types, arg, namer, out, 2);
+                    }
+                });
+            }
             TypeNode::Var(id) => out.push_str(&namer(id)),
             TypeNode::Con(name) => out.push_str(types.name(name)),
             TypeNode::Nat(n) => out.push_str(&n.to_string()),

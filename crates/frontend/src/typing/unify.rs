@@ -246,14 +246,29 @@ impl Unifier {
 // ## Resolution
 
 impl Unifier {
-    /// Follow variable links until the head is a non-linked type (shallow).
+    /// Follow variable links and glued aliases until the head is neither: the
+    /// weak head normal form. See Note [Glued aliases].
     pub fn resolve(&self, ty: Type) -> Type {
-        match self.types.node(ty) {
+        match self.types.node_raw(ty) {
             TypeNode::Var(id) => match self.vars[id as usize] {
                 VarState::Linked(inner) => self.resolve(inner),
                 _ => ty,
             },
+            TypeNode::Alias(_, _, body) => self.resolve(body),
             _ => ty,
+        }
+    }
+
+    /// The glued alias `ty` is, after following variable links: its name,
+    /// arguments and unfolding.
+    pub fn glued(&self, ty: Type) -> Option<(StrId, Vec<Type>, Type)> {
+        match self.types.node_raw(ty) {
+            TypeNode::Var(id) => match self.vars[id as usize] {
+                VarState::Linked(inner) => self.glued(inner),
+                _ => None,
+            },
+            TypeNode::Alias(name, args, body) => Some((name, self.types.items(args), body)),
+            _ => None,
         }
     }
 
@@ -272,6 +287,10 @@ impl Unifier {
 
     /// Fully resolve a type, replacing every linked variable throughout ("zonk").
     pub fn zonk(&self, ty: Type) -> Type {
+        if let Some((name, args, body)) = self.glued(ty) {
+            let args = args.into_iter().map(|a| self.zonk(a)).collect();
+            return self.types.alias(name, args, self.zonk(body));
+        }
         match self.head(ty) {
             TypeNode::App(head, arg) => {
                 let (h, a) = (self.zonk(head), self.zonk(arg));
@@ -327,8 +346,9 @@ impl Unifier {
                 return d;
             }
             let (e, f) = (self.show(expected), self.show(found));
-            let whole_is_news = d.root().msg.contains(", found ")
-                && !d.root().msg.ends_with(&format!("expected {e}, found {f}"))
+            let msg = &d.root().msg;
+            let whole_is_news = (msg.contains(", found ") || msg.starts_with("size mismatch"))
+                && !msg.ends_with(&format!("expected {e}, found {f}"))
                 && !matches!(self.head(expected), TypeNode::Var(_))
                 && !matches!(self.head(found), TypeNode::Var(_));
             if !whole_is_news {
@@ -341,6 +361,7 @@ impl Unifier {
     /// Unify two types, mutating variables in place. `where_` names the context
     /// for diagnostics.
     pub fn unify(&mut self, a: Type, b: Type, where_: &str) -> Result<()> {
+        let (written_a, written_b) = (a, b);
         let a = self.resolve(a);
         let b = self.resolve(b);
         if a == self.types.error() || b == self.types.error() {
@@ -389,7 +410,7 @@ impl Unifier {
             // row, with its type arguments substituted for the struct's parameters.
             _ => match self.struct_row_bridge(a, b, where_) {
                 Some(r) => r,
-                None => Err(self.mismatch(a, b, where_)),
+                None => Err(self.mismatch(written_a, written_b, where_)),
             },
         }
     }
@@ -431,6 +452,7 @@ impl Unifier {
                 Ok(())
             }
             TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => Ok(()),
+            TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
             TypeNode::App(head, arg) => {
                 self.occurs_and_adjust(id, level, head)?;
                 self.occurs_and_adjust(id, level, arg)
@@ -530,6 +552,7 @@ impl Unifier {
                 self.generalize_except(rest, mono);
             }
             TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => {}
+            TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
         }
     }
 
@@ -568,6 +591,7 @@ impl Unifier {
                 self.collect_vars(rest, out);
             }
             TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => {}
+            TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
         }
     }
 
@@ -627,6 +651,11 @@ impl Unifier {
     }
 
     fn instantiate_with(&mut self, ty: Type, mapping: &mut HashMap<VarId, Type>) -> Type {
+        if let Some((name, args, body)) = self.glued(ty) {
+            let args = args.into_iter().map(|a| self.instantiate_with(a, mapping)).collect();
+            let body = self.instantiate_with(body, mapping);
+            return self.types.alias(name, args, body);
+        }
         match self.head(ty) {
             TypeNode::Var(id) => match self.vars[id as usize] {
                 VarState::Generic => {
