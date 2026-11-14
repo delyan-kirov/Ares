@@ -334,7 +334,13 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn import_ty(&mut self, ty: Type, map: &mut HashMap<VarId, Type>) -> Type {
-        match self.unifier.types.node(ty) {
+        match self.unifier.types.node_raw(ty) {
+            TypeNode::Alias(name, args, body) => {
+                let args = self.unifier.types.items(args);
+                let args = args.into_iter().map(|a| self.import_ty(a, map)).collect();
+                let body = self.import_ty(body, map);
+                self.unifier.types.alias(name, args, body)
+            }
             TypeNode::Var(id) => match map.get(&id) {
                 Some(t) => *t,
                 None => {

@@ -183,18 +183,25 @@ impl<'a> Checker<'a> {
         args.reverse();
         self.check_type_arity(ty, false);
         let mut sub: HashMap<StrId, Type> = HashMap::new();
+        let mut written = Vec::new();
         for (i, p) in params.iter().enumerate() {
             let t = match args.get(i) {
                 Some(&a) => self.ty_of_ast(a, tvars),
                 None => self.unifier.fresh(),
             };
+            if i < args.len() {
+                written.push(t);
+            }
             sub.insert(*p, t);
         }
         // An argument is elaborated before the body shows where it lands, so a
         // variable passed to a size parameter (`Matrix m n a`) is marked `Nat` here.
         let expanded = self.ty_of_ast(body, &mut sub);
         self.unifier.note_tensor_sizes(expanded);
-        Some(expanded)
+        if args.len() != params.len() {
+            return Some(expanded);
+        }
+        Some(self.unifier.types.alias(name, written, expanded))
     }
 
     /// Keep the first type error met while elaborating a type, reported once the
