@@ -53,8 +53,8 @@ unified by `unify_record_row` / `rewrite_field` (mirrors the effect
 `unify_row` / `rewrite_row`); `Unifier::struct_rows` (non-generic structs' closed
 rows, from `Checker::register_struct_rows`) is the `Con ~ Record` bridge; open/closed
 record types parse via `Ty::Record { fields, tail }` and `ty_of_ast`; `infer_field`
-is a row lookup; the param sugar auto-binds via field access (`bind_record_param` /
-lowering `record_param`); promotion is recorded in `Checker::promotions` and wrapped
+is a row lookup; a closed-record parameter of a definition binds its fields by a
+record pattern the parser adds (`bind_signature`); promotion is recorded in `Checker::promotions` and wrapped
 in lowering `promote_to_record`. Runtime is unchanged (already name-keyed).
 
 ## The core decision: records are scoped rows, exactly like effects

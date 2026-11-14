@@ -55,7 +55,7 @@ $ slug : @Str -> @Str = \title =>
 # compile rebuilt, and VS Code's install repackaged. Neovim compiles nothing.
 # Helix and VS Code get Ares whenever the editor is on PATH, so this is also
 # the first install; the hooks' `editors_refresh` only refreshes one.
-$ editors_update : {} -> <@IO, Fail> {} = \u =>
+$ editors_update : {} -> <@IO, Fail> {} =
     pin_zed_grammar {};
     check_queries {};
     zed_build {};
@@ -74,7 +74,7 @@ $ editors_update : {} -> <@IO, Fail> {} = \u =>
 # What the editors use rebuilt when it is missing or older than its sources, so
 # a commit, checkout or pull never leaves an editor without it. Only for the
 # editors that have Ares installed.
-$ editors_refresh : {} -> <@IO, Fail> {} = \u =>
+$ editors_refresh : {} -> <@IO, Fail> {} =
     let ext = editors ++ "/zed/" in
     let parser = [editors ++ "/tree-sitter-ares/src/parser.c"] in
     let srcs = VEC.append
@@ -117,7 +117,7 @@ $ say : @Str -> <@IO> {} = \msg => eprintln ("thrax: " ++ msg)
 $ sh : @Str -> <@IO, Fail> {} = \cmd =>
     if succeeds cmd => {} else Fail.fail ("`" ++ cmd ++ "` failed")
 
-$ current_branch : {} -> <@IO> @Str = \u => output "git branch --show-current"
+$ current_branch : {} -> <@IO> @Str = output "git branch --show-current"
 
 $ first_line : @Str -> @Str = \s => OPT.unwrap_or (VEC.first (STR.lines s)) ""
 
@@ -163,7 +163,7 @@ $ dir_of : @Str -> @Str = \path =>
 
 # Checks picked by what is staged. The .ares files are formatted in the index
 # (and in the working tree when it matches), the rest only checked.
-$ pre_commit : {} -> <@IO, Fail> {} = \u =>
+$ pre_commit : {} -> <@IO, Fail> {} =
     let staged = STR.lines (output "git diff --cached --name-only --diff-filter=ACMR") in
     let ares =
         VEC.filter (\f => STR.ends_with f ".ares" && !(STR.starts_with f "tests/diagnostics/"))
@@ -265,7 +265,7 @@ $ grammar_rev : @Str -> <@IO> @Str = \c =>
 
 # Zed's pin moved to the last commit that changed the grammar, written to
 # zed/extension.toml; whether it moved.
-$ write_zed_pin : {} -> <@IO> @Bool = \u =>
+$ write_zed_pin : {} -> <@IO> @Bool =
     let rev = grammar_rev "HEAD" in
     let text = OPT.unwrap_or (read_file zed_toml) "" in
     let old = pinned_rev text in
@@ -274,7 +274,7 @@ $ write_zed_pin : {} -> <@IO> @Bool = \u =>
     else
         write_file zed_toml (STR.replace text (rev_line old) (rev_line rev)); @true
 
-$ pin_zed_grammar : {} -> <@IO> {} = \u =>
+$ pin_zed_grammar : {} -> <@IO> {} =
     (
         if write_zed_pin {} =>
             say
@@ -296,7 +296,7 @@ $ pin_zed_grammar : {} -> <@IO> {} = \u =>
 # After a commit that changed the grammar, the pin is committed on top of it (a
 # commit cannot name itself). Not when zed/extension.toml already has other
 # changes, which the pin commit would sweep in.
-$ commit_zed_pin : {} -> <@IO, Fail> {} = \u =>
+$ commit_zed_pin : {} -> <@IO, Fail> {} =
     let toml = "zed/extension.toml" in
     if succeeds ("git -C " ++ editors ++ " diff --quiet HEAD -- " ++ toml) =>
         if write_zed_pin {} =>
@@ -311,7 +311,7 @@ $ commit_zed_pin : {} -> <@IO, Fail> {} = \u =>
 # can leave them naming one that is gone, and Helix and Zed then drop them.
 $ queries : @Vec @Str = ["helix/queries/ares/highlights.scm", "zed/languages/ares/highlights.scm"]
 
-$ check_queries : {} -> <@IO, Fail> {} = \u =>
+$ check_queries : {} -> <@IO, Fail> {} =
     let bad = bad_queries 0 [] in
     if VEC.is_empty bad =>
         {}
@@ -342,7 +342,7 @@ $ bad_queries : @Int -> @Vec @Str -> <@IO> @Vec @Str = \i acc =>
 # The hooks of the tools/editors repository (tools/editors/hooks), run from the
 # Ares root. A commit that changes the grammar is followed by one that moves
 # Zed's pin to it.
-$ editors_pre_commit : {} -> <@IO, Fail> {} = \u =>
+$ editors_pre_commit : {} -> <@IO, Fail> {} =
     let staged = STR.lines (output ("git -C " ++ editors ++ " diff --cached --name-only")) in
     let inputs = ["tree-sitter-ares/", "helix/queries/", "zed/languages/"] in
     if VEC.any (\f => VEC.any (\p => STR.starts_with f p) inputs) staged =>
@@ -350,25 +350,25 @@ $ editors_pre_commit : {} -> <@IO, Fail> {} = \u =>
     else
         {}
 
-$ editors_post_commit : {} -> <@IO, Fail> {} = \u =>
+$ editors_post_commit : {} -> <@IO, Fail> {} =
     let changed = STR.lines
         (output ("git -C " ++ editors ++ " diff-tree --no-commit-id --name-only -r HEAD")) in
     (if VEC.any (\f => STR.starts_with f "tree-sitter-ares/") changed => commit_zed_pin {} else {});
     editors_refresh {}
 
-$ config_home : {} -> <@IO> @Str = \u =>
+$ config_home : {} -> <@IO> @Str =
     if STR.is_empty (env "XDG_CONFIG_HOME") => env "HOME" ++ "/.config" else env "XDG_CONFIG_HOME"
 
 # Helix has Ares when it has compiled the grammar once (`hx --grammar build`).
-$ helix_grammar : {} -> <@IO> @Str = \u => config_home {} ++ "/helix/runtime/grammars/ares.so"
+$ helix_grammar : {} -> <@IO> @Str = config_home {} ++ "/helix/runtime/grammars/ares.so"
 
-$ helix_installed : {} -> <@IO> @Bool = \u => is_some (mtime (helix_grammar {}))
+$ helix_installed : {} -> <@IO> @Bool = is_some (mtime (helix_grammar {}))
 
 $ on_path : @Str -> <@IO> @Bool = \cmd => succeeds ("command -v " ++ cmd ++ " >/dev/null 2>&1")
 
 # Only Ares's grammar, compiled as `hx --grammar build` would: that builds every
 # grammar Helix knows, and one failing elsewhere would stop it.
-$ helix_build : {} -> <@IO, Fail> {} = \u =>
+$ helix_build : {} -> <@IO, Fail> {} =
     let src = editors ++ "/tree-sitter-ares/src" in
     sh
         (
@@ -387,10 +387,10 @@ $ vsix : @Str = "tools/editors/vscode/ares.vsix"
 $ vscode_srcs : @Vec @Str =
     ["extension.js", "package.json", "language-configuration.json", "syntaxes/ares.tmLanguage.json"]
 
-$ vscode_installed : {} -> <@IO> @Bool = \u =>
+$ vscode_installed : {} -> <@IO> @Bool =
     succeeds "ls -d \"$HOME\"/.vscode/extensions/ares.ares-* >/dev/null 2>&1"
 
-$ vscode_build : {} -> <@IO, Fail> {} = \u => sh
+$ vscode_build : {} -> <@IO, Fail> {} = sh
     (
         "cd "
             ++ editors
@@ -400,7 +400,7 @@ $ vscode_build : {} -> <@IO, Fail> {} = \u => sh
             ++ " && code --install-extension ares.vsix --force >/dev/null 2>&1"
     )
 
-$ zed_installed : {} -> <@IO> @Bool = \u =>
+$ zed_installed : {} -> <@IO> @Bool =
     let data =
         if STR.is_empty (env "XDG_DATA_HOME") =>
             env "HOME" ++ "/.local/share"
@@ -409,8 +409,7 @@ $ zed_installed : {} -> <@IO> @Bool = \u =>
     in
     is_some (mtime (data ++ "/zed/extensions/installed/ares"))
 
-$ zed_build : {} -> <@IO, Fail> {} = \u =>
-    sh ("nix run path:" ++ editors ++ "#zed-build -- " ++ editors)
+$ zed_build : {} -> <@IO, Fail> {} = sh ("nix run path:" ++ editors ++ "#zed-build -- " ++ editors)
 
 # Whether `target` is missing or older than one of `srcs`.
 $ out_of_date : @Str -> @Vec @Str -> <@IO> @Bool = \target srcs =>
@@ -426,7 +425,7 @@ $ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> @Bool = \t srcs i =>
 
 # Where commit-msg leaves the branch a trunk commit moves to, for post-commit.
 # `--no-verify` skips commit-msg, so no marker is left and the commit stays.
-$ marker : {} -> <@IO> @Str = \u => output "git rev-parse --git-path thrax-move"
+$ marker : {} -> <@IO> @Str = output "git rev-parse --git-path thrax-move"
 
 $ exempt : @Str -> @Bool = \s =>
     VEC.any (\p => STR.starts_with s p) ["Merge ", "Revert ", "fixup!", "squash!", "amend!"]
@@ -527,7 +526,7 @@ $ claim : @Str -> @Int -> @Str -> <@IO, Fail> {} = \branch n title =>
 # The commit leaves the trunk for its issue's branch. Only refs move: the new
 # branch holds the commit just made, so the index and working tree already
 # match it.
-$ post_commit : {} -> <@IO, Fail> {} = \u =>
+$ post_commit : {} -> <@IO, Fail> {} =
     let m = marker {} in
     read_file m |> \
         | Option.Some.{ text } =>
@@ -546,7 +545,7 @@ $ post_commit : {} -> <@IO, Fail> {} = \u =>
 # ---- pre-push / open-pr ----
 
 # git passes `<local ref> <local sha> <remote ref> <remote sha>` per ref.
-$ pre_push : {} -> <@IO, Fail> {} = \u => push_lines (read_line {})
+$ pre_push : {} -> <@IO, Fail> {} = push_lines (read_line {})
 
 $ push_lines : @Str -> <@IO, Fail> {} = \line =>
     if STR.is_empty line =>
@@ -661,7 +660,7 @@ $ reached : @Str -> @Str -> @Int -> <@IO> @Bool = \branch sha tries =>
 
 # Arriving on the trunk brings it up to date and drops the branches whose pull
 # requests merged. THRAX_SYNCING keeps post-merge from pruning a second time.
-$ sync_trunk : {} -> <Forge, @IO, Fail> {} = \u =>
+$ sync_trunk : {} -> <Forge, @IO, Fail> {} =
     if current_branch {} == trunk =>
         C.system "git fetch -q --prune origin";
         C.system ("THRAX_SYNCING=1 git merge -q --ff-only origin/" ++ trunk ++ " 2>/dev/null");
@@ -669,7 +668,7 @@ $ sync_trunk : {} -> <Forge, @IO, Fail> {} = \u =>
     else
         {}
 
-$ prune_merged : {} -> <Forge, @IO, Fail> {} = \u =>
+$ prune_merged : {} -> <Forge, @IO, Fail> {} =
     let here = current_branch {} in
     let branches = STR.lines (output "git for-each-ref --format='%(refname:short)' refs/heads/") in
     for branches (\b =>

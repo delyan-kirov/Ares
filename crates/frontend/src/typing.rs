@@ -48,7 +48,7 @@ use std::rc::Rc;
 
 use crate::parser::data::{
     Ast, Binding, EffectRow, EntrySplice, Expr, FieldInit, FieldPat, Item, LamParam, Pattern, Payload, Program,
-    RecField, RowEntry, SliceSlot, Ty, UseField,
+    RowEntry, SliceSlot, Ty, UseField,
 };
 use utilities::{Aol, Slice, StrId};
 use utilities::{diag, Applicability, Code, Diagnostic, Edit, ExternArg, Result, Span};
@@ -241,6 +241,9 @@ pub struct Checker<'a> {
     qualified: HashMap<StrId, HashMap<StrId, Vec<Type>>>,
     /// Each import alias in scope (`$ @import V = VEC`), mapped to its module.
     alias_modules: HashMap<StrId, StrId>,
+    /// Every name that qualifies imported names here: imported modules (bare or
+    /// qualified-only) and import aliases.
+    module_scopes: HashSet<StrId>,
     /// Values an aliased-only import exports, mapped to the aliases that reach
     /// them, so a bare use can name the qualified form.
     alias_values: HashMap<StrId, Vec<StrId>>,
@@ -301,6 +304,8 @@ pub struct Checker<'a> {
     /// The union each variant pattern resolved to, so the exhaustiveness check
     /// reads the same union a bare `.Tag` was typed against.
     variant_pattern_unions: HashMap<Aol<Pattern>, StrId>,
+    /// `M.T.{ .. }` patterns with `M` a module, so `T` is a struct (#449).
+    qualified_struct_pats: HashSet<Aol<Pattern>>,
     /// The scrutinee type of each integer literal and range pattern, read once the
     /// match is typed to give the exhaustiveness check the type's value range.
     int_pattern_tys: HashMap<Aol<Pattern>, Type>,
@@ -535,6 +540,7 @@ impl<'a> Checker<'a> {
             imported: HashMap::new(),
             qualified: HashMap::new(),
             alias_modules: HashMap::new(),
+            module_scopes: HashSet::new(),
             alias_values: HashMap::new(),
             alias_types: HashMap::new(),
             module_name: StrId::intern(""),
@@ -551,6 +557,7 @@ impl<'a> Checker<'a> {
             sequence_pattern_hooks: HashMap::new(),
             tensor_patterns: HashMap::new(),
             variant_pattern_unions: HashMap::new(),
+            qualified_struct_pats: HashSet::new(),
             int_pattern_tys: HashMap::new(),
             cast_widths: HashMap::new(),
             int_literals: Vec::new(),
@@ -646,26 +653,6 @@ impl<'a> Checker<'a> {
         self.ast.expr(e)
     }
 
-    /// The number of parameters in a signature's arrow spine.
-    fn arrow_arity_ty(&self, mut ty: Aol<Ty>) -> usize {
-        let mut n = 0;
-        while let Ty::Arrow { to, .. } = self.tnode(ty) {
-            n += 1;
-            ty = *to;
-        }
-        n
-    }
-
-    /// The number of leading lambda parameters a body binds explicitly.
-    fn leading_lam_params(&self, mut e: Aol<Expr>) -> usize {
-        let mut n = 0;
-        while let Expr::Lambda { params, body } = self.node(e) {
-            n += params.len();
-            e = *body;
-        }
-        n
-    }
-
     fn tnode(&self, t: Aol<Ty>) -> &'a Ty {
         self.ast.ty(t)
     }
@@ -687,6 +674,7 @@ impl<'a> Checker<'a> {
         self.check_import_aliases(program);
         self.finalize_imports();
         self.register_types(program)?;
+        self.check_type_module_clashes(program);
         self.validate_crepr_structs()?;
         // Row registration elaborates struct field types only to cache their rows
         // for the bridge; it must not report type errors (a field may reference a

@@ -24,7 +24,7 @@ $ sumGen : ({} -> <Yield> {}) -> @Int = \gen =>
     do gen {}
     ctl k | Yield.yield v => v + k {} | _ => 0
 
-$ gen3 : {} -> <Yield> {} = \u =>
+$ gen3 : {} -> <Yield> {} =
     let _ = Yield.yield 10 in let _ = Yield.yield 20 in let _ = Yield.yield 12 in {}
 
 # State via parameter-passing: each clause returns a state-transforming function.
@@ -39,8 +39,7 @@ $ runState : ({} -> <State> @Int) -> @Int -> @Int = \action s0 =>
     in
     h s0
 
-$ counter : {} -> <State> @Int = \u =>
-    let x = get {} in let _ = put (x + 1) in let y = get {} in x + y
+$ counter : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in let y = get {} in x + y
 
 # Value arms are patterns, with guards, over the body's result. A throw skips
 # them: the clause's value is the handler's result.

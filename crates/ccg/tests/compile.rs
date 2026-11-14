@@ -368,7 +368,7 @@ fn cast_between_integer_widths() {
     // checking (integers are boxed uniformly), so both engines must agree: widen
     // `@Int32 -> @Int`, narrow `@Int -> @Int32`, and use the results in arithmetic.
     let src = "$ @mod T\n\
-               $ small : {} -> @Int32 = \\u => 65\n\
+               $ small : {} -> @Int32 = 65\n\
                $ widened : @Int = @cast (small {})\n\
                $ narrowed : @Int32 = @cast (widened + 1)\n\
                $ back : @Int = @cast narrowed\n\
@@ -1059,7 +1059,7 @@ fn sized_extern_marshalling() {
     // argument's exact C ABI type in its wrapper (not a word-size fallback).
     let src = "$ @mod T\n\
                $ f : {a: @Int8, b: @Int32, c: @Nat16, d: @Float32, e: @Ptr} -> @Float64 = @extern \"C\" \"f\" \"libx\"\n\
-               $ test : {a: @Int8, b: @Int32, c: @Nat16, d: @Float32, e: @Ptr} -> @Float64 = \\r => f r\n";
+               $ test : (r: {a: @Int8, b: @Int32, c: @Nat16, d: @Float32, e: @Ptr}) -> @Float64 = f r\n";
     let lowered = lower(src);
     let code = ccg::emit(&lowered, "test", ccg::Entry::Show, utilities::Target::host());
     // The wrapper's symbol declaration carries the exact C ABI types, in order.

@@ -781,7 +781,7 @@ impl Server {
             let Some(edits) = help.located_edits() else { continue };
             let text_edits: Vec<Json> = edits
                 .iter()
-                .map(|e| Json::obj([("range", range(&open.doc, e.span, self.enc)), ("newText", Json::str(e.text.clone()))]))
+                .map(|e| Json::obj([("range", range(&open.doc, e.span, self.enc)), ("newText", Json::str(e.text_in(&open.doc.text).to_string()))]))
                 .collect();
             let mut changes = Json::Obj(Vec::new());
             changes.set(uri, Json::Arr(text_edits));
@@ -830,7 +830,7 @@ impl Server {
                 let Some(edits) = help.located_edits() else { continue };
                 let text_edits: Vec<Json> = edits
                     .iter()
-                    .map(|e| Json::obj([("range", range(&doc, e.span, enc)), ("newText", Json::str(e.text.clone()))]))
+                    .map(|e| Json::obj([("range", range(&doc, e.span, enc)), ("newText", Json::str(e.text_in(&doc.text).to_string()))]))
                     .collect();
                 let safe = help.applicability == Applicability::MachineApplicable;
                 if safe && !edits.iter().any(|e| taken.iter().any(|t| overlaps(*t, e.span))) {

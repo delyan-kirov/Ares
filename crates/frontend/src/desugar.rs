@@ -23,7 +23,7 @@ use std::collections::HashMap;
 
 use crate::parser::data::{
     Ast, Binding, EffectRow, EntrySplice, Expr, FieldInit, FieldPat, Item, LamParam, Pattern,
-    Program, RecField, SliceSlot, Ty,
+    Program, SliceSlot, Ty,
 };
 use crate::typing::{declarations::payload_fields, CtxVal, HookImpl, Resolved};
 use utilities::{Aol, Slice, Span, StrId};
@@ -106,7 +106,7 @@ pub fn desugar_program(
                 if let Some(sig) = sig {
                     lw.collect_meta_types(*sig);
                 }
-                let term = lw.watched(*name, |lw| lw.def(*sig, *body));
+                let term = lw.watched(*name, |lw| lw.expr(*body));
                 globals.push((*name, term));
                 if ctx.is_some() {
                     ctx_globals.push(*name);
@@ -379,75 +379,6 @@ impl<'a> Desugarer<'a> {
             self.deferred.push(name);
         }
         term
-    }
-
-    fn def(&mut self, sig: Option<Aol<Ty>>, body: Aol<Expr>) -> Aol<Term> {
-        let term = self.expr(body);
-        // A bare `@extern` already declares every parameter in its `arg_types`
-        // spine (a `{}` parameter included), so it must NOT be wrapped in the
-        // record/thunk-parameter sugar: a wrapper lambda would swallow the unit
-        // argument and leave the extern under-applied, so it never fires.
-        if matches!(self.terms.get(term), Term::Extern { .. }) {
-            term
-        } else {
-            self.record_params(sig, term)
-        }
-    }
-
-    fn record_params(&mut self, sig: Option<Aol<Ty>>, body: Aol<Term>) -> Aol<Term> {
-        let Some(sig) = sig else { return body };
-        let Ty::Arrow { binder, from, to, .. } = self.tnode(sig) else {
-            return body;
-        };
-        let (binder, from, to) = (*binder, *from, *to);
-        // The body's leading lambdas bind the LAST k of the m signature parameters,
-        // so a parameter is only auto-bound when the lambdas do not reach it
-        // (`k < m`). This lets `\p => p.x` name a record parameter explicitly, while
-        // still auto-binding a record ahead of a later explicit lambda parameter.
-        let m = 1 + self.arrow_arity(to);
-        if leading_lams(&self.terms, body) >= m {
-            return body;
-        }
-        // A named parameter `(x: A) -> B` is a lambda over `x`.
-        if let Some(name) = binder {
-            let inner = self.record_params(Some(to), body);
-            return self.terms.lam(name, inner);
-        }
-        // A CLOSED record parameter is the destructuring sugar; an open `{ x | r }`
-        // is a real record value (plain parameter); a unit parameter takes no
-        // fields, so the sugar just introduces the thunk parameter (`f : {} -> T`).
-        let fields: &[RecField] = match self.tnode(from) {
-            Ty::Record { fields, tail: None } => self.ast.slice(*fields),
-            Ty::Unit => &[],
-            _ => return body,
-        };
-        let inner = self.record_params(Some(to), body);
-        self.record_param(fields, inner)
-    }
-
-    /// The number of parameters in a signature's arrow spine.
-    fn arrow_arity(&self, ty: Aol<Ty>) -> usize {
-        let mut n = 0;
-        let mut cur = ty;
-        while let Ty::Arrow { to, .. } = self.tnode(cur) {
-            n += 1;
-            cur = *to;
-        }
-        n
-    }
-
-    /// Wrap `body` in the lambda binding a record parameter's fields by name. The
-    /// parameter is a name-keyed record value, so each field is bound by field
-    /// access (`param.field`).
-    fn record_param(&mut self, fields: &[RecField], body: Aol<Term>) -> Aol<Term> {
-        let param = self.fresh();
-        let mut inner = body;
-        for f in fields.iter().rev() {
-            let pv = self.var(param);
-            let val = self.field(pv, f.name);
-            inner = self.terms.let_(f.name, val, inner);
-        }
-        self.terms.lam(param, inner)
     }
 
     fn expr(&mut self, e: Aol<Expr>) -> Aol<Term> {
@@ -783,6 +714,11 @@ impl<'a> Desugarer<'a> {
                     base,
                     fields: out,
                 })
+            }
+            // `M.T.{ .. }` with `M` a module is a struct literal (#449).
+            Expr::Variant { fields, .. } if self.resolved.struct_lit_names.contains_key(&e) => {
+                let name = self.resolved.struct_lit_names[&e];
+                self.struct_lit(Some(name), self.ast.slice(*fields), None)
             }
             Expr::Variant {
                 ty, tag, fields, ..
@@ -1610,6 +1546,20 @@ impl<'a> Desugarer<'a> {
         }
     }
 
+    /// A struct pattern `ty.{ fields }`.
+    fn struct_pat(&mut self, ty: StrId, fields: Slice<FieldPat>) -> Pat {
+        let names = self
+            .resolved
+            .declarations
+            .fields_of(self.module, &self.imports, ty)
+            .map(<[StrId]>::to_vec);
+        let fields: Vec<FieldPat> = self.ast.slice(fields).to_vec();
+        Pat::Struct {
+            fields: self.field_pats(&fields, names.as_deref()),
+            rest: None,
+        }
+    }
+
     fn pat(&mut self, p: Aol<Pattern>) -> Pat {
         match self.pnode(p) {
             Pattern::Wild => Pat::Wild,
@@ -1661,18 +1611,11 @@ impl<'a> Desugarer<'a> {
                 }
                 inner.expect("a `++` pattern has a piece")
             }
-            Pattern::Struct { ty, fields } => {
-                let names = self
-                    .resolved
-                    .declarations
-                    .fields_of(self.module, &self.imports, *ty)
-                    .map(<[StrId]>::to_vec);
-                let fields: Vec<FieldPat> = self.ast.slice(*fields).to_vec();
-                Pat::Struct {
-                    fields: self.field_pats(&fields, names.as_deref()),
-                    rest: None,
-                }
+            // `M.T.{ .. }` with `M` a module matches struct `T` (#449).
+            Pattern::Variant { tag, fields, .. } if self.resolved.qualified_struct_pats.contains(&p) => {
+                self.struct_pat(*tag, *fields)
             }
+            Pattern::Struct { ty, fields } => self.struct_pat(*ty, *fields),
             // A record pattern matches a name-keyed record/struct by field name.
             // `..name` binds the leftover fields; `.._` (a wild rest) discards them.
             Pattern::Record { fields, rest } => {
@@ -1772,18 +1715,6 @@ fn extern_needs_eta(params: &[utilities::ExternArg]) -> bool {
         params.first(),
         Some(utilities::ExternArg::Field(_) | utilities::ExternArg::Elem(_))
     )
-}
-
-/// The number of leading lambdas a body opens with (the explicit parameters the
-/// user wrote), so the record-parameter sugar knows which parameters are already
-/// bound by hand.
-fn leading_lams(terms: &Terms, mut t: Aol<Term>) -> usize {
-    let mut n = 0;
-    while let Term::Lam { body, .. } = terms.get(t) {
-        n += 1;
-        t = *body;
-    }
-    n
 }
 
 #[cfg(test)]

@@ -48,14 +48,14 @@ $ r_stored : @Int = drive <| spawn <| \_ => @finale (\_ => step 2) <| \_ => step
 
 # First-class: a partial application is a reusable "run this, then yield 4"
 # wrapper, and a named thunk is passed as the cleanup directly.         -> 1+4+5 = 10
-$ yield_five : {} -> <Y> {} = \_ => Y.yield 5
+$ yield_five : {} -> <Y> {} = Y.yield 5
 $ then_four : ({} -> <Y> {}) -> <Y> {} = @finale (\_ => Y.yield 4)
 $ r_first_class : @Int = sum <| \_ => @finale yield_five <| \_ => then_four (\_ => Y.yield 1); 0
 
 # The arguments are evaluated where they are written, before the body runs: the
 # cleanup expression yields 10 once, up front, and its value is the thunk the
 # frame runs at exit.                                             -> 10+1+20 = 31
-$ yield_twenty : {} -> <Y> {} = \_ => Y.yield 20
+$ yield_twenty : {} -> <Y> {} = Y.yield 20
 $ r_order : @Int = sum <| \_ => @finale (Y.yield 10; yield_twenty) <| \_ => Y.yield 1; 0
 
 # Force-evaluate results for the combined test runner (pass = no fault).

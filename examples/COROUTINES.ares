@@ -27,8 +27,8 @@ $ rr : Task -> Task -> @Int = \a b =>
             (b |> \ | Task.Fin.{} => 0 | Task.Susp.{ vb, kb } => vb + rr (Task.Fin.{}) (kb {}))
         | Task.Susp.{ va, ka } => va + rr b (ka {})
 
-$ t1 : {} -> <Co> {} = \u => let _ = Co.yield 1 in let _ = Co.yield 3 in {}
-$ t2 : {} -> <Co> {} = \u => let _ = Co.yield 2 in let _ = Co.yield 4 in {}
+$ t1 : {} -> <Co> {} = let _ = Co.yield 1 in let _ = Co.yield 3 in {}
+$ t2 : {} -> <Co> {} = let _ = Co.yield 2 in let _ = Co.yield 4 in {}
 
 # Interleaved order is 1,2,3,4 -> sum 10.
 $ scheduled : @Int = rr (spawn t1) (spawn t2)

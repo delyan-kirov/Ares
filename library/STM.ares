@@ -38,7 +38,7 @@ $ write : TVar a -> a -> <Stm> {} = \t x => Stm.write { t, x }
 
 $ modify : TVar a -> (a -> a) -> <Stm> {} = \t f => Stm.write { t, f (Stm.read t) }
 
-$ retry : {} -> <Stm> a = \u => Stm.retry {}
+$ retry : {} -> <Stm> a = Stm.retry {}
 
 # Run `first`; if it retries, undo its writes and run `second` instead. Reads
 # `first` made still count, so a `retry` of the whole also waits on them.

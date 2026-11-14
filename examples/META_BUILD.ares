@@ -21,13 +21,13 @@ $ @import IO
 $ @import STR
 $ @import VEC
 
-$ arx_files : {} -> <@Meta, @IO> @Vec @Str = \_ =>
+$ arx_files : {} -> <@Meta, @IO> @Vec @Str =
     VEC.filter (\f => STR.ends_with f ".ares") (IO.read_dir "examples")
 
 # `@build` returns the items to add, as `@Code`. Here: a count of the example
 # files (so the number is baked in, never computed at run time) and the name of
 # the first of them, which the sorted listing makes deterministic.
-$ @build : {} -> <@Meta, @IO> @Code = \_ =>
+$ @build : {} -> <@Meta, @IO> @Code =
     let files = arx_files {} in
     @code
         (

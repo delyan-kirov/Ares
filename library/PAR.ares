@@ -33,7 +33,7 @@ $ get : Future b -> b = \fut => @await fut
 # message is handed over, not copied.
 $ Channel : @alias a = @Chan a
 
-$ channel : {} -> <@IO | e> Channel a = \u => @chan_new {}
+$ channel : {} -> <@IO | e> Channel a = @chan_new {}
 
 $ send : Channel a -> a -> <@IO | e> {} = \c x => @chan_send c x
 

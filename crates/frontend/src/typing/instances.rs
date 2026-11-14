@@ -666,10 +666,9 @@ impl<'a> Checker<'a> {
             self.show(req)
         )
         .with_help(format!(
-            "define or import a value of type `{}`, or pass one explicitly as \
-             `{fname} @use {{.{} = value}} ...`",
+            "define or import a value of type `{}`, or pass one explicitly as `{}`",
             self.show(req),
-            self.use_field_hint(fname, req)
+            self.explicit_use_call(fname, req, "value")
         ))
     }
 
@@ -698,10 +697,22 @@ impl<'a> Checker<'a> {
             names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ")
         )
         .with_help(format!(
-            "pass the one you mean explicitly as `{fname} @use {{.{} = {}}} ...`",
-            self.use_field_hint(fname, req),
-            names.first().map_or("value", |n| n.as_str())
+            "pass the one you mean explicitly as `{}`",
+            self.explicit_use_call(fname, req, names.first().map_or("value", |n| n.as_str()))
         ))
+    }
+
+    /// A call of `fname` passing `value` as its `@use` field for `req`. An
+    /// operator is written in its function form, `(+) @use {.d = v} a b`, since
+    /// the infix form has no place for an explicit argument.
+    fn explicit_use_call(&self, fname: StrId, req: Type, value: &str) -> String {
+        let field = self.use_field_hint(fname, req);
+        let name = fname.as_str();
+        if name.bytes().next().is_some_and(crate::lexer::data::is_operator_char) {
+            format!("({name}) @use {{.{field} = {value}}} a b")
+        } else {
+            format!("{name} @use {{.{field} = {value}}} ...")
+        }
     }
 
     /// The name of `fname`'s `@use` field whose type has `req`'s head, for a

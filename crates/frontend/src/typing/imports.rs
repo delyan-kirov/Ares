@@ -87,6 +87,52 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A name means one thing in a scope: an import's qualifier (a module
+    /// imported bare, or an alias) may not also name a type in scope, since
+    /// `A.B.{ .. }` reads `A` as a module or as a union by which one it is (#449).
+    pub(super) fn check_type_module_clashes(&mut self, program: &Program) {
+        let own: HashMap<StrId, Option<Span>> = self
+            .ast
+            .slice(program.items)
+            .iter()
+            .zip(self.ast.slice(program.spans))
+            .filter_map(|(item, span)| match item {
+                Item::Struct { name, .. } | Item::Union { name, .. } | Item::Alias { name, .. } => {
+                    Some((*name, span.name))
+                }
+                _ => None,
+            })
+            .collect();
+        let in_scope = |c: &Self, n: StrId| {
+            own.contains_key(&n)
+                || ((c.structs.contains_key(&n) || c.unions.contains_key(&n) || c.aliases.contains_key(&n))
+                    && !c.hidden_types.contains_key(&n)
+                    && !c.alias_types.contains_key(&n))
+        };
+        for item in self.ast.slice(program.items) {
+            let Item::Import { module, alias, span } = item else { continue };
+            let qualifier = match (alias, self.ast.slice(*module)) {
+                (Some(a), _) => *a,
+                (None, [one]) => *one,
+                _ => continue,
+            };
+            if !in_scope(self, qualifier) {
+                continue;
+            }
+            let what = if alias.is_some() { "an import alias" } else { "an imported module" };
+            let mut d = diag!(
+                Code::DuplicateSymbol, *span, 0,
+                "`{qualifier}` names both a type and {what}";
+                note: "in `{qualifier}.Name.{{ .. }}` it must be clear whether `{qualifier}` is a module or a union";
+                help: "rename the type, or import the module under another alias"
+            );
+            if let Some(Some(at)) = own.get(&qualifier) {
+                d = d.with_label(*at, "the type");
+            }
+            self.errors.push(d);
+        }
+    }
+
     /// The built-in `TARGET` namespace: facts about the compilation target that
     /// both engines supply as constants (see the machine's `target_value`).
     pub(super) fn register_target_namespace(&mut self) {
@@ -118,6 +164,7 @@ impl<'a> Checker<'a> {
     /// bare names (a program's own `sqrt` is not libm's).
     pub fn import_qualified(&mut self, other: &Checker<'a>) {
         let module = other.module_name;
+        self.module_scopes.insert(module);
         for (name, scheme) in &other.own_values {
             if other.private_names.contains(name) {
                 continue;
@@ -147,6 +194,7 @@ impl<'a> Checker<'a> {
         for &alias in aliases {
             self.alias_modules.insert(alias, module);
         }
+        self.module_scopes.extend(scopes.iter().copied());
         self.imported_builtins.extend(other.own_builtins.iter().copied());
         self.imported_pending |= other.awaits_splices();
         if !other.private_names.is_empty() {

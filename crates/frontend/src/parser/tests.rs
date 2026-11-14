@@ -950,3 +950,35 @@ fn arms_agree_on_their_pattern_count() {
         assert!(err.contains("pattern"), "{err}");
     }
 }
+
+#[test]
+fn a_ctx_parameter_fixes_to_a_named_use_field() {
+    let fixed = |src: &str| {
+        let err = parse(src).err().expect("`@ctx` is reserved");
+        assert!(err.to_string().contains("`@ctx` is reserved"), "{err}");
+        let edits: Vec<utilities::Edit> =
+            err.helps().iter().flat_map(|h| h.located_edits().unwrap_or_default()).cloned().collect();
+        match edits.is_empty() {
+            true => Err(err.helps().iter().map(|h| h.msg.clone()).collect::<String>()),
+            false => Ok(utilities::error::apply_edits(src, &edits)),
+        }
+    };
+    let m = "$ @mod M\n";
+    assert_eq!(
+        fixed(&format!("{m}$ same : @ctx IEq t -> t -> @Bool = \\d x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+    );
+    assert_eq!(
+        fixed(&format!("{m}$ same : @ctx IEq t -> t -> @Bool = \\d => \\x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+    );
+    assert_eq!(
+        fixed(&format!("{m}$ z : @ctx {{ISub t, IZero t}} -> t -> t = \\{{s, z}} x => s.sub x z.zero\n")),
+        Ok(format!("{m}$ z : @use {{s: ISub t, z: IZero t}} -> t -> t = \\x => s.sub x z.zero\n"))
+    );
+    // A tuple bound whole gives no field names: the help quotes the written type.
+    let help = fixed(&format!("{m}$ two : @ctx {{IEq t, IOrd t}} -> t -> @Bool = \\ds x => ds.0.eq x x\n"));
+    assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d0: IEq t, d1: IOrd t} -> ...`")), "{help:?}");
+    let help = fixed(&format!("{m}$ eq : @ctx IEq t -> t -> @Bool = eq_impl\n"));
+    assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d: IEq t} -> ...`")), "{help:?}");
+}

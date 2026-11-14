@@ -303,6 +303,28 @@ fn a_type_with_no_instance_is_reported() {
 }
 
 #[test]
+fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
+    let helps = |src: &str| {
+        with_checker(src, |checker, prog| {
+            let err = checker.check_program(prog).err().expect("a missing or ambiguous instance");
+            err.helps().iter().map(|h| h.msg.clone()).collect::<Vec<_>>().join("\n")
+        })
+    };
+    let m = "$ @mod M\n$ Money : @struct = c: @Int,\n";
+    let missing = helps(&format!("{m}$ m : Money = Money.{{1}} + Money.{{2}}"));
+    assert!(missing.contains("`(+) @use {.d = value} a b`"), "{missing}");
+    let several = helps(&format!(
+        "{m}$ add_a : IAdd Money = .{{ .add = \\a b => a }}\n\
+         $ add_b : IAdd Money = .{{ .add = \\a b => b }}\n\
+         $ m : Money = Money.{{1}} + Money.{{2}}"
+    ));
+    assert!(several.contains("`(+) @use {.d = add_a} a b`"), "{several}");
+    let named = "$ @mod M\n$ IBump : @struct t = bump: t -> t,\n\
+                 $ bump : @use {b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
+    assert!(helps(named).contains("`bump @use {.b = value} ...`"), "{}", helps(named));
+}
+
+#[test]
 fn cross_module_import_brings_in_types_and_values() {
     let dep_src = "$ @mod OPT\n\
                        $ Option : @union t = Some: t, None: {}\n\
@@ -447,7 +469,7 @@ fn effect_operation_is_bound_and_handler_types_result() {
     // types to the clause/`else` bodies' common type.
     let src = "$ @mod M\n\
                    $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
-                   $ tick : {} -> <State> @Int = \\u => let x = get {} in let _ = put (x + 1) in x\n\
+                   $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x\n\
                    $ run : @Int = do tick {} ctl k | get u => k 0 | put n => k {} | x => x";
     assert_eq!(type_of(src, "tick"), "{} -> <State> @Int");
     assert_eq!(type_of(src, "run"), "@Int");
@@ -538,7 +560,7 @@ fn unhandled_effect_is_a_compile_error() {
     // is rejected: the latent `<State>` cannot be subsumed into the empty ambient.
     let src = "$ @mod M\n\
                    $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
-                   $ bad : {} -> @Int = \\u => get {}";
+                   $ bad : {} -> @Int = get {}";
     assert!(
         errors(src).contains("not handled"),
         "expected an unhandled-effect error, got: {:?}",
@@ -567,7 +589,7 @@ fn open_row_entry_may_perform_any_effect() {
     // pure `<>` would reject this (see `unhandled_effect_is_a_compile_error`).
     let src = "$ @mod MAIN\n\
                $ Yell : @effect = shout : @Int -> {},\n\
-               $ main : {} -> <| e> @Int = \\u => let _ = Yell.shout 5 in 0";
+               $ main : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "", "open-row main should type-check");
     assert_eq!(type_of(src, "main"), "{} -> <Yell | a> @Int");
 }
@@ -588,7 +610,7 @@ fn signature_row_tail_stays_open() {
     // Unlike a type variable, a row tail may be extended by the body (#270).
     let src = "$ @mod M\n\
                $ Yell : @effect = shout : @Int -> {},\n\
-               $ f : {} -> <| e> @Int = \\u => let _ = Yell.shout 5 in 0";
+               $ f : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "");
 }
 
@@ -641,7 +663,7 @@ fn build_is_the_only_io_capable_compile_time_context() {
     // A `@build`-shaped row handles both `@Meta` and `@IO`.
     assert_eq!(
         errors(&format!(
-            "$ @mod M\n{io_fn}$ b : {{}} -> <@Meta, @IO> @Code = \\_ => \
+            "$ @mod M\n{io_fn}$ b : {{}} -> <@Meta, @IO> @Code = \
              shout \"hi\"; \"$ x : @Int = 1\""
         )),
         "",
@@ -717,7 +739,7 @@ fn only_the_one_entry_signature_is_accepted() {
         is_entry_type(checker.types(), ty)
     };
     assert!(entry("$ @mod MAIN\n$ @main : @Vec @Str -> <@IO> @Int = \\args => 0"));
-    assert!(!entry("$ @mod MAIN\n$ @main : {} -> <@IO> @Int = \\u => 0"));
+    assert!(!entry("$ @mod MAIN\n$ @main : {} -> <@IO> @Int = 0"));
     assert!(!entry("$ @mod MAIN\n$ @main : @Vec @Str -> @Int = \\args => 0"));
     assert!(!entry("$ @mod MAIN\n$ @main : @Vec @Int -> <@IO> @Int = \\args => 0"));
     assert!(!entry("$ @mod MAIN\n$ @main : @Vec @Str -> <@IO> {} = \\args => {}"));
@@ -1182,7 +1204,7 @@ fn unreachable_arms_warn() {
 #[test]
 fn handler_value_arms_are_checked() {
     let src = "$ @mod T\n$ Exn : @effect = throw : @Str -> a,\n$ M : @union = Hit: {@Int}, Miss,\n\
-               $ g : {} -> <Exn> M = \\u => M.Miss\n\
+               $ g : {} -> <Exn> M = M.Miss\n\
                $ f : @Int = do g {} ctl k | Exn.throw m => 0 | .Hit.{ v } => v\n";
     let (err, _) = coverage(src);
     assert!(err.contains("value arms do not cover `M.Miss`"), "{err}");
@@ -1236,6 +1258,50 @@ fn a_refutable_sole_parameter_fixes_to_a_multi_arm_lambda() {
     // With an annotation or a second parameter the lambda is not one arm away.
     assert_eq!(fixed(&format!("{m}$ g : M @Int -> @Int -> @Int = \\.Yes.{{ x }} y => x\n")), None);
     assert_eq!(fixed(&format!("{m}$ h : M @Int -> @Int = \\(.Yes.{{ x }}: M @Int) => x\n")), None);
+}
+
+#[test]
+fn a_refutable_let_fixes_to_a_match() {
+    let m = "$ @mod T\n$ M : @union a = No, Yes: {a},\n";
+    let fixed = |src: &str| {
+        with_checker(src, |checker, prog| {
+            let err = checker.check_program(prog).err().expect("a refutable `let`");
+            assert!(err.to_string().contains("refutable pattern in a `let` binding"), "{err}");
+            let edits: Vec<utilities::Edit> = err.helps().iter().flat_map(|h| h.located_edits().unwrap_or_default()).cloned().collect();
+            (!edits.is_empty()).then(|| utilities::error::apply_edits(src, &edits))
+        })
+    };
+    let src = format!("{m}$ f : M @Int -> @Int = \\o => let .Yes.{{ x }} = o in x + 1\n");
+    let want = format!("{m}$ f : M @Int -> @Int = \\o => o |> \\ | .Yes.{{ x }} => x + 1 | _ => ???\n");
+    assert_eq!(fixed(&src), Some(want));
+    // A body ending in a construct that would take the new arm is parenthesized.
+    let src = format!("{m}$ f : M @Int -> @Int = \\o => let .Yes.{{ x }} = o in let y = x in y\n");
+    let want = format!("{m}$ f : M @Int -> @Int = \\o => o |> \\ | .Yes.{{ x }} => (let y = x in y) | _ => ???\n");
+    assert_eq!(fixed(&src), Some(want));
+    // The annotation would be lost, so an annotated `let` gets prose help only.
+    assert_eq!(fixed(&format!("{m}$ f : M @Int -> @Int = \\o => let .Yes.{{ x }}: M @Int = o in x\n")), None);
+}
+
+#[test]
+fn a_lambda_over_a_signature_bound_parameter_fixes_by_dropping_it() {
+    let fixed = |src: &str| {
+        with_checker(src, |checker, prog| {
+            let err = checker.check_program(prog).err().expect("a lambda with a parameter too many");
+            assert!(err.to_string().contains("already binds"), "{err}");
+            let edits: Vec<utilities::Edit> = err.helps().iter().flat_map(|h| h.located_edits().unwrap_or_default()).cloned().collect();
+            utilities::error::apply_edits(src, &edits)
+        })
+    };
+    let m = "$ @mod T\n";
+    assert_eq!(fixed(&format!("{m}$ g : {{}} -> @Int = \\_ => 5\n")), format!("{m}$ g : {{}} -> @Int = 5\n"));
+    assert_eq!(
+        fixed(&format!("{m}$ h : {{x: @Int, y: @Int}} -> @Int = \\p => p.x\n")),
+        format!("{m}$ h : (p: {{x: @Int, y: @Int}}) -> @Int = p.x\n")
+    );
+    assert_eq!(
+        fixed(&format!("{m}$ k : (a: @Int) -> @Int -> @Int = \\a n => a + n\n")),
+        format!("{m}$ k : (a: @Int) -> @Int -> @Int = \\n => a + n\n")
+    );
 }
 
 const ROPE: &str = "$ @mod T\n$ Rope : @union = Leaf: {@Int}, Node: {Rope, Rope},\n\
@@ -1363,7 +1429,7 @@ const BOX_EFFECT: &str = "$ @mod M\n$ Box : @effect a = take : @Int -> a,\n";
 
 #[test]
 fn an_effect_parameter_is_fixed_by_its_row() {
-    let src = format!("{BOX_EFFECT}$ f : {{}} -> <Box @Int> @Int = \\u => Box.take 1 + Box.take 2\n");
+    let src = format!("{BOX_EFFECT}$ f : {{}} -> <Box @Int> @Int = Box.take 1 + Box.take 2\n");
     assert_eq!(type_of(&src, "f"), "{} -> <Box @Int> @Int");
 }
 
@@ -1371,7 +1437,7 @@ fn an_effect_parameter_is_fixed_by_its_row() {
 fn one_handler_serves_one_instance() {
     let src = format!(
         "{BOX_EFFECT}\
-         $ f : {{}} -> <Box> @Int = \\u => let s : @Str = Box.take 0 in Box.take 1\n"
+         $ f : {{}} -> <Box> @Int = let s : @Str = Box.take 0 in Box.take 1\n"
     );
     assert!(errors(&src).contains("expected @Int, found @Str"), "got: {:?}", errors(&src));
 }

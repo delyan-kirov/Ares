@@ -248,6 +248,9 @@ pub enum Applicability {
 pub struct Edit {
     pub span: Span,
     pub text: String,
+    /// When set, the replacement is the source text here instead of `text`, so a
+    /// fix can move code whose text the diagnostic's producer never saw.
+    pub copy: Option<Span>,
 }
 
 impl Edit {
@@ -255,6 +258,24 @@ impl Edit {
         Edit {
             span,
             text: text.into(),
+            copy: None,
+        }
+    }
+
+    /// Replace `span` with the source text at `from`.
+    pub fn copy(span: Span, from: Span) -> Edit {
+        Edit {
+            span,
+            text: String::new(),
+            copy: Some(from),
+        }
+    }
+
+    /// The replacement text, against the `source` the spans index.
+    pub fn text_in<'s>(&'s self, source: &'s str) -> &'s str {
+        match self.copy {
+            Some(from) => from.slice(source),
+            None => &self.text,
         }
     }
 }
@@ -351,7 +372,13 @@ impl Diagnostic {
         for h in &mut self.helps {
             h.edits = std::mem::take(&mut h.edits)
                 .into_iter()
-                .filter_map(|e| Some(Edit { span: f(e.span)?, ..e }))
+                .filter_map(|e| {
+                    let copy = match e.copy {
+                        Some(from) => Some(f(from)?),
+                        None => None,
+                    };
+                    Some(Edit { span: f(e.span)?, copy, ..e })
+                })
                 .collect();
         }
         self
@@ -575,7 +602,7 @@ fn patched_region(source: &str, edits: &[Edit]) -> String {
     let hi = source[last..].find('\n').map_or(source.len(), |i| last + i);
     let shifted: Vec<Edit> = edits
         .iter()
-        .map(|e| Edit::new(Span::new(e.span.start - lo, e.span.end - lo), e.text.clone()))
+        .map(|e| Edit::new(Span::new(e.span.start - lo, e.span.end - lo), e.text_in(source)))
         .collect();
     let region = apply_edits(&source[lo..hi], &shifted);
     let mut out = String::from("  |\n");
@@ -601,7 +628,7 @@ pub fn apply_edits(source: &str, edits: &[Edit]) -> String {
     for e in sorted.iter().rev() {
         let end = e.span.end.min(out.len());
         let start = e.span.start.min(end);
-        out.replace_range(start..end, &e.text);
+        out.replace_range(start..end, e.text_in(source));
     }
     out
 }
@@ -614,7 +641,7 @@ fn patched(source: &str, edits: &[Edit]) -> String {
     if edits.is_empty() {
         return String::new();
     }
-    if edits.iter().any(|e| e.span.slice(source).contains('\n') || e.text.contains('\n')) {
+    if edits.iter().any(|e| e.span.slice(source).contains('\n') || e.text_in(source).contains('\n')) {
         return patched_region(source, edits);
     }
     let starts = line_starts(source);
@@ -641,13 +668,13 @@ fn patched(source: &str, edits: &[Edit]) -> String {
             marks.extend(kept.chars().map(|c| if c == '\t' { '\t' } else { ' ' }));
             let glyph = if e.span.is_empty() {
                 '+'
-            } else if e.text.is_empty() {
+            } else if e.text_in(source).is_empty() {
                 '-'
             } else {
                 '~'
             };
-            new_line.push_str(&e.text);
-            let n = e.text.chars().count().max(usize::from(glyph == '-'));
+            new_line.push_str(e.text_in(source));
+            let n = e.text_in(source).chars().count().max(usize::from(glyph == '-'));
             marks.extend(std::iter::repeat_n(glyph, n));
             cursor = e.span.end;
         }
