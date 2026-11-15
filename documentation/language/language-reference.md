@@ -397,6 +397,11 @@ names `Matrix m n T`. `@Tensor` heads its application (as an argument it is
 parenthesized). A size is a literal, a size variable, or parenthesized arithmetic
 (`@Tensor (n + m) a`), decided by a canonical form. See section 9.
 
+A size is inferred when it has exactly one solution once equal terms cancel:
+passing a `@Tensor 5 @Int` where `@Tensor (n + 1) @Int` is expected makes `n` 4.
+An equation with several solutions (`n + m = 5`) waits until another use fixes
+one of its variables, and is an error if the definition ends first.
+
 ```ares
 $ v : @Tensor 3 @Int = [10, 20, 30]
 $ g : @Tensor 2 (@Tensor 2 @Int) = [ [1,2], [3,4] ]
@@ -556,6 +561,10 @@ $ sign : @Int -> @Int = \n =>
 `let pat = e in body`. One `let` has one binding; several nest, each scoping
 the rest (`let a = 1 in let b = a + 1 in b`). A binding is recursive exactly when its name occurs in its own body
 (no `let rec`). A binder may carry a type annotation.
+
+A local binding has one type, shared by every use: only globals are
+generalized. `let id = \x => x in {id 1, id "s"}` is a mismatch at the second
+use; a function needed at several types is a global with a signature.
 
 Simple:
 ```ares

@@ -213,11 +213,12 @@ impl<'a> Checker<'a> {
         }
         // A variable an unresolved context still mentions must stay monomorphic:
         // generalizing it would quantify the very type the search is waiting for,
-        // and a `let square = \x => x * x` would then resolve `IArith` against a
-        // quantified variable instead of the `@Int` its use site supplies.
+        // and the search would then resolve against a quantified variable instead
+        // of the type a use site supplies.
         for p in &self.ctx_pending {
             self.unifier.collect_vars(p.req, &mut out);
         }
+        self.unifier.postponed_vars(&mut out);
         out
     }
 }
@@ -1553,10 +1554,20 @@ impl<'a> Checker<'a> {
         })
     }
 
+    // Note [Local lets are monomorphic]
+    //
+    // Only a global is generalized: a local `let` has one type, shared by every
+    // use, as with GHC's MonoLocalBinds and OutsideIn(X). A local used at two
+    // types is a mismatch at the second use. Generalizing a local would quantify
+    // over metavariables the enclosing definition is still solving (a postponed
+    // size equation, a pending `@use`), which is why GHC gave it up; with
+    // dependent types the binder a polymorphic local needs is written, not
+    // inferred. A global's signature names its variables, so its quantifiers
+    // are written already.
+
     /// Type the binding of the `let` node `node` whose body is `body` (both for
-    /// the refutable-pattern fix).
+    /// the refutable-pattern fix). See Note [Local lets are monomorphic].
     fn infer_binding(&mut self, b: &Binding, node: Aol<Expr>, body: Aol<Expr>) -> Result<()> {
-        self.unifier.enter_level();
         let declared = match self.pnode(b.pat) {
             Pattern::Var(name) => {
                 let name = *name;
@@ -1585,16 +1596,10 @@ impl<'a> Checker<'a> {
             self.unifier
                 .unify(*decl, value_ty, "in a recursive 'let' binding")?;
         }
-        self.unifier.leave_level();
-        let mono = self.pending_vars();
-        match declared {
-            Some(decl) => self.unifier.generalize_except(decl, &mono),
-            None => {
-                self.unifier.generalize_except(value_ty, &mono);
-                self.type_pattern(b.pat, value_ty)?;
-                let rewrite = b.sig.is_none().then_some((node, b.value, body));
-                self.check_irrefutable(b.pat, Refuted::Let(rewrite))?;
-            }
+        if declared.is_none() {
+            self.type_pattern(b.pat, value_ty)?;
+            let rewrite = b.sig.is_none().then_some((node, b.value, body));
+            self.check_irrefutable(b.pat, Refuted::Let(rewrite))?;
         }
         Ok(())
     }

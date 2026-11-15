@@ -5,12 +5,12 @@
 //! Rémy, "Extension of ML type system with a sorted equational theory on types"
 //! (INRIA RR-1766, 1992). Each variable is `Unbound` at some
 //! [`Level`], `Linked` to another type once unified, or
-//! `Generic` once generalized. Entering a `let` right-hand side bumps
-//! the current level; leaving it, any variable still unbound at a deeper level is
+//! `Generic` once generalized. Entering a global's definition bumps the
+//! current level; leaving it, any variable still unbound at a deeper level is
 //! safe to quantify. The occurs check lowers levels as it walks, which is what
 //! keeps that sound. See Note [Rémy levels].
 //!
-//! Unification compares weak head normal forms ([`Unifier::whnf`]): variable
+//! Unification compares weak head normal forms (`Unifier::whnf`): variable
 //! links followed, glued aliases unfolded, and a size evaluated to its
 //! polynomial. Two theories ride on top of plain structural unification, each in
 //! its own module: [`rows`] (scoped-label rows for records and effects) and
@@ -72,6 +72,12 @@ pub struct Unifier {
     /// the other variable is bound to one of these, never this one to it (see
     /// [`Unifier::keeping`]).
     keep: HashSet<VarId>,
+    /// Size equations waiting for a binding to make them patterns, `None` once
+    /// solved. See Note [Size patterns].
+    postponed: Vec<Option<sizes::Postponed>>,
+    /// Set while [`Unifier::wake`] runs, so a binding it makes does not wake
+    /// the equations again from inside.
+    waking: bool,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -91,6 +97,10 @@ enum Undo {
     NatVar(VarId),
     /// Drop this id from the integer-literal set again.
     IntVar(VarId),
+    /// Drop the last postponed size equation again.
+    Postponed,
+    /// Put this postponed size equation back, unsolved.
+    Woken(usize, sizes::Postponed),
 }
 
 /// A checkpoint of the [`Unifier`] state, taken by [`Unifier::save`] and rewound by
@@ -117,6 +127,8 @@ impl Unifier {
             trail: Vec::new(),
             found_first: false,
             keep: HashSet::new(),
+            postponed: Vec::new(),
+            waking: false,
         }
     }
 
@@ -133,12 +145,13 @@ impl Unifier {
 
     // Note [Rémy levels]
     //
-    // Generalizing a `let` means quantifying the variables of its type that do
+    // Generalizing a global means quantifying the variables of its type that do
     // not occur in the environment. Scanning the environment for them at every
-    // `let` is quadratic. Rémy's levels make it a comparison instead: the
-    // unifier keeps a current level, bumped on entering a `let` right-hand side
-    // (or a group of mutually recursive globals) and dropped on leaving it, and
-    // every fresh variable records the level it was born at.
+    // global is quadratic. Rémy's levels make it a comparison instead: the
+    // unifier keeps a current level, bumped on entering a global (or a group of
+    // mutually recursive globals) and dropped on leaving it, and every fresh
+    // variable records the level it was born at. A local `let` is not
+    // generalized. See Note [Local lets are monomorphic].
     //
     // A variable can only escape into the environment by being unified with a
     // type that mentions an outer variable. So binding a variable at level `l`
@@ -154,7 +167,7 @@ impl Unifier {
     // (`generalize_except`), the monomorphism restriction: it must stay a
     // unification variable until the requirement pins it.
 
-    /// Enter a deeper `let` scope; variables created here become generalizable
+    /// Enter a deeper definition; variables created here become generalizable
     /// once [`Unifier::leave_level`] runs. See Note [Rémy levels].
     pub fn enter_level(&mut self) {
         self.level += 1;
@@ -263,6 +276,10 @@ impl Unifier {
                 Undo::IntVar(id) => {
                     self.int_vars.remove(&id);
                 }
+                Undo::Postponed => {
+                    self.postponed.pop();
+                }
+                Undo::Woken(i, c) => self.postponed[i] = Some(c),
             }
         }
         self.vars.truncate(save.vars);
@@ -507,7 +524,7 @@ impl Unifier {
         self.check_kind(id, ty)?;
         self.occurs_and_adjust(id, level, ty)?;
         self.set_var(id, VarState::Linked(ty));
-        Ok(())
+        self.wake()
     }
 
     /// The occurs check, fused with the level-lowering that generalization
