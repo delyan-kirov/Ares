@@ -6,17 +6,18 @@
 //! over Z/2^64 (a sum of coefficient-times-monomial terms, like terms combined,
 //! sorted), and structural equality of polynomials decides the rest. A
 //! polynomial that is a lone variable binds that variable, which is how a size
-//! is inferred.
+//! is inferred. Evaluating a size is the `Nat` case of [`Unifier::whnf`], so
+//! sizes are compared by the same normaliser as every other type.
 //!
 //! This module also keeps the kind discipline (a `Nat` variable binds only a
 //! size).
 //!
 //! Entry points: [`Unifier::fresh_nat`], [`Unifier::nat_value`]; plain
-//! [`Unifier::unify`] dispatches here for sizes.
+//! [`Unifier::unify`] comes here when both normal forms are sizes.
 
 use utilities::{Code, Diagnostic, Result, Span};
 
-use super::{is_float_name, Undo, Unifier};
+use super::{is_float_name, Undo, Unifier, Whnf};
 use crate::typing::types::{Type, TypeNode, VarId};
 
 
@@ -172,56 +173,44 @@ impl Unifier {
 // ## Size equality
 
 impl Unifier {
-    /// Is `ty` a type-level size (a `Nat` literal or a `+`/`*` expression)? A bare
-    /// size *variable* is handled by unify's `Var` arms, so it is not needed here.
-    pub(super) fn is_size(&self, ty: Type) -> bool {
-        matches!(
-            self.head(ty),
-            TypeNode::Nat(_) | TypeNode::NatAdd(..) | TypeNode::NatMul(..)
-        )
-    }
-
-    /// Unify two sizes by their canonical polynomial over Z/2^64. Equal polynomials
-    /// unify; otherwise, if one whole side is a lone unbound variable not occurring
-    /// in the other, bind it (the forward-eval rule). No back-solving of embedded
-    /// variables (e.g. `n + 1 == 5` is not solved), which keeps this decidable.
-    pub(super) fn unify_size(&mut self, a: Type, b: Type, where_: &str) -> Result<()> {
-        let pa = self.normalize_size(a);
-        let pb = self.normalize_size(b);
+    /// Unify two sizes `a` and `b`, evaluated to the polynomials `pa` and `pb`.
+    /// Equal polynomials unify; otherwise, if one whole side is a lone unbound
+    /// variable not occurring in the other, bind it (the forward-eval rule). No
+    /// back-solving of embedded variables (e.g. `n + 1 == 5` is not solved),
+    /// which keeps this decidable.
+    pub(super) fn unify_size(&mut self, pa: Poly, pb: Poly, a: Type, b: Type, where_: &str) -> Result<()> {
         if pa == pb {
             return Ok(());
         }
-        if let Some(v) = lone_var(&pa) {
-            if !poly_has_var(&pb, v) {
-                return self.bind(v, b);
-            }
+        let va = lone_var(&pa).filter(|&v| !poly_has_var(&pb, v));
+        let vb = lone_var(&pb).filter(|&v| !poly_has_var(&pa, v));
+        match (va, vb) {
+            // A kept variable is bound last (see `Unifier::keeping`).
+            (Some(v), Some(w)) if self.keep.contains(&v) && !self.keep.contains(&w) => self.bind(w, a),
+            (Some(v), _) => self.bind(v, b),
+            (None, Some(w)) => self.bind(w, a),
+            (None, None) => Err(Diagnostic::error(
+                Code::TypeMismatch,
+                Span::at(0),
+                0,
+                format!(
+                    "size mismatch {where_}: cannot unify `{}` with `{}`",
+                    show_poly(&pa),
+                    show_poly(&pb)
+                ),
+            )),
         }
-        if let Some(v) = lone_var(&pb) {
-            if !poly_has_var(&pa, v) {
-                return self.bind(v, a);
-            }
-        }
-        Err(Diagnostic::error(
-            Code::TypeMismatch,
-            Span::at(0),
-            0,
-            format!(
-                "size mismatch {where_}: cannot unify `{}` with `{}`",
-                show_poly(&pa),
-                show_poly(&pb)
-            ),
-        ))
     }
 
     /// A size's value when it has no variables left (`2 + 3` is 5).
     pub fn nat_value(&self, ty: Type) -> Option<u64> {
-        if !matches!(self.head(ty), TypeNode::Nat(_) | TypeNode::NatAdd(..) | TypeNode::NatMul(..)) {
-            return None;
-        }
-        match self.normalize_size(ty).as_slice() {
-            [] => Some(0),
-            [(k, vars)] if vars.is_empty() => Some(*k),
-            _ => None,
+        match self.whnf(ty) {
+            Whnf::Size(p) => match p.as_slice() {
+                [] => Some(0),
+                [(k, vars)] if vars.is_empty() => Some(*k),
+                _ => None,
+            },
+            Whnf::Node(_) => None,
         }
     }
 
@@ -247,7 +236,7 @@ impl Unifier {
 /// A size normalized to a polynomial over Z/2^64: `(coefficient, sorted variable
 /// monomial)` terms, canonical (like terms combined, zeros dropped, sorted), so
 /// structural equality decides size equality (`n + m` and `m + n` share a form).
-type Poly = Vec<(u64, Vec<VarId>)>;
+pub(super) type Poly = Vec<(u64, Vec<VarId>)>;
 
 /// Canonicalize: sort each monomial, combine like terms (wrapping add), drop zeros.
 fn canon(mut terms: Poly) -> Poly {
