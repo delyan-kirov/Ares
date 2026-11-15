@@ -1,0 +1,30 @@
+$ @mod EFFECT_CURRIED_STATE
+
+# A parameter-passing handler may thread two curried state arguments, while
+# another effect (`Tell`) passes through it to an outer handler.
+
+$ Get : @effect = get : {} -> @Int,
+$ Tell : @effect = tell : @Int -> {},
+
+$ two : ({} -> <Get, Tell> @Int) -> <Tell> @Int = \body =>
+    let go =
+        do body {}
+        ctl k | get u => \x y => (k (x + y)) x y | v => \x y => v
+    in
+    go 1 2
+
+$ told : ({} -> <Tell> @Int) -> @Int = \body =>
+    let h =
+        do body {}
+        ctl k | tell n => \s => (k {}) (s + n) | v => \s => v + s
+    in
+    h 0
+
+$ step : {} -> <Get, Tell> @Int = let a = get {} in tell a; a * 10
+
+# `get` sees 1 + 2, `tell 3` adds 3, the body returns 30.
+$ result : @Int = told <| \_ => two step
+
+$ test : @Int = if result == 33 => 0 else 1
+
+$ &assert (test == 0) "EFFECT_CURRIED_STATE: a check failed"

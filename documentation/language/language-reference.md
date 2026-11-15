@@ -1189,7 +1189,13 @@ never mentions `k`, as in an exception, captures nothing at all.
 A function's type carries the effects it may perform as a row on the arrow.
 Absent row means pure. A row variable makes it effect-polymorphic. A handler
 discharges the effects it handles. A performed-but-unhandled effect is a compile
-error. Subsumption: a pure function is callable in any effectful context.
+error. Subsumption: a pure function is callable in any effectful context, and
+a function passed as an argument may perform fewer effects than its parameter
+allows: `compose` shares one row `<e>` between its two functions, yet
+`compose shout double` composes an `<@IO>` function with a pure one. Arrows
+relate the usual way round, covariant in results and contravariant in
+parameters, so a function that only accepts pure callbacks is not one that
+accepts effectful ones.
 
 ```ares
 $ map : (a -> <e> b) -> @Vec a -> <e> @Vec b = \f xs =>

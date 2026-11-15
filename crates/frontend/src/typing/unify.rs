@@ -354,8 +354,24 @@ impl Unifier {
     /// position. A mismatch says "expected E, found F" the right way round, and
     /// when it lies inside a larger type, a note shows both whole types.
     pub fn unify_expected(&mut self, found: Type, expected: Type, where_: &str) -> Result<()> {
+        self.expected_by(found, expected, where_, Unifier::unify)
+    }
+
+    /// [`Self::unify_expected`], but a function may be used where one with more
+    /// effects is expected (see [`Self::subsume`]).
+    pub fn subsume_expected(&mut self, found: Type, expected: Type, where_: &str) -> Result<()> {
+        self.expected_by(found, expected, where_, Unifier::subsume)
+    }
+
+    fn expected_by(
+        &mut self,
+        found: Type,
+        expected: Type,
+        where_: &str,
+        relate: fn(&mut Unifier, Type, Type, &str) -> Result<()>,
+    ) -> Result<()> {
         let saved = std::mem::replace(&mut self.found_first, true);
-        let r = self.unify(found, expected, where_);
+        let r = relate(self, found, expected, where_);
         self.found_first = saved;
         r.map_err(|d| {
             if d.root().code != Code::TypeMismatch {
@@ -431,6 +447,21 @@ impl Unifier {
                 Some(r) => r,
                 None => Err(self.mismatch(written_a, written_b, where_)),
             },
+        }
+    }
+
+    /// Require a value of type `found` to be usable at type `expected`. Two
+    /// arrows relate by effect subsumption: the found function's row must be a
+    /// subrow of the expected one, contravariantly in parameters and covariantly
+    /// in results. Everything else unifies.
+    pub fn subsume(&mut self, found: Type, expected: Type, where_: &str) -> Result<()> {
+        match (self.head(found), self.head(expected)) {
+            (TypeNode::Arrow(fp, fr, fe), TypeNode::Arrow(ep, er, ee)) => {
+                self.subsume(ep, fp, where_)?;
+                self.subsume(fr, er, where_)?;
+                self.subrow(fe, ee, where_)
+            }
+            _ => self.unify(found, expected, where_),
         }
     }
 
