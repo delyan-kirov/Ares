@@ -154,8 +154,7 @@ handler.
 
 **Runtime use (#187).** `@lex`, `@token_kind`/`@token_text`, `@parse`,
 `@parse_str`, `@code`, `@format` and `@eval` are pure, so ordinary code may
-call them (`examples/META_RUNTIME.ares`). `tools/README_GEN.ares` runs `@format`
-under `$ @e` to lay out the README's snippets at compile time. `@eval` is pure
+call them (`examples/META_RUNTIME.ares`). `@eval` is pure
 because its fragment is checked as a pure def body (a closed effect row, unlike
 the shell's open one), so it computes a value from its source and nothing else.
 Each engine needs the compiler at run time to serve them:
