@@ -4,20 +4,25 @@
 //! a `Nat` variable, or a `+`/`*` of sizes. Two sizes are equal when their
 //! normal forms are: `normalize_size` turns a size into a polynomial
 //! over Z/2^64 (a sum of coefficient-times-monomial terms, like terms combined,
-//! sorted), and structural equality of polynomials decides the rest. A
-//! polynomial that is a lone variable binds that variable, which is how a size
-//! is inferred. Evaluating a size is the `Nat` case of [`Unifier::whnf`], so
-//! sizes are compared by the same normaliser as every other type.
+//! sorted), and structural equality of polynomials decides the rest.
+//! Evaluating a size is the `Nat` case of `Unifier::whnf`, so sizes are
+//! compared by the same normaliser as every other type.
+//!
+//! A size is inferred by pattern unification: once equal terms cancel, a side
+//! that is a lone unbound variable binds it, and an equation with no unique
+//! solution yet is postponed until a later binding makes it one.
+//! See Note [Size patterns].
 //!
 //! This module also keeps the kind discipline (a `Nat` variable binds only a
 //! size).
 //!
-//! Entry points: [`Unifier::fresh_nat`], [`Unifier::nat_value`]; plain
-//! [`Unifier::unify`] comes here when both normal forms are sizes.
+//! Entry points: [`Unifier::fresh_nat`], [`Unifier::nat_value`],
+//! [`Unifier::unsolved_size`]; plain [`Unifier::unify`] comes here when both
+//! normal forms are sizes.
 
 use utilities::{Code, Diagnostic, Result, Span};
 
-use super::{is_float_name, Undo, Unifier, Whnf};
+use super::{is_float_name, Undo, Unifier, VarState, Whnf};
 use crate::typing::types::{Type, TypeNode, VarId};
 
 
@@ -173,32 +178,175 @@ impl Unifier {
 // ## Size equality
 
 impl Unifier {
+    // Note [Size patterns]
+    //
+    // A size equation `a = b` is solved the way pattern unification solves a
+    // metavariable: only when the solution is unique. The unbound variables of
+    // a size are its metavariables; a `Generic` one is a parameter of the
+    // signature being checked and stays rigid.
+    //
+    // Both sides are evaluated to polynomials and the common part is cancelled
+    // (`n + 1 = 5` becomes `n = 4`, `3n = n + m` becomes `2n = m`). Cancelling is
+    // sound in any additive group, so in Z/2^64 too. What is left is a pattern
+    // when one side is a lone metavariable that does not occur in the other,
+    // and then the other side is its unique solution. With no metavariable left
+    // the sizes differ.
+    //
+    // Anything else (`n + m = 5`, `2n = 6`) has many solutions or none we can
+    // write, so it is postponed, not refused. Every later binding wakes the
+    // postponed equations, since solving `n` may turn `n + m = 5` into a pattern
+    // (`Unifier::wake`). One still postponed when its definition is checked is
+    // an error (`Unifier::unsolved_size`). Solving `2n = 6` would need division,
+    // and in Z/2^64 it has two solutions; `n + 1 = m` needs subtraction, which a
+    // size cannot spell. Both are left to an annotation.
+
     /// Unify two sizes `a` and `b`, evaluated to the polynomials `pa` and `pb`.
-    /// Equal polynomials unify; otherwise, if one whole side is a lone unbound
-    /// variable not occurring in the other, bind it (the forward-eval rule). No
-    /// back-solving of embedded variables (e.g. `n + 1 == 5` is not solved),
-    /// which keeps this decidable.
+    /// See Note [Size patterns].
     pub(super) fn unify_size(&mut self, pa: Poly, pb: Poly, a: Type, b: Type, where_: &str) -> Result<()> {
+        match self.size_step(&pa, &pb, a, b) {
+            Step::Equal => Ok(()),
+            Step::Bind(v, t) => self.bind(v, t),
+            Step::Postpone => {
+                self.postponed.push(Some(Postponed { a, b, where_: where_.to_string() }));
+                self.trail.push(Undo::Postponed);
+                Ok(())
+            }
+            Step::Differ => Err(self.size_mismatch(a, b, where_)),
+        }
+    }
+
+    /// What the size equation `a = b` (as polynomials `pa`, `pb`) calls for now.
+    fn size_step(&self, pa: &Poly, pb: &Poly, a: Type, b: Type) -> Step {
         if pa == pb {
+            return Step::Equal;
+        }
+        let (l, r) = cancel(pa, pb);
+        let meta = |p: &Poly, other: &Poly| {
+            lone_var(p).filter(|&v| self.is_unbound(v) && !poly_has_var(other, v))
+        };
+        // The solution is the other side as written when nothing was cancelled
+        // from it, so a message shows the size the user wrote.
+        let value = |side: &Poly, whole: &Poly, written: Type| match side == whole {
+            true => written,
+            false => self.reify(side),
+        };
+        match (meta(&l, &r), meta(&r, &l)) {
+            // A kept variable is bound last (see `Unifier::keeping`).
+            (Some(v), Some(w)) if self.keep.contains(&v) && !self.keep.contains(&w) => {
+                Step::Bind(w, value(&l, pa, a))
+            }
+            (Some(v), _) => Step::Bind(v, value(&r, pb, b)),
+            (None, Some(w)) => Step::Bind(w, value(&l, pa, a)),
+            (None, None) if self.has_meta(&l) || self.has_meta(&r) => Step::Postpone,
+            (None, None) => Step::Differ,
+        }
+    }
+
+    fn is_unbound(&self, v: VarId) -> bool {
+        matches!(self.vars[v as usize], VarState::Unbound { .. })
+    }
+
+    fn has_meta(&self, p: &Poly) -> bool {
+        p.iter().any(|(_, m)| m.iter().any(|&v| self.is_unbound(v)))
+    }
+
+    /// A polynomial as a size: `Nat`, `Var`, and `+`/`*` of them.
+    fn reify(&self, p: &Poly) -> Type {
+        let term = |(c, m): &(u64, Vec<VarId>)| {
+            let vars = m.iter().map(|&v| self.types.var(v));
+            let product = vars.reduce(|x, y| self.types.add(TypeNode::NatMul(x, y)));
+            match (product, *c) {
+                (None, c) => self.types.nat(c),
+                (Some(t), 1) => t,
+                (Some(t), c) => self.types.add(TypeNode::NatMul(self.types.nat(c), t)),
+            }
+        };
+        p.iter()
+            .map(term)
+            .reduce(|x, y| self.types.add(TypeNode::NatAdd(x, y)))
+            .unwrap_or_else(|| self.types.nat(0))
+    }
+
+    fn size_mismatch(&self, a: Type, b: Type, where_: &str) -> Diagnostic {
+        let (a, b) = if self.found_first { (b, a) } else { (a, b) };
+        let shown = self.show_all(&[a, b]);
+        Diagnostic::error(
+            Code::TypeMismatch,
+            Span::at(0),
+            0,
+            format!("size mismatch {where_}: expected `{}`, found `{}`", shown[0], shown[1]),
+        )
+    }
+
+    /// Retry the postponed size equations after a binding, until none moves.
+    /// A binding one of them makes wakes nothing itself: this loop sees it.
+    /// See Note [Size patterns].
+    pub(super) fn wake(&mut self) -> Result<()> {
+        if self.waking || self.postponed.iter().all(Option::is_none) {
             return Ok(());
         }
-        let va = lone_var(&pa).filter(|&v| !poly_has_var(&pb, v));
-        let vb = lone_var(&pb).filter(|&v| !poly_has_var(&pa, v));
-        match (va, vb) {
-            // A kept variable is bound last (see `Unifier::keeping`).
-            (Some(v), Some(w)) if self.keep.contains(&v) && !self.keep.contains(&w) => self.bind(w, a),
-            (Some(v), _) => self.bind(v, b),
-            (None, Some(w)) => self.bind(w, a),
-            (None, None) => Err(Diagnostic::error(
+        self.waking = true;
+        let r = self.wake_all();
+        self.waking = false;
+        r
+    }
+
+    fn wake_all(&mut self) -> Result<()> {
+        loop {
+            let mut progress = false;
+            for i in 0..self.postponed.len() {
+                let Some(c) = self.postponed[i].clone() else { continue };
+                let (pa, pb) = (self.normalize_size(c.a), self.normalize_size(c.b));
+                let step = self.size_step(&pa, &pb, c.a, c.b);
+                if let Step::Postpone = step {
+                    continue;
+                }
+                self.postponed[i] = None;
+                self.trail.push(Undo::Woken(i, c.clone()));
+                progress = true;
+                match step {
+                    Step::Equal | Step::Postpone => {}
+                    Step::Bind(v, t) => self.bind(v, t)?,
+                    Step::Differ => return Err(self.size_mismatch(c.a, c.b, &c.where_)),
+                }
+            }
+            if !progress {
+                return Ok(());
+            }
+        }
+    }
+
+    /// The first size equation still postponed, as an error, after dropping
+    /// them all. Run where a definition is done: what is left has no unique
+    /// solution. See Note [Size patterns].
+    pub fn unsolved_size(&mut self) -> Option<Diagnostic> {
+        let mut first = None;
+        for i in 0..self.postponed.len() {
+            if let Some(c) = self.postponed[i].take() {
+                self.trail.push(Undo::Woken(i, c.clone()));
+                first.get_or_insert(c);
+            }
+        }
+        let c = first?;
+        let shown = self.show_all(&[c.a, c.b]);
+        Some(
+            Diagnostic::error(
                 Code::TypeMismatch,
                 Span::at(0),
                 0,
-                format!(
-                    "size mismatch {where_}: cannot unify `{}` with `{}`",
-                    show_poly(&pa),
-                    show_poly(&pb)
-                ),
-            )),
+                format!("cannot solve the size equation `{} = {}` {}", shown[0], shown[1], c.where_),
+            )
+            .with_note("a size is inferred only when one side is a single unknown once equal terms cancel")
+            .with_help("write the sizes in a type annotation"),
+        )
+    }
+
+    /// The variables the postponed size equations mention, which must stay
+    /// unification variables until they are solved.
+    pub fn postponed_vars(&self, out: &mut std::collections::HashSet<VarId>) {
+        for c in self.postponed.iter().flatten() {
+            self.collect_vars(c.a, out);
+            self.collect_vars(c.b, out);
         }
     }
 
@@ -237,6 +385,56 @@ impl Unifier {
 /// monomial)` terms, canonical (like terms combined, zeros dropped, sorted), so
 /// structural equality decides size equality (`n + m` and `m + n` share a form).
 pub(super) type Poly = Vec<(u64, Vec<VarId>)>;
+
+/// A size equation that is not a pattern yet (`n + m = 5`), kept until a
+/// binding elsewhere makes it one. See Note [Size patterns].
+#[derive(Clone)]
+pub(super) struct Postponed {
+    a: Type,
+    b: Type,
+    where_: String,
+}
+
+/// What a size equation calls for. See [`Unifier::size_step`].
+enum Step {
+    Equal,
+    Bind(VarId, Type),
+    Postpone,
+    Differ,
+}
+
+/// Cancel the common part of two canonical polynomials: what is left of each
+/// side, with positive coefficients and no monomial on both.
+fn cancel(a: &Poly, b: &Poly) -> (Poly, Poly) {
+    let (mut l, mut r) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    loop {
+        match (a.get(i), b.get(j)) {
+            (Some((ca, ma)), Some((cb, mb))) if ma == mb => {
+                if ca > cb {
+                    l.push((ca - cb, ma.clone()));
+                } else if cb > ca {
+                    r.push((cb - ca, mb.clone()));
+                }
+                i += 1;
+                j += 1;
+            }
+            (Some(x), Some(y)) if x.1 < y.1 => {
+                l.push(x.clone());
+                i += 1;
+            }
+            (Some(x), None) => {
+                l.push(x.clone());
+                i += 1;
+            }
+            (_, Some(y)) => {
+                r.push(y.clone());
+                j += 1;
+            }
+            (None, None) => return (l, r),
+        }
+    }
+}
 
 /// Canonicalize: sort each monomial, combine like terms (wrapping add), drop zeros.
 fn canon(mut terms: Poly) -> Poly {
@@ -279,24 +477,3 @@ fn poly_has_var(p: &Poly, v: VarId) -> bool {
     p.iter().any(|(_, m)| m.contains(&v))
 }
 
-fn show_poly(p: &Poly) -> String {
-    if p.is_empty() {
-        return "0".to_string();
-    }
-    let mut s = String::new();
-    for (i, (c, m)) in p.iter().enumerate() {
-        if i > 0 {
-            s.push_str(" + ");
-        }
-        if m.is_empty() {
-            s.push_str(&c.to_string());
-        } else {
-            if *c != 1 {
-                s.push_str(&format!("{c}*"));
-            }
-            let vs: Vec<String> = m.iter().map(|v| format!("t{v}")).collect();
-            s.push_str(&vs.join("*"));
-        }
-    }
-    s
-}
