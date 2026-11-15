@@ -1,6 +1,9 @@
-<p align="center"><img src="documentation/assets/logo.svg" alt="Ares logo" width="128"></p>
-
-# Ares
+<p align="center">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="documentation/assets/lockup-dark.svg">
+<img src="documentation/assets/lockup-light.svg" alt="Ares: Effects in a functional style" height="140">
+</picture>
+</p>
 
 Ares is a functional language with algebraic data types (structs *and* sum
 types), pattern matching, and typed **algebraic effects with handlers**. It

@@ -153,6 +153,10 @@
           export LIBFFI=${pkgs.libffi.out}
           export LIBFFI_DEV=${pkgs.libffi.dev}
 
+          # Cinzel's .ttf files, whose outlines tools/LOGO.ares sets the
+          # wordmark in (`thrax logo`).
+          export ARES_FONT_CINZEL=${pkgs.cinzel}/share/fonts/truetype
+
           # The directory `nix develop` was entered from: the workspace root, as
           # far as aresDev, thraxDev and `thrax tosdk` are concerned.
           export ARES_ROOT=$PWD

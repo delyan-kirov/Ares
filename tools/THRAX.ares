@@ -80,7 +80,8 @@ $ spec : Command -> Spec = \c =>
         | .Logo          => Spec.{
             .name = "logo",
             .usage = "",
-            .info = "regenerate documentation/assets/logo.svg from tools/LOGO.ares"
+            .info = "regenerate the marks, lockups and preview card in documentation/assets/\n"
+                ++ "and the VS Code icons from tools/LOGO.ares"
         }
         | .HelixUpdate   => Spec.{
             .name = "helix-update",
@@ -204,7 +205,9 @@ $ help_text : @Str =
 
 $ readme_cmd : @Str = "${ARES_BIN:-ares} run tools/README_GEN.ares"
 
-$ logo_cmd : @Str = "${ARES_BIN:-ares} run tools/LOGO.ares"
+# Built, since the preview card's raster is too slow to interpret.
+$ logo_cmd : @Str =
+    "${ARES_BIN:-ares} build tools/LOGO.ares && " ++ native_path "tools/ares-artifacts/LOGO"
 
 # A command path in the platform's shell: `cmd.exe` reads `/` as a switch.
 $ native_path : @Str -> @Str = \p => if TARGET.os == "windows" => ARES.replace "/" "\\" p else p

@@ -101,8 +101,12 @@ $ &assert (@eval (@parse_str ex_expr) == 25) "ex_expr should evaluate to 25"
 # ---- README assembly ------------------------------------------------------
 
 $ header: @Str =
-    "<p align=\"center\"><img src=\"documentation/assets/logo.svg\" alt=\"Ares logo\" width=\"128\"></p>\n\n"
-        ++ "# Ares\n\n"
+    "<p align=\"center\">\n"
+        ++ "<picture>\n"
+        ++ "<source media=\"(prefers-color-scheme: dark)\" srcset=\"documentation/assets/lockup-dark.svg\">\n"
+        ++ "<img src=\"documentation/assets/lockup-light.svg\" alt=\"Ares: Effects in a functional style\" height=\"140\">\n"
+        ++ "</picture>\n"
+        ++ "</p>\n\n"
         ++ "Ares is a functional language with algebraic data types (structs *and* sum\n"
         ++ "types), pattern matching, and typed **algebraic effects with handlers**. It\n"
         ++ "compiles to native C, cross-compiles to WebAssembly, and can also be interpreted.\n"

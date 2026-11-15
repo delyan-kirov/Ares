@@ -1,25 +1,36 @@
 $ @mod MAIN
 
 # \file LOGO.ares
-# \info Generates the Ares marks from geometry. `logo` is ⦽, a spear through a
-#       shield: a gold ring with a crimson spear running through it, in front.
-#       `spear` and `spear-shield` are the sprites the web playground throws
-#       across its background: a Greek hoplite spear (leaf-shaped head, socket
-#       rings, butt spike) flying right, the second carrying a shield seen
+# \info Generates the Ares marks. The logo is a hoplite in black-figure
+#       silhouette, lunging forward with his spear raised overhand, cape
+#       flowing back, a round shield with a rim line on his arm: near-black
+#       with a gold shield on light grounds, all gold on dark ones, where a
+#       thin cut separates the shield from the body. The icon is the same
+#       soldier as hand-fitted pixel sprites, 16 and 32 px, and the lockups set
+#       him beside ARES and the tagline in Cinzel, an inscriptional Roman
+#       capital. `social` is the repository's 1280x640 preview card. `spear`
+#       and `spear-shield` are the sprites the web playground throws across
+#       its background, a dory flying right, the second carrying a shield seen
 #       edge-on.
 #
 #       The drawing strategy: nothing is stroked. A design is a stack of
-#       layers, each a color and a set of figures. A layer covers a point when
-#       the point lies inside an odd number of its figures (the even-odd rule),
-#       so every edge in the picture is an exact boundary. A colorless layer
-#       erases what is under it. The same layers are written as vector SVG and
-#       rendered to a raster that ffmpeg scales down to any PNG widths asked for.
+#       layers over an optional background, each a color and a set of figures.
+#       A layer covers a point when the point lies inside an odd number of its
+#       figures (the even-odd rule), so every edge in the picture is an exact
+#       boundary. A colorless layer erases what is under it. Figures are ovals,
+#       polygons, and closed cubic Bezier paths, which the SVG keeps as curves
+#       and the raster flattens. The same layers are written as vector SVG and
+#       rendered to a raster that ffmpeg scales down to any PNG widths asked
+#       for. Letters are read from Cinzel's TrueType outlines and written as
+#       paths, so no font is needed to view them.
 #
 #           ares build tools/LOGO.ares
 #           tools/ares-artifacts/LOGO [design [out.svg [out.png width]...]]
 #
-#       With no arguments it writes the `logo` to documentation/assets/logo.svg,
-#       the README's copy. Only the PNGs need ffmpeg.
+#       With no arguments it writes the repository's copies, listed in
+#       `assets`. An empty out.svg writes only the PNGs. Only the PNGs need
+#       ffmpeg; the lockups and `social` need the directory of Cinzel's .ttf
+#       files in ARES_FONT_CINZEL, which the dev shells set.
 
 $ @import ARESxALGO
 $ @import ARESxSTR
@@ -35,9 +46,12 @@ $ Rgb : @struct =
 
 $ Point : @alias = { Real, Real }
 
+# A curve keeps its numbers for the SVG, x0 y0 and then six a cubic segment
+# (two control points and the end), and its flattened corners for the raster.
 $ Figure : @union =
     Oval: { cx: Real, cy: Real, rx: Real, ry: Real },
     Poly: { corners: @Vec Point, lo: Point, hi: Point },
+    Curve: { nums: @Vec Real, corners: @Vec Point, lo: Point, hi: Point },
 
 # `name` becomes the layer's class in the SVG, so a page that inlines the logo
 # can style or animate its parts.
@@ -47,82 +61,938 @@ $ Layer : @struct =
     figures: @Vec Figure,
 
 # A design's coordinates run from (0, 0) at the top left to (width, height).
+# The background lies under every layer, erasers included. `style` is CSS
+# the SVG carries, for a design that switches with the color scheme.
 $ Design : @struct =
     width: Real,
     height: Real,
+    background: Opt Rgb,
     layers: @Vec Layer,
+    style: @Str,
 
+# The gold of the shield, the black of black-figure pottery, and the near-black
+# the dark assets stand on. Crimson is the playground spears' shaft.
 $ gold : Rgb = Rgb.{ .r = 217, .g = 164, .b = 62 }
+$ ink : Rgb = Rgb.{ .r = 34, .g = 25, .b = 21 }
+$ night : Rgb = Rgb.{ .r = 21, .g = 17, .b = 14 }
 $ crimson : Rgb = Rgb.{ .r = 179, .g = 32, .b = 46 }
-
-# ---- geometry ----
-
-# Lengths are in units of the icon's side, y grows downward, and the mark is
-# symmetric about the vertical line x = mid. The ring is 2 px wide at 16 px,
-# the smallest size a browser asks for; the shaft is a little slimmer, since
-# an equal width looks heavier than the ring.
-$ mid : Real = 0.5
-$ ring_y : Real = 0.575
-$ ring_outer : Real = 0.3
-$ ring_width : Real = 0.105
-$ ring_inner : Real = ring_outer - ring_width
-$ shaft : Real = 0.085
-$ gap : Real = 0.025
-
-# The point: a triangle whose tip touches the top edge, about as wide as it is
-# tall and three times the shaft's width, so it reads at 16 px. The shaft runs
-# from its base through the ring and out below it.
-$ tip : Real = 0.02
-$ head_half : Real = 0.135
-$ head_base : Real = 0.25
-$ butt : Real = 0.98
 
 $ box : Real -> Real -> Real -> Real -> Figure = \x0 y0 x1 y1 =>
     poly [{ x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 }]
 
-# A polygon with its bounding box, which lets the raster skip it at a glance
-# for the many points nowhere near it.
-$ poly : @Vec Point -> Figure = \ps =>
+$ bounds : @Vec Point -> { Point, Point } = \ps =>
     let lo = fold (\b p => { ARES.min b.0 p.0, ARES.min b.1 p.1 }) (@vec_get ps 0) ps in
     let hi = fold (\b p => { ARES.max b.0 p.0, ARES.max b.1 p.1 }) (@vec_get ps 0) ps in
-    Figure.Poly.{ ps, lo, hi }
+    { lo, hi }
+
+# A polygon with its bounding box, which lets the raster skip it at a glance
+# for the many points nowhere near it.
+$ poly : @Vec Point -> Figure = \ps => let bb = bounds ps in Figure.Poly.{ ps, bb.0, bb.1 }
+
+# A closed path of cubic segments, each flattened to eight chords.
+$ curve : @Vec Real -> Figure = \ns =>
+    let v = \i => @vec_get ns i in
+    let segment =
+        \acc k =>
+            let o = 6 * k in
+            fold (\out j =>
+                let t = real_of_int j / 8.0 in
+                let u = 1.0 - t in
+                let w0 = u * u * u in
+                let w1 = 3.0 * u * u * t in
+                let w2 = 3.0 * u * t * t in
+                let w3 = t * t * t in
+                @vec_push
+                    out {
+                        w0 * v o + w1 * v (o + 2) + w2 * v (o + 4) + w3 * v (o + 6),
+                        w0 * v (o + 1) + w1 * v (o + 3) + w2 * v (o + 5) + w3 * v (o + 7)
+                    }) acc (fmap (\j => j + 1) (upto 8))
+    in
+    let ps = fold segment [{ v 0, v 1 }] (upto ((@vec_len ns - 2) / 6)) in
+    let bb = bounds ps in
+    Figure.Curve.{ ns, ps, bb.0, bb.1 }
+
+# A curve from its numbers written as whole ten-thousandths of the unit
+# square, separated by spaces.
+$ curve_of : @Str -> Figure = \s => curve
+    (
+        fmap (\w => real_of_int (from_str w |> \ | Opt.Some.{ k } => k | _ => 0) / 10000.0)
+            (filter (\w => w != "") (ARES.split " " s))
+    )
 
 $ disc : Real -> Real -> Real -> Figure = \x y r => Figure.Oval.{ x, y, r, r }
 
-$ ring : @Vec Figure = [disc mid ring_y ring_outer, disc mid ring_y ring_inner]
+# A figure scaled by `s` about the origin, then moved by (dx, dy).
+$ place : Real -> Real -> Real -> Figure -> Figure = \dx dy s f =>
+    f |> \
+        | Figure.Oval.{ x, y, rx, ry } => Figure.Oval.{ dx + s * x, dy + s * y, s * rx, s * ry }
+        | Figure.Poly.{ ps, _, _ }     => poly (fmap (\p => { dx + s * p.0, dy + s * p.1 }) ps)
+        | Figure.Curve.{ ns, _, _, _ } => curve
+            (
+                fmap (\i => let x = @vec_get ns i in if i % 2 == 0 => dx + s * x else dy + s * x)
+                    (upto (@vec_len ns))
+            )
 
-$ spear : Figure =
-    let s = shaft / 2.0 in
-    poly [
-        { mid, tip },
-        { mid + head_half, head_base },
-        { mid + s, head_base },
-        { mid + s, butt },
-        { mid - s, butt },
-        { mid - s, head_base },
-        { mid - head_half, head_base },
+$ place_layer : Real -> Real -> Real -> Layer -> Layer = \dx dy s l =>
+    Layer.{ l.name, l.color, fmap (place dx dy s) l.figures }
+
+$ upto : @Int -> @Vec @Int = \n =>
+    let go = \i acc => if i == n => acc else go (i + 1) (@vec_push acc i) in go 0 (@vec_new {})
+
+# ---- the hoplite ----
+
+# His outline in the unit square, drawn from back to front: the spear (shaft,
+# then head), the cape, the legs and feet, torso, the raised arm and its fist,
+# the neck, the helmet and its crest. Each piece is a layer of its own, since
+# pieces overlap and the even-odd rule would cancel the overlaps in one layer.
+# Then one eraser cuts the eye, the gap between crest and dome, and the fold
+# in the cape; the stalk that carries the crest goes back over the gap.
+# `kind` is "fill", "cut" or "stalk".
+$ Part : @alias = { @Str, @Str, @Vec Figure }
+
+$ spear_shaft : Part = {
+    "spear",
+    "fill",
+    [
+        curve_of
+            (
+                "916 568 916 568 7969 1683 7969 1683 7969 1683 8008 1442 8008 1442 "
+                    ++ "8008 1442 954 327 954 327"
+            ),
+    ]
+}
+
+$ spear_head : Part = {
+    "spear",
+    "fill",
+    [
+        curve_of "9675 1829 9675 1829 7882 1978 7882 1978 7882 1978 8015 1135 8015 1135",
+    ]
+}
+
+$ cape : Part = {
+    "cape",
+    "fill",
+    [
+        curve_of
+            (
+                "5610 3821 4715 3415 3455 3374 2439 3659 1626 3902 976 4390 569 5122 "
+                    ++ "1179 4919 1789 5000 2236 5285 1911 5732 1667 6260 1545 6911 2114 6585 "
+                    ++ "2764 6504 3374 6707 3862 6911 4390 7073 4878 7195 4878 7195 5285 5894 "
+                    ++ "5285 5894"
+            ),
+    ]
+}
+
+$ back_leg : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "5174 6384 5090 6428 5097 6470 5058 6513 5019 6556 4979 6599 4940 6642 "
+                    ++ "4902 6685 4863 6727 4824 6771 4786 6815 4748 6859 4711 6904 4674 6950 "
+                    ++ "4638 6996 4604 7044 4569 7092 4537 7144 4503 7194 4470 7244 4438 7296 "
+                    ++ "4404 7345 4369 7394 4335 7443 4298 7488 4260 7533 4223 7578 4178 7613 "
+                    ++ "4133 7648 4079 7672 4027 7696 3974 7720 3913 7734 3862 7758 3811 7782 "
+                    ++ "3762 7806 3720 7840 3679 7875 3647 7919 3615 7963 3583 8008 3557 8058 "
+                    ++ "3528 8107 3500 8156 3475 8209 3447 8258 3419 8308 3391 8358 3359 8403 "
+                    ++ "3327 8449 3292 8490 3257 8531 3221 8572 3183 8611 3145 8649 3108 8688 "
+                    ++ "3068 8725 3030 8763 2992 8801 2943 8843 2916 8878 2889 8913 2871 8941 "
+                    ++ "2868 8974 2866 9007 2880 9051 2902 9076 2924 9101 2964 9120 2998 9124 "
+                    ++ "3032 9127 3069 9120 3108 9099 3147 9077 3190 9029 3231 8995 3273 8961 "
+                    ++ "3313 8925 3356 8892 3398 8859 3442 8827 3486 8796 3530 8764 3574 8733 "
+                    ++ "3618 8702 3663 8671 3708 8640 3752 8610 3797 8580 3841 8550 3886 8520 "
+                    ++ "3930 8490 3975 8460 4020 8430 4065 8401 4110 8373 4157 8344 4203 8316 "
+                    ++ "4251 8289 4297 8259 4344 8229 4393 8201 4435 8165 4478 8129 4510 8080 "
+                    ++ "4553 8043 4597 8006 4646 7973 4696 7943 4747 7913 4802 7888 4857 7862 "
+                    ++ "4911 7835 4967 7811 5021 7785 5076 7759 5130 7734 5183 7706 5236 7679 "
+                    ++ "5288 7651 5337 7620 5386 7588 5433 7554 5478 7519 5524 7483 5567 7445 "
+                    ++ "5610 7407 5653 7369 5695 7329 5738 7290 5780 7252 5813 7253 5867 7176 "
+                    ++ "5922 7098 6054 6948 6065 6824 6076 6701 6016 6530 5933 6435 5850 6339 "
+                    ++ "5691 6261 5564 6252 5438 6244 5259 6340 5174 6384"
+            ),
+    ]
+}
+
+$ back_foot : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "2886 8902 2934 8875 3066 8858 3130 8902 3195 8947 3218 9079 3272 9167 "
+                    ++ "3327 9255 3388 9366 3455 9431 3523 9495 3628 9516 3679 9553 3730 9590 "
+                    ++ "3757 9631 3760 9654 3764 9678 3770 9688 3699 9695 3628 9702 3442 9739 "
+                    ++ "3333 9695 3225 9651 3123 9509 3049 9431 2974 9353 2920 9289 2886 9228 "
+                    ++ "2852 9167 2846 9119 2846 9065 2846 9011 2839 8929 2886 8902"
+            ),
+    ]
+}
+
+$ front_leg : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "6207 7281 6278 7338 6299 7309 6344 7323 6389 7337 6435 7351 6480 7366 "
+                    ++ "6526 7380 6571 7394 6617 7408 6662 7422 6707 7435 6754 7449 6801 7463 "
+                    ++ "6839 7476 6898 7490 6957 7503 7046 7523 7108 7530 7171 7537 7228 7531 "
+                    ++ "7275 7529 7322 7527 7361 7522 7390 7518 7420 7514 7436 7511 7450 7507 "
+                    ++ "7465 7503 7467 7487 7476 7495 7486 7504 7509 7522 7509 7558 7509 7595 "
+                    ++ "7497 7654 7479 7713 7462 7771 7418 7839 7404 7910 7390 7980 7388 8059 "
+                    ++ "7398 8136 7407 8213 7437 8299 7463 8371 7488 8443 7523 8503 7548 8568 "
+                    ++ "7573 8634 7597 8698 7615 8764 7632 8829 7642 8896 7653 8962 7664 9027 "
+                    ++ "7670 9094 7679 9160 7688 9226 7693 9309 7705 9358 7718 9407 7728 9433 "
+                    ++ "7753 9455 7777 9477 7821 9492 7854 9490 7887 9488 7927 9467 7951 9442 "
+                    ++ "7974 9418 7991 9391 7997 9340 8003 9290 7990 9208 7988 9141 7986 9074 "
+                    ++ "7983 9008 7983 8941 7984 8875 7986 8808 7989 8741 7991 8674 7994 8607 "
+                    ++ "7998 8541 8001 8474 8003 8407 8009 8342 8014 8276 8021 8216 8032 8148 "
+                    ++ "8043 8079 8063 8005 8075 7929 8087 7854 8106 7775 8105 7697 8105 7618 "
+                    ++ "8087 7541 8070 7459 8053 7377 8041 7285 8002 7203 7963 7122 7897 7033 "
+                    ++ "7836 6970 7775 6907 7699 6865 7636 6825 7573 6785 7510 6759 7459 6732 "
+                    ++ "7408 6705 7361 6682 7328 6662 7297 6642 7296 6632 7266 6613 7237 6593 "
+                    ++ "7190 6566 7149 6545 7109 6523 7064 6503 7021 6484 6978 6464 6934 6446 "
+                    ++ "6890 6428 6847 6410 6803 6392 6759 6374 6715 6356 6718 6332 6629 6317 "
+                    ++ "6540 6303 6343 6245 6227 6288 6110 6330 5981 6457 5930 6573 5879 6689 "
+                    ++ "5876 6866 5922 6985 5968 7102 6137 7225 6207 7281"
+            ),
+    ]
+}
+
+$ front_foot : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "7724 9268 7771 9241 7886 9234 7947 9268 8008 9302 8022 9414 8089 9472 "
+                    ++ "8157 9529 8286 9580 8354 9614 8421 9648 8476 9651 8496 9675 8516 9699 "
+                    ++ "8550 9742 8476 9756 8401 9770 8177 9756 8049 9756 7920 9756 7771 9780 "
+                    ++ "7703 9756 7636 9732 7649 9668 7642 9614 7636 9560 7649 9488 7663 9431 "
+                    ++ "7676 9373 7676 9295 7724 9268"
+            ),
+    ]
+}
+
+$ torso : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "5325 3780 5644 3496 6335 3462 6626 3780 6917 4099 7087 5122 7073 5691 "
+                    ++ "7060 6260 6884 6945 6545 7195 6206 7446 5346 7480 5041 7195 4736 6911 "
+                    ++ "4668 6057 4715 5488 4763 4919 5007 4065 5325 3780"
+            ),
+    ]
+}
+
+$ arm : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "5418 3962 5361 3892 5317 3899 5266 3867 5215 3836 5164 3804 5112 3771 "
+                    ++ "5061 3739 5009 3707 4958 3675 4906 3642 4854 3610 4803 3578 4751 3546 "
+                    ++ "4699 3515 4647 3484 4595 3452 4548 3422 4490 3390 4432 3358 4361 3319 "
+                    ++ "4299 3290 4237 3262 4175 3239 4118 3217 4062 3195 4007 3177 3959 3160 "
+                    ++ "3910 3142 3864 3128 3828 3112 3792 3095 3761 3078 3741 3062 3721 3045 "
+                    ++ "3713 3032 3706 3010 3700 2989 3702 2964 3703 2931 3704 2897 3710 2856 "
+                    ++ "3712 2810 3714 2765 3714 2712 3715 2657 3717 2602 3719 2541 3722 2480 "
+                    ++ "3724 2420 3728 2356 3731 2295 3734 2233 3736 2168 3740 2112 3743 2057 "
+                    ++ "3745 2011 3751 1961 3757 1911 3765 1861 3776 1811 3786 1761 3798 1711 "
+                    ++ "3811 1661 3824 1610 3838 1559 3852 1508 3866 1456 3882 1403 3896 1350 "
+                    ++ "3910 1297 3932 1239 3936 1189 3940 1139 3941 1087 3920 1050 3899 1012 "
+                    ++ "3852 974 3811 962 3769 950 3709 957 3672 978 3634 999 3608 1045 "
+                    ++ "3584 1088 3561 1130 3550 1186 3532 1235 3513 1284 3494 1333 3475 1383 "
+                    ++ "3456 1433 3437 1484 3417 1536 3398 1587 3378 1640 3359 1694 3340 1748 "
+                    ++ "3321 1803 3303 1860 3286 1916 3269 1977 3252 2034 3235 2091 3219 2142 "
+                    ++ "3202 2201 3184 2260 3164 2323 3147 2388 3130 2454 3112 2522 3101 2592 "
+                    ++ "3091 2662 3080 2736 3083 2809 3085 2882 3097 2957 3117 3031 3138 3104 "
+                    ++ "3167 3181 3204 3250 3242 3318 3292 3385 3341 3443 3389 3500 3443 3548 "
+                    ++ "3495 3594 3547 3640 3601 3682 3653 3720 3705 3759 3759 3793 3807 3826 "
+                    ++ "3855 3859 3902 3890 3942 3920 3982 3950 4008 3975 4046 4008 4084 4042 "
+                    ++ "4127 4083 4169 4122 4211 4161 4254 4201 4297 4242 4340 4282 4384 4323 "
+                    ++ "4427 4364 4471 4405 4515 4447 4559 4488 4604 4530 4648 4571 4692 4613 "
+                    ++ "4737 4654 4744 4701 4826 4737 4908 4774 5073 4848 5187 4833 5301 4818 "
+                    ++ "5440 4737 5510 4646 5579 4554 5621 4399 5605 4285 5590 4171 5474 4031 "
+                    ++ "5418 3962"
+            ),
+    ]
+}
+
+$ fist : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "3704 635 3750 623 3906 648 3945 673 3985 698 4085 841 4098 882 "
+                    ++ "4110 923 4090 1048 4066 1083 4042 1118 3901 1224 3857 1235 3811 1247 "
+                    ++ "3655 1222 3616 1197 3576 1172 3476 1029 3463 988 3451 947 3471 822 "
+                    ++ "3495 787 3519 752 3660 646 3704 635"
+            ),
+    ]
+}
+
+$ neck : Part = {
+    "body",
+    "fill",
+    [
+        curve_of
+            (
+                "5733 3484 5725 3536 5734 3571 5734 3615 5734 3659 5734 3703 5734 3747 "
+                    ++ "5734 3790 5734 3834 5734 3878 5734 3922 5734 3965 5734 4009 5734 4053 "
+                    ++ "5734 4111 5734 4141 5734 4170 5714 4141 5734 4184 5754 4228 5795 4354 "
+                    ++ "5855 4402 5916 4449 6019 4478 6095 4469 6171 4460 6265 4408 6312 4348 "
+                    ++ "6360 4288 6370 4155 6380 4108 6389 4061 6376 4094 6370 4066 6363 4037 "
+                    ++ "6350 3980 6339 3938 6329 3895 6319 3853 6309 3810 6299 3767 6289 3725 "
+                    ++ "6279 3682 6268 3640 6258 3597 6248 3555 6238 3512 6238 3475 6218 3427 "
+                    ++ "6198 3378 6172 3299 6127 3264 6082 3228 6004 3206 5947 3213 5890 3220 "
+                    ++ "5820 3259 5784 3304 5749 3349 5742 3432 5733 3484"
+            ),
+    ]
+}
+
+$ helmet_bowl : Part = {
+    "helmet",
+    "fill",
+    [
+        curve_of
+            (
+                "5322 4023 5464 3801 5540 3608 5529 3317 5506 2859 5857 2508 6258 2579 "
+                    ++ "6658 2649 6856 2932 6839 3259 6839 3259 6858 3386 6858 3386 6830 3546 "
+                    ++ "6822 3710 6826 3917 6759 3947 6699 3936 6646 3885 6655 3722 6652 3618 "
+                    ++ "6599 3568 6527 3741 6545 3991 6636 4296 6369 4290 6175 4215 6029 4107 "
+                    ++ "5963 4013 5897 3918 5817 3904 5723 3970 5589 4029 5322 4023"
+            ),
+    ]
+}
+
+$ crest : Part = {
+    "helmet",
+    "fill",
+    [
+        curve_of
+            (
+                "6752 2583 7016 2258 6893 1783 6474 1585 5982 1333 5339 1467 4988 1818 "
+                    ++ "4739 2063 4515 2395 4225 2633 4546 2689 4887 2626 5156 2508 5391 2343 "
+                    ++ "5780 2247 6180 2317 6420 2360 6610 2455 6752 2583"
+            ),
+    ]
+}
+
+$ cuts : Part = {
+    "cut",
+    "cut",
+    [
+        curve_of "6738 3365 6619 3220 6399 3181 6234 3297 6357 3422 6573 3480 6738 3365",
+        curve_of
+            (
+                "5399 3288 5399 3288 5404 3219 5404 3219 5404 3219 5412 3154 5412 3154 "
+                    ++ "5412 3154 5424 3092 5424 3092 5424 3092 5439 3033 5439 3033 5439 3033 "
+                    ++ "5458 2976 5458 2976 5458 2976 5481 2923 5481 2923 5481 2923 5506 2872 "
+                    ++ "5506 2872 5506 2872 5534 2824 5534 2824 5534 2824 5565 2779 5565 2779 "
+                    ++ "5565 2779 5599 2737 5599 2737 5599 2737 5635 2699 5635 2699 5635 2699 "
+                    ++ "5674 2663 5674 2663 5674 2663 5714 2631 5714 2631 5714 2631 5757 2602 "
+                    ++ "5757 2602 5757 2602 5802 2576 5802 2576 5802 2576 5848 2554 5848 2554 "
+                    ++ "5848 2554 5897 2535 5897 2535 5897 2535 5946 2520 5946 2520 5946 2520 "
+                    ++ "5998 2509 5998 2509 5998 2509 6050 2501 6050 2501 6050 2501 6104 2497 "
+                    ++ "6104 2497 6104 2497 6158 2497 6158 2497 6158 2497 6214 2501 6214 2501 "
+                    ++ "6214 2501 6270 2509 6270 2509 6270 2509 6326 2520 6326 2520 6326 2520 "
+                    ++ "6379 2534 6379 2534 6379 2534 6429 2551 6429 2551 6429 2551 6477 2570 "
+                    ++ "6477 2570 6477 2570 6522 2591 6522 2591 6522 2591 6565 2615 6565 2615 "
+                    ++ "6565 2615 6605 2641 6605 2641 6605 2641 6642 2669 6642 2669 6642 2669 "
+                    ++ "6677 2698 6677 2698 6677 2698 6709 2730 6709 2730 6709 2730 6739 2763 "
+                    ++ "6739 2763 6739 2763 6766 2798 6766 2798 6766 2798 6791 2835 6791 2835 "
+                    ++ "6791 2835 6813 2873 6813 2873 6813 2873 6833 2912 6833 2912 6833 2912 "
+                    ++ "6851 2953 6851 2953 6851 2953 6866 2995 6866 2995 6866 2995 6878 3038 "
+                    ++ "6878 3038 6878 3038 6888 3083 6888 3083 6888 3083 6896 3128 6896 3128 "
+                    ++ "6896 3128 6901 3174 6901 3174 6901 3174 6904 3221 6904 3221 6904 3221 "
+                    ++ "6904 3268 6904 3268 6904 3268 6902 3318 6902 3318 6902 3318 7003 3323 "
+                    ++ "7003 3323 7003 3323 7006 3271 7006 3271 7006 3271 7005 3218 7005 3218 "
+                    ++ "7005 3218 7003 3165 7003 3165 7003 3165 6997 3114 6997 3114 6997 3114 "
+                    ++ "6988 3063 6988 3063 6988 3063 6977 3013 6977 3013 6977 3013 6962 2964 "
+                    ++ "6962 2964 6962 2964 6945 2916 6945 2916 6945 2916 6925 2869 6925 2869 "
+                    ++ "6925 2869 6903 2824 6903 2824 6903 2824 6877 2780 6877 2780 6877 2780 "
+                    ++ "6848 2738 6848 2738 6848 2738 6817 2698 6817 2698 6817 2698 6782 2660 "
+                    ++ "6782 2660 6782 2660 6745 2623 6745 2623 6745 2623 6705 2589 6705 2589 "
+                    ++ "6705 2589 6663 2557 6663 2557 6663 2557 6617 2528 6617 2528 6617 2528 "
+                    ++ "6569 2501 6569 2501 6569 2501 6518 2477 6518 2477 6518 2477 6464 2455 "
+                    ++ "6464 2455 6464 2455 6408 2437 6408 2437 6408 2437 6349 2421 6349 2421 "
+                    ++ "6349 2421 6287 2408 6287 2408 6287 2408 6224 2399 6224 2399 6224 2399 "
+                    ++ "6162 2395 6162 2395 6162 2395 6100 2395 6100 2395 6100 2395 6039 2400 "
+                    ++ "6039 2400 6039 2400 5979 2409 5979 2409 5979 2409 5920 2422 5920 2422 "
+                    ++ "5920 2422 5863 2439 5863 2439 5863 2439 5808 2461 5808 2461 5808 2461 "
+                    ++ "5755 2486 5755 2486 5755 2486 5703 2516 5703 2516 5703 2516 5654 2549 "
+                    ++ "5654 2549 5654 2549 5608 2586 5608 2586 5608 2586 5564 2627 5564 2627 "
+                    ++ "5564 2627 5522 2671 5522 2671 5522 2671 5484 2718 5484 2718 5484 2718 "
+                    ++ "5449 2769 5449 2769 5449 2769 5417 2823 5417 2823 5417 2823 5388 2881 "
+                    ++ "5388 2881 5388 2881 5363 2941 5363 2941 5363 2941 5342 3004 5342 3004 "
+                    ++ "5342 3004 5325 3070 5325 3070 5325 3070 5312 3139 5312 3139 5312 3139 "
+                    ++ "5303 3210 5303 3210 5303 3210 5298 3282 5298 3282"
+            ),
+        curve_of "4634 4065 3862 4309 3089 4675 2358 5203 3171 4797 3902 4512 4675 4268",
+    ]
+}
+
+$ crest_stalk : Part = {
+    "helmet",
+    "stalk",
+    [
+        curve_of
+            (
+                "6080 2300 6080 2300 6440 2363 6440 2363 6440 2363 6344 2676 6344 2676 "
+                    ++ "6344 2676 6063 2627 6063 2627"
+            ),
+    ]
+}
+
+$ hero_parts : @Vec Part = [
+    spear_shaft,
+    spear_head,
+    cape,
+    back_leg,
+    back_foot,
+    front_leg,
+    front_foot,
+    torso,
+    arm,
+    fist,
+    neck,
+    helmet_bowl,
+    crest,
+    cuts,
+    crest_stalk,
+]
+
+# The shield, the rim line inside it, and on dark grounds the cut around it.
+$ shield_x : Real = 0.6179
+$ shield_y : Real = 0.5488
+$ shield_r : Real = 0.1870
+$ rim_r : Real = 0.82 * shield_r
+$ rim_w : Real = 0.05 * shield_r
+$ shield_gap : Real = 0.0142
+
+# On a dark ground the figure is gold, like the shield, so a cut keeps them
+# apart; the rim line stays dark in both.
+$ hoplite : @Bool -> @Vec Layer = \dark =>
+    let body = if dark => gold else ink in
+    let pieces =
+        fmap (\p =>
+            p.1 |> \
+                | "cut" => Layer.{ p.0, Opt.None, p.2 }
+                | _     => Layer.{ p.0, Opt.Some.{ body }, p.2 }) hero_parts
+    in
+    let cut =
+        if dark =>
+            [Layer.{ "channel", Opt.None, [disc shield_x shield_y (shield_r + shield_gap)] }]
+        else
+            []
+    in
+    concat [
+        pieces,
+        cut,
+        [
+            Layer.{ "shield", Opt.Some.{ gold }, [disc shield_x shield_y shield_r] },
+            Layer.{
+                "shield",
+                Opt.Some.{ ink },
+                [
+                    disc shield_x shield_y (rim_r + rim_w / 2.0),
+                    disc shield_x shield_y (rim_r - rim_w / 2.0)
+                ]
+            },
+        ],
     ]
 
-# The spear lies in front of the ring, which is cut back `gap` on either side
-# of the shaft where they cross, so the two read as separate pieces.
-$ channel : Figure = box (mid - shaft / 2.0 - gap) 0.0 (mid + shaft / 2.0 + gap) 1.0
+$ square : Opt Rgb -> @Vec Layer -> Design = \bg layers =>
+    Design.{ .width = 1.0, .height = 1.0, .background = bg, .layers = layers, .style = "" }
 
-$ logo : Design = Design.{
+# The gold hoplite on the dark ground, a margin around him: the touch icon
+# and the editor extension's badge.
+$ badge : Design = square Opt.Some.{ night } (fmap (place_layer 0.08 0.08 0.84) (hoplite @true))
+
+# ---- the icon: the soldier as pixels ----
+
+# Hand-fitted sprites, a row a string: `K` the figure, `G` the shield, `R` its
+# rim line, `.` clear. At 16 px the rim is dropped and the spear is one pixel.
+$ soldier_16 : @Vec @Str = [
+    "KKKKK...........",
+    ".....KKKKKKKK...",
+    ".....KK....KKKKK",
+    ".....K..KK.KK...",
+    ".....K.KKKK.....",
+    "....K...KKKK....",
+    "....KKKKKK.K....",
+    "..KKKKKKKGGG....",
+    ".KKKKKKKGGGGG...",
+    "...KKKKGGGGGGG..",
+    "..KKKKKGGGGGGG..",
+    "....KKKGGGGGGGK.",
+    "......KKGGGGG.K.",
+    "......KK.GGG.KK.",
+    ".....KK......KK.",
+    "....KKKK.....KKK",
+]
+
+$ soldier_32 : @Vec @Str = [
+    "KKKKKKK.........................",
+    "KKKKKKKKKKKKKK.........KK.......",
+    ".......KKKKKKKKKKKKKK..KKKK.....",
+    "..........KKK.KKKKKKKKKKKKKKKK..",
+    "..........KK.........KKKKKKKKKKK",
+    "..........KK...KKKKK...KKKKKK...",
+    "..........KK..KKKKKKK..KK.......",
+    "..........KK.KKK.KKKKK..........",
+    "..........KK....KKKKKKK.........",
+    ".........KKKK...KKKK..K.........",
+    "..........KKKKK.KKKKKKKK........",
+    "...........KKKKK.KKKKK.K........",
+    ".......KKKKKKKKKK.GGGGG.........",
+    "....KKKKKKKKKKKKGGRRRRRGG.......",
+    "..KKKKKKKKKKKKKGGRGGGGGRGG......",
+    ".KKKKKKKKKKKKKKGRGGGGGGGRG......",
+    ".....KKKKKKKKKGRGGGGGGGGGRG.....",
+    "....KKKKKKKKKKGRGGGGGGGGGRG.....",
+    "...KKKKKKKKKKKGRGGGGGGGGGRG.....",
+    "..KKKKKKKKKKKKGRGGGGGGGGGRG.....",
+    "......KKKKKKKKGRGGGGGGGGGRG.....",
+    ".........KKKKKKGRGGGGGGGRG......",
+    "............KKKGGRGGGGGRGG......",
+    "..............KKGGRRRRRGGKKK....",
+    ".............KKKKKGGGGGKKKKKK...",
+    "............KKKK.........KKKK...",
+    "...........KKKK..........KKKK...",
+    "..........KKKK...........KKK....",
+    ".........KKKK............KKK....",
+    "........KKKK.............KKK....",
+    "........KKKK.............KKKK...",
+    ".........KKKKK...........KKKKKK.",
+]
+
+$ code_k : @Int = 75
+$ code_g : @Int = 71
+$ code_r : @Int = 82
+$ code_clear : @Int = 46
+
+$ sprite_at : @Vec @Str -> @Int -> @Int -> @Int = \rs x y =>
+    let n = @vec_len rs in
+    if x < 0 || y < 0 || x >= n || y >= n => code_clear else @array_get (@vec_get rs y) x
+
+# The dark version: where the figure touches the shield (or its rim), even at
+# a corner, its pixel is cleared, the sprite's cut.
+$ gapped : @Vec @Str -> @Vec @Str = \rs =>
+    let n = @vec_len rs in
+    let shieldy = \x y => let c = sprite_at rs x y in c == code_g || c == code_r in
+    let near =
+        \x y =>
+            shieldy (x - 1) (y - 1)
+                || shieldy x (y - 1)
+                || shieldy (x + 1) (y - 1)
+                || shieldy (x - 1) y
+                || shieldy (x + 1) y
+                || shieldy (x - 1) (y + 1)
+                || shieldy x (y + 1)
+                || shieldy (x + 1) (y + 1)
+    in
+    fmap (\y =>
+        fold (\s x =>
+            let c = sprite_at rs x y in
+            @array_push s (if c == code_k && near x y => code_clear else c)) "" (upto n)) (upto n)
+
+# The pixels of `code` as boxes in the unit square, a run of them a box.
+$ pixels : @Vec @Str -> @Int -> @Vec Figure = \rs code =>
+    let n = @vec_len rs in
+    let side = 1.0 / real_of_int n in
+    flat_map (\y =>
+        let run =
+            \x start acc =>
+                let on = x < n && sprite_at rs x y == code in
+                if on && start < 0 =>
+                    run (x + 1) x acc
+                else if on =>
+                    run (x + 1) start acc
+                else
+                    let acc2 =
+                        if start < 0 =>
+                            acc
+                        else
+                            @vec_push acc
+                                (
+                                    box (side * real_of_int start) (side * real_of_int y)
+                                        (side * real_of_int x) (side * real_of_int (y + 1))
+                                )
+                    in
+                    if x >= n => acc2 else run (x + 1) (0 - 1) acc2
+        in
+        run 0 (0 - 1) (@vec_new {})) (upto n)
+
+$ sprite_layers : @Str -> @Bool -> @Vec @Str -> @Vec Layer = \name dark rs =>
+    let src = if dark => gapped rs else rs in
+    filter (\l => @vec_len l.figures > 0) [
+        Layer.{ name, Opt.Some.{ if dark => gold else ink }, pixels src code_k },
+        Layer.{ name, Opt.Some.{ gold }, pixels src code_g },
+        Layer.{ name, Opt.Some.{ ink }, pixels src code_r },
+    ]
+
+$ sprite : @Bool -> @Vec @Str -> Design = \dark rs =>
+    square Opt.None (sprite_layers "soldier" dark rs)
+
+# The favicon carries both versions and shows the one for the color scheme.
+$ scheme_css : @Str =
+    ".dark{display:none}@media (prefers-color-scheme:dark){.light{display:none}.dark{display:inline}}"
+
+$ favicon : Design = Design.{
     .width = 1.0,
     .height = 1.0,
-    .layers = [
-        Layer.{ "shield", Opt.Some.{ gold }, ring },
-        Layer.{ "channel", Opt.None, [channel] },
-        Layer.{ "spear", Opt.Some.{ crimson }, [spear] },
+    .background = Opt.None,
+    .layers = concat [
+        sprite_layers "light" @false soldier_16,
+        sprite_layers "dark" @true soldier_16
     ],
+    .style = scheme_css,
 }
+
+# ---- letters: Cinzel's TrueType outlines ----
+
+# A TrueType font: its bytes and where the tables the outlines need begin.
+$ Font : @struct =
+    bytes: @Str,
+    cmap: @Int,
+    hmtx: @Int,
+    metrics: @Int,
+    loca: @Int,
+    glyf: @Int,
+    long_loca: @Bool,
+    cap: Real,
+
+$ u8 : @Str -> @Int -> @Int = \b i => @array_get b i
+$ u16 : @Str -> @Int -> @Int = \b i => u8 b i * 256 + u8 b (i + 1)
+$ i16 : @Str -> @Int -> @Int = \b i => let v = u16 b i in if v >= 32768 => v - 65536 else v
+$ u32 : @Str -> @Int -> @Int = \b i => u16 b i * 65536 + u16 b (i + 2)
+
+# Whether bit `mask` (a power of two) is set in `v`.
+$ bit : @Int -> @Int -> @Bool = \v mask => (v / mask) % 2 == 1
+
+# Where the table tagged `tag` begins, 0 when the font has none.
+$ table : @Str -> @Str -> @Int = \b tag =>
+    let n = u16 b 4 in
+    let go =
+        \i =>
+            if i == n =>
+                0
+            else
+                let rec = 12 + 16 * i in
+                if @array_slice b rec (rec + 4) == tag => u32 b (rec + 8) else go (i + 1)
+    in
+    go 0
+
+# The Windows Unicode cmap, format 4, which every TrueType font carries.
+$ unicode_cmap : @Str -> @Int -> @Int = \b cmap =>
+    let n = u16 b (cmap + 2) in
+    let go =
+        \i =>
+            if i == n =>
+                0
+            else
+                let rec = cmap + 4 + 8 * i in
+                if u16 b rec == 3 && u16 b (rec + 2) == 1 => cmap + u32 b (rec + 4) else go (i + 1)
+    in
+    go 0
+
+$ load_font : @Str -> <@IO> Opt Font = \path =>
+    read_file path |> \
+        | Opt.None => Opt.None
+        | Opt.Some.{ b } =>
+            let head = table b "head" in
+            let os2 = table b "OS/2" in
+            Opt.Some.{
+                Font.{
+                    .bytes = b,
+                    .cmap = unicode_cmap b (table b "cmap"),
+                    .hmtx = table b "hmtx",
+                    .metrics = u16 b (table b "hhea" + 34),
+                    .loca = table b "loca",
+                    .glyf = table b "glyf",
+                    .long_loca = i16 b (head + 50) == 1,
+                    .cap = real_of_int (i16 b (os2 + 88)),
+                }
+            }
+
+# The glyph for character code `c` in a format 4 cmap, 0 (the missing glyph)
+# when there is none.
+$ glyph_index : Font -> @Int -> @Int = \f c =>
+    let b = f.bytes in
+    let segs = u16 b (f.cmap + 6) / 2 in
+    let ends = f.cmap + 14 in
+    let starts = ends + 2 * segs + 2 in
+    let delta_at = starts + 2 * segs in
+    let ranges = delta_at + 2 * segs in
+    let go =
+        \i =>
+            if i == segs =>
+                0
+            else if u16 b (ends + 2 * i) < c =>
+                go (i + 1)
+            else
+                let start = u16 b (starts + 2 * i) in
+                let delta = u16 b (delta_at + 2 * i) in
+                let range = u16 b (ranges + 2 * i) in
+                if c < start =>
+                    0
+                else if range == 0 =>
+                    (c + delta) % 65536
+                else
+                    let g = u16 b (ranges + 2 * i + range + 2 * (c - start)) in
+                    if g == 0 => 0 else (g + delta) % 65536
+    in
+    go 0
+
+$ advance : Font -> @Int -> Real = \f g =>
+    real_of_int (u16 f.bytes (f.hmtx + 4 * ARES.min g (f.metrics - 1)))
+
+$ glyph_at : Font -> @Int -> @Int = \f g =>
+    if f.long_loca => u32 f.bytes (f.loca + 4 * g) else 2 * u16 f.bytes (f.loca + 2 * g)
+
+# The point flags, a repeat flag (8) followed by how many more times it holds.
+# Returns them and where the coordinates begin.
+$ point_flags : @Str -> @Int -> @Int -> @Vec @Int -> { @Vec @Int, @Int } = \b at n acc =>
+    if @vec_len acc >= n =>
+        { acc, at }
+    else
+        let fl = u8 b at in
+        if bit fl 8 =>
+            point_flags b (at + 2) n (append (@vec_fill (u8 b (at + 1) + 1) fl) acc)
+        else
+            point_flags b (at + 1) n (@vec_push acc fl)
+
+# One axis of the coordinates, each a delta from the last: a byte whose sign
+# is the `same` flag when the `short` flag is set, else a repeat of the last
+# when `same` is set, else a signed word.
+$ deltas : @Str -> @Int -> @Vec @Int -> @Int -> @Int
+    -> { @Vec @Int, @Int } = \b at flags short same =>
+    let n = @vec_len flags in
+    let go =
+        \i at cur acc =>
+            if i == n =>
+                { acc, at }
+            else
+                let fl = @vec_get flags i in
+                if bit fl short =>
+                    let v = cur + (if bit fl same => u8 b at else 0 - u8 b at) in
+                    go (i + 1) (at + 1) v (@vec_push acc v)
+                else if bit fl same =>
+                    go (i + 1) at cur (@vec_push acc cur)
+                else
+                    let v = cur + i16 b at in go (i + 1) (at + 2) v (@vec_push acc v)
+    in
+    go 0 at 0 (@vec_new {})
+
+# A contour of on-curve (`on`) and off-curve points as a polygon: each
+# quadratic arc in eight chords, with the on-curve point implied between two
+# off-curve ones.
+$ OutlinePoint : @alias = { Real, Real, @Bool }
+
+$ flatten : @Vec OutlinePoint -> @Vec Point = \pts =>
+    let n = @vec_len pts in
+    let first_on = find_index (\p => p.2) pts |> \ | Opt.Some.{ i } => i | _ => 0 in
+    let pt = \i => @vec_get pts ((first_on + i) % n) in
+    let half = \a b => { (a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0 } in
+    let quad =
+        \acc a c z =>
+            fold (\out i =>
+                let t = real_of_int i / 8.0 in
+                let u = 1.0 - t in
+                @vec_push
+                    out {
+                        u * u * a.0 + 2.0 * u * t * c.0 + t * t * z.0,
+                        u * u * a.1 + 2.0 * u * t * c.1 + t * t * z.1
+                    }) acc (fmap (\i => i + 1) (upto 8))
+    in
+    let start = { (pt 0).0, (pt 0).1 } in
+    let go =
+        \i last ctrl acc =>
+            let close = i == n + 1 in
+            if close =>
+                acc
+            else
+                let p = pt i in
+                let here = { p.0, p.1 } in
+                if p.2 || i == n =>
+                    let q = if i == n => start else here in
+                    ctrl |> \
+                        | Opt.Some.{ c } => go (i + 1) q Opt.None (quad acc last c q)
+                        | Opt.None       => go (i + 1) q Opt.None (@vec_push acc q)
+                else
+                    ctrl |> \
+                        | Opt.Some.{ c } =>
+                            let m = half c here in
+                            go (i + 1) m Opt.Some.{ here } (quad acc last c m)
+                        | Opt.None       => go (i + 1) last Opt.Some.{ here } acc
+    in
+    go 1 start Opt.None [start]
+
+# Glyph `g`'s contours in font units, y up. Composite glyphs are left out:
+# Cinzel draws its letters as simple ones.
+$ outline : Font -> @Int -> @Vec (@Vec Point) = \f g =>
+    let b = f.bytes in
+    let at = f.glyf + glyph_at f g in
+    let contours = if glyph_at f (g + 1) == glyph_at f g => 0 else i16 b at in
+    if contours <= 0 =>
+        []
+    else
+        let ends = fmap (\k => u16 b (at + 10 + 2 * k)) (upto contours) in
+        let n = @vec_get ends (contours - 1) + 1 in
+        let code = at + 12 + 2 * contours in
+        let fl = point_flags b (code + u16 b (code - 2)) n (@vec_new {}) in
+        let xs = deltas b fl.1 fl.0 2 16 in
+        let ys = deltas b xs.1 fl.0 4 32 in
+        let point =
+            \i =>
+                {
+                    real_of_int (@vec_get xs.0 i),
+                    real_of_int (@vec_get ys.0 i),
+                    bit (@vec_get fl.0 i) 1
+                }
+        in
+        fmap (\k =>
+            let from = if k == 0 => 0 else @vec_get ends (k - 1) + 1 in
+            flatten (fmap (\i => point (from + i)) (upto (@vec_get ends k - from + 1))))
+            (upto contours)
+
+# The width `s` takes set at cap height `cap`, `track` of the cap height added
+# between letters.
+$ text_width : Font -> Real -> Real -> @Str -> Real = \f cap track s =>
+    let scale = cap / f.cap in
+    let n = @array_len s in
+    fold (\w i => w + scale * advance f (glyph_index f (@array_get s i))) 0.0 (upto n) + track * cap
+        * real_of_int (n - 1)
+
+# `s` as figures, its baseline starting at (x, y).
+$ text : Font -> Real -> Real -> Real -> Real -> @Str -> @Vec Figure = \f cap track x y s =>
+    let scale = cap / f.cap in
+    let go =
+        \i pen acc =>
+            if i == @array_len s =>
+                acc
+            else
+                let g = glyph_index f (@array_get s i) in
+                let figs = fmap (\c => poly (fmap (\p => { pen + scale * p.0, y - scale * p.1 }) c))
+                    (outline f g) in
+                go (i + 1) (pen + scale * advance f g + track * cap) (append figs acc)
+    in
+    go 0 x (@vec_new {})
+
+$ Fonts : @struct =
+    bold: Font,
+    regular: Font,
+
+$ cinzel : {} -> <@IO> Opt Fonts =
+    let dir = env "ARES_FONT_CINZEL" in
+    if dir == "" =>
+        Opt.None
+    else
+        load_font "?(dir)/Cinzel-Bold.ttf" |> \
+            | Opt.None          => Opt.None
+            | Opt.Some.{ bold } => load_font "?(dir)/Cinzel-Regular.ttf" |> \
+                | Opt.None             => Opt.None
+                | Opt.Some.{ regular } => Opt.Some.{ Fonts.{ bold, regular } }
+
+# ---- lockups ----
+
+$ tagline : @Str = "Effects in a functional style"
+
+# Letter spacing, in cap heights.
+$ word_track : Real = 0.114
+$ tag_track : Real = 0.071
+
+# The hoplite `size` high at (x, y), ARES to his right and the tagline under
+# it, as wide as the word. Returns the layers and the right edge of the word.
+$ lockup_at : Fonts -> @Bool -> Rgb -> Rgb -> Real -> Real -> Real
+    -> { @Vec Layer, Real } = \fs dark color tag_color x y size =>
+    let cap = 0.363 * size in
+    let tx = x + size * 1.085 in
+    let ww = text_width fs.bold cap word_track "ARES" in
+    let tcap0 = 0.081 * size in
+    let tw0 = text_width fs.regular tcap0 tag_track tagline in
+    let tcap = if tw0 > ww => tcap0 * ww / tw0 else tcap0 in
+    let tw = text_width fs.regular tcap tag_track tagline in
+    {
+        concat [
+            fmap (place_layer x y size) (hoplite dark),
+            [
+                Layer.{
+                    "word",
+                    Opt.Some.{ color },
+                    text fs.bold cap word_track tx (y + size * 0.602) "ARES"
+                },
+                Layer.{
+                    "tagline",
+                    Opt.Some.{ tag_color },
+                    text fs.regular tcap tag_track (tx + (ww - tw) / 2.0) (y + size * 0.787) tagline
+                },
+            ],
+        ],
+        tx + ww,
+    }
+
+$ lockup : Fonts -> @Bool -> Design = \fs dark =>
+    let color = if dark => gold else ink in
+    let l = lockup_at fs dark color color 0.0 0.0 1.0 in
+    Design.{
+        .width = l.1 + 0.04,
+        .height = 1.0,
+        .background = Opt.None,
+        .layers = l.0,
+        .style = ""
+    }
+
+# The repository's preview card, 2:1: the gold hoplite at the left on the
+# dark ground, ARES to his right over a gold rule, the tagline under it.
+$ social : Fonts -> Design = \fs =>
+    let size = 0.8125 in
+    let fig = fmap (place_layer 0.1094 0.0938 size) (hoplite @true) in
+    let cap = 0.2078 in
+    let tx = 1.0156 in
+    let ww = text_width fs.bold cap word_track "ARES" in
+    let tcap0 = 0.0481 in
+    let tw0 = text_width fs.regular tcap0 tag_track tagline in
+    let tcap = if tw0 > ww => tcap0 * ww / tw0 else tcap0 in
+    let tw = text_width fs.regular tcap tag_track tagline in
+    let dim = Rgb.{ .r = 201, .g = 152, .b = 58 } in
+    Design.{
+        .width = 2.0,
+        .height = 1.0,
+        .background = Opt.Some.{ night },
+        .layers = concat [
+            fig,
+            [
+                Layer.{ "word", Opt.Some.{ gold }, text fs.bold cap word_track tx 0.5469 "ARES" },
+                Layer.{
+                    "rule",
+                    Opt.Some.{ gold },
+                    [box (tx + 0.006) 0.6031 (tx + ww - 0.006) 0.6078]
+                },
+                Layer.{
+                    "tagline",
+                    Opt.Some.{ dim },
+                    text fs.regular tcap tag_track (tx + (ww - tw) / 2.0) 0.6969 tagline
+                },
+            ],
+        ],
+        .style = "",
+    }
 
 # ---- the flying spear ----
 
 # A dory, 40 units long and pointing right along the line y = cy: a crimson
 # shaft, then gold fittings (the butt spike at the back, two rings binding the
 # socket, the leaf-shaped head) and a crimson midrib down the head. The head is
-# about three shafts wide, like the logo's.
+# about three shafts wide.
 $ dory : Real -> @Vec Layer = \cy =>
     let s = 0.25 in
     let spike = poly [
@@ -141,7 +1011,7 @@ $ dory : Real -> @Vec Layer = \cy =>
         { 33.4, cy + 0.82 },
         { 30.6, cy + 0.3 },
     ] in
-    let midrib = poly [{ 31.2, cy - 0.09 }, { 38.6, cy }, { 31.2, cy + 0.09 }] in
+    let rib = poly [{ 31.2, cy - 0.09 }, { 38.6, cy }, { 31.2, cy + 0.09 }] in
     [
         Layer.{ "shaft", Opt.Some.{ crimson }, [box 2.4 (cy - s) 30.9 (cy + s)] },
         Layer.{
@@ -154,24 +1024,27 @@ $ dory : Real -> @Vec Layer = \cy =>
                 head
             ],
         },
-        Layer.{ "midrib", Opt.Some.{ crimson }, [midrib] },
+        Layer.{ "midrib", Opt.Some.{ crimson }, [rib] },
     ]
 
-$ spear_sprite : Design = Design.{ .width = 40.0, .height = 2.0, .layers = dory 1.0 }
+$ spear_sprite : Design =
+    Design.{ .width = 40.0, .height = 2.0, .background = Opt.None, .layers = dory 1.0, .style = "" }
 
-# The logo turned on its side and set in motion: a gold shield seen edge-on,
-# a third of the way along the shaft, cut back around it like the logo's ring.
+# A spear carrying a gold shield seen edge-on, a third of the way along the
+# shaft, the shield cut back around it.
 $ spear_shield_sprite : Design =
     let cy = 4.0 in
-    let rim = [Figure.Oval.{ 13.0, cy, 1.5, 3.7 }, Figure.Oval.{ 13.0, cy, 0.98, 3.18 }] in
+    let edge = [Figure.Oval.{ 13.0, cy, 1.5, 3.7 }, Figure.Oval.{ 13.0, cy, 0.98, 3.18 }] in
     Design.{
         .width = 40.0,
         .height = 8.0,
+        .background = Opt.None,
         .layers = append
             (dory cy) [
-                Layer.{ "shield", Opt.Some.{ gold }, rim },
+                Layer.{ "shield", Opt.Some.{ gold }, edge },
                 Layer.{ "channel", Opt.None, [box 0.0 (cy - 0.45) 40.0 (cy + 0.45)] },
             ],
+        .style = "",
     }
 
 # ---- vector: SVG ----
@@ -184,10 +1057,11 @@ $ css : Rgb -> @Str = \c => "#?(hex2 c.r)?(hex2 c.g)?(hex2 c.b)"
 
 # Coordinates rounded to 1/10000 of the side, which is finer than any screen.
 $ num : Real -> @Str = \x =>
-    let n = int_of_real (x * 10000.0) in
-    let frac = n % 10000 in
+    let n = int_of_real (ARES.round (x * 10000.0)) in
+    let m = if n < 0 => 0 - n else n in
+    let frac = m % 10000 in
     let pad = if frac < 10 => "000" else if frac < 100 => "00" else if frac < 1000 => "0" else "" in
-    "?(n / 10000).?(pad)?(frac)"
+    "?(if n < 0 => "-" else "")?(m / 10000).?(pad)?(frac)"
 
 # Each figure as a closed subpath. An oval is two half-oval arcs, since one
 # arc cannot start and end at the same point.
@@ -199,12 +1073,20 @@ $ subpath : Figure -> @Str = \f =>
         | Figure.Poly.{ ps, _, _ } =>
             let corner = \s p => s ++ (if s == "" => "M" else "L") ++ "?(num p.0) ?(num p.1)" in
             fold corner "" ps ++ "Z"
+        | Figure.Curve.{ ns, _, _, _ } =>
+            let v = \i => num (@vec_get ns i) in
+            let seg =
+                \k =>
+                    let o = 6 * k + 2 in
+                    "C?(v o) ?(v (o + 1)) ?(v (o + 2)) ?(v (o + 3)) ?(v (o + 4)) ?(v (o + 5))"
+            in
+            "M?(v 0) ?(v 1)" ++ ARES.join "" (fmap seg (upto ((@vec_len ns - 2) / 6))) ++ "Z"
 
 # One path per layer, in order, so later layers paint over earlier ones. An
 # eraser wraps everything drawn so far in a mask that is black on its figures,
 # so the accumulator carries a count to keep mask ids distinct.
 $ svg_layer : Design -> { @Str, @Int } -> Layer -> { @Str, @Int } = \d acc l =>
-    let path = fold (\p f => p ++ subpath f) "" l.figures in
+    let path = ARES.join "" (fmap subpath l.figures) in
     l.color |> \
         | Opt.Some.{ c } => {
             acc.0
@@ -223,41 +1105,54 @@ $ svg_layer : Design -> { @Str, @Int } -> Layer -> { @Str, @Int } = \d acc l =>
             }
 
 $ svg : Design -> @Str = \d =>
+    let ground =
+        d.background |> \
+            | Opt.Some.{ c } =>
+                "<rect width=\"?(num d.width)\" height=\"?(num d.height)\" fill=\"?(css c)\"/>\n"
+            | Opt.None => ""
+    in
+    let style = if d.style == "" => "" else "<style>?(d.style)</style>\n" in
     "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 ?(num d.width) ?(num d.height)\">\n"
+        ++ style
+        ++ ground
         ++ (fold (svg_layer d) { "", 0 } d.layers).0
         ++ "</svg>\n"
 
-# ---- raster: the even-odd rule, point by point ----
+# ---- raster: the even-odd rule, a row at a time ----
 
-# A ray from p going right crosses the outline an odd number of times exactly
-# when p is inside, whatever the polygon's shape.
-$ inside_poly : Point -> @Vec Point -> @Bool = \p ps =>
+# A ray from a point going right crosses a figure's outline an odd number of
+# times exactly when the point is inside, whatever the figure's shape. So each
+# row of the image first finds where its center line crosses every outline;
+# a pixel is then covered by a layer when an odd number of the layer's
+# crossings lie to its right.
+$ edge_crossings : Real -> @Vec Point -> @Vec Real = \y ps =>
     let n = @vec_len ps in
-    let go =
-        \i acc =>
-            if i == n =>
-                acc
-            else
-                let a = @vec_get ps i in
-                let b = @vec_get ps (if i == 0 => n - 1 else i - 1) in
-                let straddles = not ((a.1 > p.1) == (b.1 > p.1)) in
-                let crosses = straddles && p.0 < a.0 + (b.0 - a.0) * (p.1 - a.1) / (b.1 - a.1) in
-                go (i + 1) (if crosses => not acc else acc)
-    in
-    go 0 @false
+    fold (\acc i =>
+        let a = @vec_get ps i in
+        let b = @vec_get ps (if i == 0 => n - 1 else i - 1) in
+        if (a.1 > y) == (b.1 > y) =>
+            acc
+        else
+            @vec_push acc (a.0 + (b.0 - a.0) * (y - a.1) / (b.1 - a.1))) (@vec_new {}) (upto n)
 
-$ inside : Point -> Figure -> @Bool = \p f =>
+$ crossings : Real -> Figure -> @Vec Real = \y f =>
     f |> \
-        | Figure.Oval.{ x, y, rx, ry } =>
-            let u = (p.0 - x) / rx in let v = (p.1 - y) / ry in u * u + v * v < 1.0
-        | Figure.Poly.{ ps, lo, hi } =>
-            p.0 > lo.0 && p.0 < hi.0 && p.1 > lo.1 && p.1 < hi.1 && inside_poly p ps
+        | Figure.Oval.{ x, cy, rx, ry } =>
+            let v = (y - cy) / ry in
+            if v * v >= 1.0 => [] else let h = rx * C.sqrt (1.0 - v * v) in [x - h, x + h]
+        | Figure.Poly.{ ps, lo, hi }     => if y > lo.1 && y < hi.1 => edge_crossings y ps else []
+        | Figure.Curve.{ _, ps, lo, hi } => if y > lo.1 && y < hi.1 => edge_crossings y ps else []
 
-$ covers : Point -> Layer -> @Bool = \p l =>
-    (fold (\n f => if inside p f => n + 1 else n) 0 l.figures) % 2 == 1
+# A layer cut down to one row: its color and its outlines' crossings.
+$ Row : @alias = { Opt Rgb, @Vec Real }
 
-$ color_at : @Vec Layer -> Point -> Opt Rgb = \layers p =>
-    fold (\c l => if covers p l => l.color else c) Opt.None layers
+$ covers : Real -> @Vec Real -> @Bool = \x xs =>
+    (fold (\n c => if c > x => n + 1 else n) 0 xs) % 2 == 1
+
+# An eraser clears down to the background, not through it.
+$ color_at : Opt Rgb -> @Vec Row -> Real -> Opt Rgb = \ground rows x =>
+    fold (\c r => if covers x r.1 => r.0 |> \ | Opt.Some.{ _ } => r.0 | Opt.None => ground else c)
+        ground rows
 
 $ push_rgba : @Str -> Opt Rgb -> @Str = \acc o =>
     o |> \
@@ -270,17 +1165,19 @@ $ push_rgba : @Str -> Opt Rgb -> @Str = \acc o =>
 $ pam_row : Design -> @Int -> @Int -> @Str = \d cols row =>
     let pixel = d.width / real_of_int cols in
     let y = (real_of_int row + 0.5) * pixel in
+    let rows = filter (\r => @vec_len r.1 > 0)
+        (fmap (\l => { l.color, flat_map (crossings y) l.figures }) d.layers) in
     let go =
         \col chunk chunks =>
             if col == cols =>
                 @vec_push chunks chunk
             else
-                let px =
-                    push_rgba chunk (color_at d.layers { (real_of_int col + 0.5) * pixel, y }) in
+                let more = push_rgba chunk
+                    (color_at d.background rows ((real_of_int col + 0.5) * pixel)) in
                 if col % 32 == 31 =>
-                    go (col + 1) "" (@vec_push chunks px)
+                    go (col + 1) "" (@vec_push chunks more)
                 else
-                    go (col + 1) px chunks
+                    go (col + 1) more chunks
     in
     ARES.join "" (go 0 "" (@vec_new {}))
 
@@ -302,58 +1199,99 @@ $ pam : Design -> @Int -> @Str = \d cols =>
 # Scaling averages neighboring pixels, so it runs on premultiplied color: a
 # clear pixel then adds nothing, instead of its hidden color bleeding into the
 # edge next to it.
-$ ffmpeg : @Str -> @Str -> @Str -> <@IO> @Int = \src width dst =>
+$ ffmpeg : @Str -> @Int -> @Str -> <@IO> @Int = \src width dst =>
     let chain =
         "format=rgba,premultiply=inplace=1,scale=?(width):-1:flags=area,unpremultiply=inplace=1"
     in
     C.system "ffmpeg -loglevel error -y -i ?(src) -vf ?(chain) ?(dst)"
 
-# The PNGs named by the arguments from `i` on, as `path width` pairs, all
-# scaled down from one master raster. Returns how many failed.
-$ pngs : @Vec @Str -> @Str -> @Int -> <@IO> @Int = \args master i =>
-    if i + 1 >= @vec_len args =>
-        0
-    else
-        let dst = @vec_get args i in
-        let failed = ffmpeg master (@vec_get args (i + 1)) dst in
-        (if failed == 0 => println "wrote ?(dst)" else eprintln "ffmpeg failed on ?(dst)");
-        (if failed == 0 => 0 else 1) + pngs args master (i + 2)
+# How many of the steps `step` takes on the items from `i` on fail.
+$ failures : (t -> <@IO> @Int) -> @Vec t -> @Int -> <@IO> @Int = \step items i =>
+    if i == @vec_len items => 0 else step (@vec_get items i) + failures step items (i + 1)
 
-# The widest PNG the arguments ask for, from the width at `i` on. The master
-# raster is three times that, so every PNG averages at least 3x3 samples a pixel.
-$ widest : @Vec @Str -> @Int -> @Int = \args i =>
-    if i >= @vec_len args =>
-        0
+# `d` as SVG at `out` (none when empty) and as each PNG { path, width }, all
+# scaled down from one master raster three times the widest, so every pixel
+# averages at least 3x3 samples. Returns how many files failed.
+$ render : Design -> @Str -> @Vec { @Str, @Int } -> <@IO> @Int = \d out pngs =>
+    let svg_failed =
+        if out == "" =>
+            (if @vec_len pngs == 0 => print (svg d) else {}); 0
+        else if write_file out (svg d) =>
+            println "wrote ?(out)"; 0
+        else
+            eprintln "cannot write ?(out)"; 1
+    in
+    if @vec_len pngs == 0 =>
+        svg_failed
     else
-        ARES.max (from_str (@vec_get args i) |> \ | Opt.Some.{ w } => w | _ => 0)
-            (widest args (i + 2))
+        let master = "?((@vec_get pngs 0).0).master.pam" in
+        write_file master (pam d (3 * fold (\w p => ARES.max w p.1) 0 pngs));
+        let failed =
+            failures (\p =>
+                if ffmpeg master p.1 p.0 == 0 =>
+                    println "wrote ?(p.0)"; 0
+                else
+                    eprintln "ffmpeg failed on ?(p.0)"; 1) pngs 0
+        in
+        remove_file master; svg_failed + failed
 
-$ design_named : @Str -> Opt Design = \name =>
+$ design_named : Opt Fonts -> @Str -> Opt Design = \fs name =>
+    let lettered =
+        \build => fs |> \ | Opt.Some.{ f } => Opt.Some.{ build f } | Opt.None => Opt.None
+    in
     name |> \
-        | "logo"         => Opt.Some.{ logo }
+        | "logo"         => Opt.Some.{ square Opt.None (hoplite @false) }
+        | "logo-dark"    => Opt.Some.{ square Opt.None (hoplite @true) }
+        | "icon"         => Opt.Some.{ favicon }
+        | "icon-light"   => Opt.Some.{ sprite @false soldier_16 }
+        | "icon-dark"    => Opt.Some.{ sprite @true soldier_16 }
+        | "icon32-light" => Opt.Some.{ sprite @false soldier_32 }
+        | "icon32-dark"  => Opt.Some.{ sprite @true soldier_32 }
+        | "badge"        => Opt.Some.{ badge }
+        | "lockup-light" => lettered (\f => lockup f @false)
+        | "lockup-dark"  => lettered (\f => lockup f @true)
+        | "social"       => lettered social
         | "spear"        => Opt.Some.{ spear_sprite }
         | "spear-shield" => Opt.Some.{ spear_shield_sprite }
         | _              => Opt.None
 
-$ usage : @Str = "usage: LOGO [logo|spear|spear-shield [out.svg [out.png width]...]]"
+# What a run with no arguments writes: { design, svg or "", pngs }.
+$ assets : @Vec { @Str, @Str, @Vec { @Str, @Int } } = [
+    { "logo", "documentation/assets/logo.svg", [] },
+    { "logo-dark", "documentation/assets/logo-dark.svg", [] },
+    { "icon", "documentation/assets/icon.svg", [] },
+    { "lockup-light", "documentation/assets/lockup-light.svg", [] },
+    { "lockup-dark", "documentation/assets/lockup-dark.svg", [] },
+    { "social", "", [{ "documentation/assets/social.png", 1280 }] },
+    { "icon-light", "tools/editors/vscode/icons/ares-light.svg", [] },
+    { "icon-dark", "tools/editors/vscode/icons/ares-dark.svg", [] },
+    { "badge", "", [{ "tools/editors/vscode/icons/ares.png", 128 }] },
+]
+
+$ usage : @Str =
+    "usage: LOGO [logo|logo-dark|icon|icon-light|icon-dark|icon32-light|icon32-dark|badge|"
+        ++ "lockup-light|lockup-dark|social|spear|spear-shield [out.svg [out.png width]...]]"
+
+$ font_note : @Str =
+    "the lockups and `social` need ARES_FONT_CINZEL, the directory of Cinzel's .ttf files"
+
+$ make : Opt Fonts -> @Str -> @Str -> @Vec { @Str, @Int } -> <@IO> @Int = \fs name out pngs =>
+    design_named fs name |> \
+        | Opt.Some.{ d } => render d out pngs
+        | Opt.None       => (if is_none fs => eprintln font_note else eprintln usage); 1
 
 $ @main : @Vec @Str -> <@IO> @Int = \args =>
     let n = @vec_len args in
-    let name = if n > 1 => @vec_get args 1 else "logo" in
-    let out = if n > 2 => @vec_get args 2 else "documentation/assets/logo.svg" in
-    design_named name |> \
-        | Opt.None => eprintln usage; 2
-        | Opt.Some.{ d } =>
-            if n > 2 && n % 2 == 0 =>
-                eprintln usage; 2
-            else if not (write_file out (svg d)) =>
-                eprintln "cannot write ?(out)"; 1
-            else
-                println "wrote ?(out)";
-                if n < 5 =>
-                    0
-                else
-                    let master = "?(out).master.pam" in
-                    write_file master (pam d (3 * widest args 4));
-                    let failed = pngs args master 3 in
-                    remove_file master; if failed == 0 => 0 else 1
+    let fs = cinzel {} in
+    if n == 1 =>
+        let failed = failures (\a => make fs a.0 a.1 a.2) assets 0 in if failed == 0 => 0 else 1
+    else if n > 3 && n % 2 == 0 =>
+        eprintln usage; 2
+    else
+        let out = if n > 2 => @vec_get args 2 else "" in
+        let pngs = fmap (\i =>
+            {
+                @vec_get args (3 + 2 * i),
+                from_str (@vec_get args (4 + 2 * i)) |> \ | Opt.Some.{ w } => w | _ => 0
+            }) (upto ((n - 3) / 2)) in
+        if make fs (@vec_get args 1) out pngs == 0 => 0 else 1
