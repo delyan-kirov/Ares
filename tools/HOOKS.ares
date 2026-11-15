@@ -378,8 +378,15 @@ $ helix_build : {} -> <@IO, Fail> {} =
 # through a new package.
 $ vsix : @Str = "tools/editors/vscode/ares.vsix"
 
-$ vscode_srcs : @Vec @Str =
-    ["extension.js", "package.json", "language-configuration.json", "syntaxes/ares.tmLanguage.json"]
+$ vscode_srcs : @Vec @Str = [
+    "extension.js",
+    "package.json",
+    "language-configuration.json",
+    "syntaxes/ares.tmLanguage.json",
+    "icons/ares-light.svg",
+    "icons/ares-dark.svg",
+    "icons/ares.png"
+]
 
 $ vscode_installed : {} -> <@IO> @Bool =
     succeeds "ls -d \"$HOME\"/.vscode/extensions/ares.ares-* >/dev/null 2>&1"
