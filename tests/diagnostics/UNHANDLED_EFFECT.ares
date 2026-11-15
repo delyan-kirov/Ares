@@ -1,5 +1,5 @@
 $ @mod UNHANDLED_EFFECT
-$ @import IO
+$ @import ARESxIO
 
 # A pure signature cannot hide an effect its body performs.
 $ g : @Int -> <@IO> @Int = \x => println "a"; x

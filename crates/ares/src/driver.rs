@@ -526,6 +526,7 @@ pub(crate) fn check_modules_over<'a, 'c>(
         order.retain(|&i| i != pre);
         order.insert(0, pre);
     }
+    check_parts(ast, programs, sources, &mut errors);
     let mut hollow = vec![false; programs.len()];
     for &i in &order {
         if let Some((_, defs)) = reused(i) {
@@ -540,6 +541,7 @@ pub(crate) fn check_modules_over<'a, 'c>(
         };
         let lookup = |k: usize| reused(k).map(|(c, _)| c).or(checkers[k].as_ref());
         let mut checker = prepare_checker(ast, &programs[i], types, &lookup, &graph[i], c_idx, core_idx, i, setup);
+        checker.set_unit_name(&sources[i].0);
         let outcome = checker.check_program(&programs[i]);
         // A dependency that failed before exporting anything leaves every name it
         // defines unbound here, so this module's errors would only echo it.
@@ -562,6 +564,55 @@ pub(crate) fn check_modules_over<'a, 'c>(
         checked(i);
     }
     CheckedOver { checkers, results, errors, warnings, order }
+}
+
+/// A module may span several files, its parts (`ARESxMAP.ares` and
+/// `ARESxSET.ares` both declare `$ @mod ARES`). The parts share one namespace, so
+/// a name, private or not, is defined in only one of them, and so is a variant
+/// tag. Each clash is reported in the later part.
+fn check_parts(
+    ast: &frontend::Ast,
+    programs: &[Program],
+    sources: &[(String, String, String)],
+    errors: &mut [Vec<utilities::Diagnostic>],
+) {
+    let mut seen: HashMap<(utilities::StrId, bool, utilities::StrId), usize> = HashMap::new();
+    for (i, program) in programs.iter().enumerate() {
+        let mut names: Vec<(utilities::StrId, bool, utilities::Span)> = Vec::new();
+        for (item, span) in ast.slice(program.items).iter().zip(ast.slice(program.spans)) {
+            let at = span.name.unwrap_or(span.full);
+            match item {
+                Item::Def { name, .. } | Item::Struct { name, .. } | Item::Alias { name, .. } | Item::Effect { name, .. } => {
+                    names.push((*name, false, at));
+                }
+                Item::Union { name, variants, .. } => {
+                    names.push((*name, false, at));
+                    names.extend(ast.slice(*variants).iter().map(|v| (v.tag, true, at)));
+                }
+                _ => {}
+            }
+        }
+        for (name, tag, at) in names {
+            let Some(&first) = seen.get(&(program.module, tag, name)) else {
+                seen.insert((program.module, tag, name), i);
+                continue;
+            };
+            if first == i {
+                continue;
+            }
+            let what = if tag { "variant tag" } else { "name" };
+            errors[i].push(
+                utilities::Diagnostic::error(
+                    utilities::Code::DuplicateSymbol,
+                    at,
+                    0,
+                    format!("the {what} `{name}` is already defined in module `{}`", program.module),
+                )
+                .with_note(format!("`{}` and `{}` are both parts of `{}`, which share one namespace", sources[first].0, sources[i].0, program.module))
+                .with_help("rename one of them"),
+            );
+        }
+    }
 }
 
 /// Where the auto-injected `C` and the implicit `CORE` sit among the modules.
@@ -633,7 +684,7 @@ pub(crate) fn prepare_checker<'a, 'c>(
             continue;
         }
         let other = checkers(dep).expect("dependency checked first");
-        let (bare, aliases) = import_forms(ast, program, other.module_name().as_str());
+        let (bare, aliases) = import_forms(ast, program, other.unit_name().as_str());
         checker.import_as(other, bare || Some(dep) == core_idx, &aliases);
     }
     checker
@@ -1109,7 +1160,7 @@ fn expand_loaded(
         let site_locals: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
         let reflect = reflect_tables(compiled.1);
         // The modules a site must import for the names hygiene qualifies.
-        let mut injected: Vec<(String, utilities::StrId)> = Vec::new();
+        let mut injected: Vec<(String, (utilities::StrId, utilities::StrId))> = Vec::new();
         let mut hygienic = |code: String, v: &interpreter::machine::data::PVal, kind, module: &str| {
             let quoted = interpreter::machine::data::quoted_runs(v);
             let site = utilities::StrId::intern(module);
@@ -1312,8 +1363,10 @@ fn expand_loaded(
 
 /// The import a site gains for a module whose names hygiene qualified: under
 /// the module's own name only, so it brings no name in bare.
-fn import_line(module: utilities::StrId) -> String {
-    format!("\n$ @import {module} = {module}\n")
+/// The import hygiene injects: `file` (a module, or one part of one) reached
+/// as `module`.
+fn import_line((file, module): (utilities::StrId, utilities::StrId)) -> String {
+    format!("\n$ @import {module} = {file}\n")
 }
 
 /// The syntax category the `@Code` of the `&` site backed by the global
@@ -1876,7 +1929,7 @@ pub fn cmd_emit_c(path: &str, target: utilities::Target) -> ExitCode {
 
 /// Lower, emit C for `target`, then compile and link it with the target's
 /// toolchain (`cc` natively, `emcc` for wasm). Writes `<stem>.c` and the
-/// executable into a `ares-out/` directory beside the source (kept out of the
+/// executable into an `ares-artifacts/` directory beside the source (kept out of the
 /// source tree, gitignore-friendly); prints the path built.
 ///
 /// `libc` is the `--libc=` choice; `None` takes the target's default, which on
@@ -1898,7 +1951,7 @@ pub fn cmd_build(
 
     let src = Path::new(path);
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
-    let dir = src.parent().unwrap_or_else(|| Path::new(".")).join("ares-out");
+    let dir = src.parent().unwrap_or_else(|| Path::new(".")).join("ares-artifacts");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("ares: cannot create {}: {e}", dir.display());
         return ExitCode::FAILURE;

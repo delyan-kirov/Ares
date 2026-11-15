@@ -1,9 +1,10 @@
 $ @mod IMPORT_ALIAS_BARE
 
-$ @import V = VEC
-$ @import O = OPT
+$ @import A = ARESxALGO
+$ @import V = ARESxVEC
+$ @import M = ARESxMAP
 
-$ v : @Vec @Int = V.new {}
-$ n : @Int = length v  #~ error[TYPE_UNBOUND]: unbound name `length`
-$ m : @Int = VEC.length v  #~ error[UNKNOWN_MODULE]: no module or effect `VEC` is in scope
-$ c : O.Option @Int = Option.Some.{ 1 }  #~ error[TYPE_UNBOUND]: type `Option` is imported qualified-only
+$ v : @Vec @Int = V.push 1 (A.new {})
+$ n : @Vec @Int = push 2 v  #~ error[TYPE_UNBOUND]: unbound name `push`
+$ m : @Vec @Int = ARES.push 2 v  #~ error[UNKNOWN_MODULE]: no module or effect `ARES` is in scope
+$ c : @Int = let e : Map @Int @Int = A.new {} in A.len e  #~ error[TYPE_UNBOUND]: type `Map` is imported qualified-only

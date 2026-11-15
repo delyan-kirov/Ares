@@ -8,9 +8,10 @@ $ @mod TENSORS
 #       bounds (`t.[n]` wraps to `t.[0]`). Functions can be polymorphic in the
 #       size: `@Tensor n T -> ...` accepts a tensor of any length, with `n` unified.
 #       The compiler provides only the `@`-primitives; the operations (`index`
-#       that `.[..]` uses, `matmul`, `dot`, `transpose`, `concat`) live in `LA`.
+#       that `.[..]` uses, `matmul`, `dot`, `transpose`, `concat_tensors`) live in `ARESxLA`.
 
-$ @import LA
+$ @import ARESxALGO
+$ @import ARESxLA
 
 $ v : @Tensor 3 @Int = [10, 20, 30]
 
@@ -32,14 +33,14 @@ $ ck_elem : @Int = if head [7, 8, 9] == 7 => 0 else 16
 $ grid : Matrix 2 2 @Int = [[1, 2], [3, 4]]
 $ ck_nested : @Int = if grid.[1, 0] == 3 => 0 else 32
 
-# Type-level size ARITHMETIC (modular, Z/2^64). `concat` joins two tensors and
+# Type-level size ARITHMETIC (modular, Z/2^64). `concat_tensors` joins two tensors and
 # its result size is `n + m`, checked at compile time.
-$ ab : @Tensor 5 @Int = concat v [40, 50] # 3 + 2 = 5
+$ ab : @Tensor 5 @Int = concat_tensors v [40, 50] # 3 + 2 = 5
 $ ck_cat : @Int = if ab.[4] == 50 => 0 else 64
 
 # The normalizer decides equality: `n + n` is `2 * n`, and `+` commutes.
-$ dup : @Tensor n a -> @Tensor (2 * n) a = \t => concat t t
-$ flip : @Tensor n a -> @Tensor m a -> @Tensor (m + n) a = \x y => concat x y
+$ dup : @Tensor n a -> @Tensor (2 * n) a = \t => concat_tensors t t
+$ flip : @Tensor n a -> @Tensor m a -> @Tensor (m + n) a = \x y => concat_tensors x y
 $ dd : @Tensor 6 @Int = dup v # 2 * 3 = 6
 $ ck_dup : @Int = if dd.[5] == 30 => 0 else 128
 
@@ -82,7 +83,7 @@ $ ck_ext : @Int =
 # `create template f` builds a tensor the same size as `template` (result size is
 # the template's, so it is sound), applying `f` at each index. With `length` and
 # `index` this is enough to write tensor ops in SOURCE: here, transpose.
-$ myT : Matrix m n a -> Matrix n m a = \t => create t.[0] (\j => create t (\i => t.[i].[j]))
+$ myT : Matrix m n a -> Matrix n m a = \t => create (\j => create (\i => t.[i].[j]) t) t.[0]
 $ ck_gen : @Int =
     if (myT mA).[2, 0] == 3 =>
         0
@@ -92,17 +93,17 @@ $ ck_gen : @Int =
 # O(1) VIEWS over the flat strided buffer: `transpose` swaps strides, `row`/`col`/
 # `slice` are views that copy nothing. `col` is a strided view (stride = row width).
 $ ck_row : @Int =
-    if (row mA 1).[2] == 6 =>
+    if (row 1 mA).[2] == 6 =>
         0
     else
         16384 # mA[1] = [4,5,6]
 $ ck_col : @Int =
-    if (col mA 2).[0] == 3 =>
+    if (col 2 mA).[0] == 3 =>
         0
     else
         32768 # column 2 = [3,6,9]
 $ ck_slc : @Int =
-    if (slice v 1 3).[0] == 20 =>
+    if (slice 1 3 v).[0] == 20 =>
         0
     else
         65536 # v[1..3] = [20,30]
@@ -126,18 +127,18 @@ $ ck_ms : @Int =
 # which must agree with the definition written in source: here on views (a
 # transpose, a column) and on element types that take the generic path.
 $ ref_dot : @use { p: IAdd a, m: IMul a, z: IZero a } -> @Tensor n a -> @Tensor n a -> a = \x y =>
-    let go = \i acc => if i == length x => acc else go (i + 1) (p.add acc (m.mul x.[i] y.[i])) in
+    let go = \i acc => if i == len x => acc else go (i + 1) (p.add acc (m.mul x.[i] y.[i])) in
     go 0 z.zero
 $ ref_mm : @use { p: IAdd t, m: IMul t, z: IZero t } -> Matrix m k t -> Matrix k n t
     -> Matrix m n t = \a b =>
-    let bt = transpose b in create a (\i => create (b.[0]) (\j => ref_dot a.[i] bt.[j]))
+    let bt = transpose b in create (\i => create (\j => ref_dot a.[i] bt.[j]) (b.[0])) a
 $ kTA : Matrix 3 3 @Int = matmul mT mA             # [[17, 22, 27], [22, 29, 36], [27, 36, 45]]
 $ kAT : Matrix 2 2 @Int = matmul mA (transpose mA) # [[14, 32], [32, 77]]
 $ ck_kview : @Int =
     if kTA.[0, 1] == 22
         && kTA.[2, 2] == 45
         && kAT.[1, 0] == 32
-        && dot (col mA 1) (row mT 1) == 29 =>
+        && dot (col 1 mA) (row 1 mT) == 29 =>
         0
     else
         1048576

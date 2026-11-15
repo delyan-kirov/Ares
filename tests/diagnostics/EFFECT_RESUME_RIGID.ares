@@ -2,6 +2,8 @@ $ @mod EFFECT_RESUME_RIGID
 
 # `take`'s result is chosen at each use, so a handler cannot resume it with a
 # value of its own (#290: an `@Int` would reach a use at `@Str`).
+$ @import ARESxALGO
+
 $ Box : @effect = take : @Int -> a,
 
 $ use : {} -> <Box> @Int =

@@ -1,15 +1,16 @@
-$ @mod PATH
+$ @mod ARES
 
-# \file PATH.ares
+# \file ARESxPATH.ares
 # \info POSIX-style path manipulation, pure byte-string code (no filesystem
 #       access -- pair with IO for that). `basename`/`dirname` follow POSIX
 #       semantics: trailing slashes are ignored ("a/b/" behaves as "a/b") and
 #       the root "/" is its own basename and dirname. Extensions come back
 #       WITHOUT the dot, and a dotfile (".bashrc") has none.
 
-$ @import STR
-$ @import OPT
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxSTR
+$ @import ARESxOPT
+$ @import ARESxVEC
 
 # ---- byte scans (47 = '/', 46 = '.') ----
 
@@ -65,12 +66,12 @@ $ strip_ext : @Str -> @Str = \p =>
     if i <= 0 => p else @array_slice p 0 ((@array_len p) - ((@array_len b) - i))
 
 # The non-empty components: "/a//b/" -> ["a", "b"].
-$ parts : @Str -> @Vec @Str = \p => filter (\c => (@array_len c) > 0) (split p "/")
+$ parts : @Str -> @Vec @Str = \p => filter (\c => (@array_len c) > 0) (split "/" p)
 
 # ---- building ----
 
 # Join with a single separator; an absolute `b` wins ("" joins as identity).
-$ join : @Str -> @Str -> @Str = \a b =>
+$ join_path : @Str -> @Str -> @Str = \b a =>
     if (@array_len a) == 0 =>
         b
     else if (@array_len b) == 0 =>

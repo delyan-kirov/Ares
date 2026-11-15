@@ -1,6 +1,5 @@
 $ @mod IMPORT_ALIAS_BARE_TYPE
 
-$ @import V = VEC
-$ @import O = OPT
+$ @import R = ARESxRANDOM
 
-$ t : Option @Int = V.first (V.new {})  #~ error[TYPE_UNBOUND]: type `Option` is imported qualified-only
+$ t : Rng = R.seed 7  #~ error[TYPE_UNBOUND]: type `Rng` is imported qualified-only

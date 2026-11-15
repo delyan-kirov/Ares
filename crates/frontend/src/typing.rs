@@ -179,6 +179,11 @@ pub struct Checker<'a> {
     /// Context resolutions deferred to the enclosing definition's boundary, where
     /// inference has pinned the requirement's type variables.
     ctx_pending: Vec<PendingCtx>,
+    /// Positional projections `e.1` taken while `e`'s type was unknown, as
+    /// `(e's type, index, the projection's type)`: solved once `e` turns out a
+    /// tuple, which an instance chosen at the definition's boundary may decide
+    /// (`foldl (\acc e => .. e.1 ..) z xs` learns `e` from `xs`'s instance).
+    pending_projs: Vec<(Type, usize, Type)>,
     /// The elaborated signature of the definition currently being checked. Its type
     /// variables are the caller's to choose, so context resolution may not bind
     /// them: a `$ g : a -> @Str = \x => show x` must declare the context rather than
@@ -252,6 +257,13 @@ pub struct Checker<'a> {
     /// (`V.Type`) is not.
     alias_types: HashMap<StrId, StrId>,
     module_name: StrId,
+    /// The file this checker checked, which importers name: the module's own
+    /// name, or one part of it (`ARESxMAP` declares `$ @mod ARES`).
+    unit_name: Option<StrId>,
+    /// The file each imported name comes from (`cmp_int` -> `ARESxMATH`), and the
+    /// module each imported file is part of (`ARESxMATH` -> `ARES`).
+    name_units: HashMap<StrId, StrId>,
+    unit_modules: HashMap<StrId, StrId>,
     /// `[..]` literal sites resolved to a sized tensor `@Tensor n T`: the one `[...]`
     /// shape no hook can build, since the payload cannot carry the static size.
     /// Lowering flattens the collected elements with `@tensor_stack`.
@@ -487,6 +499,9 @@ pub struct Homes {
     /// Each module reached qualified, to the qualifier that reaches it, its own
     /// name over an alias.
     pub qualifiers: HashMap<StrId, StrId>,
+    /// Each value and type name reached bare, to the file that defines it: its
+    /// module's, or the part of it (`cmp_int` -> `ARESxMATH`).
+    pub units: HashMap<StrId, StrId>,
 }
 
 impl<'a> Checker<'a> {
@@ -521,6 +536,7 @@ impl<'a> Checker<'a> {
             own_wrappers: HashMap::new(),
             ctx_args: HashMap::new(),
             ctx_pending: Vec::new(),
+            pending_projs: Vec::new(),
             current_sig: None,
             ctx_override: HashMap::new(),
             instances: HashMap::new(),
@@ -544,6 +560,9 @@ impl<'a> Checker<'a> {
             alias_values: HashMap::new(),
             alias_types: HashMap::new(),
             module_name: StrId::intern(""),
+            unit_name: None,
+            name_units: HashMap::new(),
+            unit_modules: HashMap::new(),
             tensor_exprs: HashSet::new(),
             interp_targets: HashSet::new(),
             interp_quoted: HashSet::new(),
@@ -1092,6 +1111,16 @@ impl<'a> Checker<'a> {
     pub fn module_name(&self) -> StrId {
         self.module_name
     }
+
+    /// The name importers write for this checker's file: its module's, unless
+    /// [`Checker::set_unit_name`] says it is one part of a module.
+    pub fn unit_name(&self) -> StrId {
+        self.unit_name.unwrap_or(self.module_name)
+    }
+
+    pub fn set_unit_name(&mut self, unit: &str) {
+        self.unit_name = Some(StrId::intern(unit));
+    }
 }
 
 // ## Scope
@@ -1137,7 +1166,10 @@ impl<'a> Checker<'a> {
                 qualifiers.insert(module, scope);
             }
         }
-        Homes { values, types, modules, qualifiers }
+        let mut units = self.name_units.clone();
+        units.extend(self.own_values.iter().map(|(n, _)| (*n, self.unit_name())));
+        units.extend(self.own_type_names.iter().map(|n| (*n, self.unit_name())));
+        Homes { values, types, modules, qualifiers, units }
     }
 
     /// The members of a qualified module `name` in scope (`C`, an import), with

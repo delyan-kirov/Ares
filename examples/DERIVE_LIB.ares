@@ -7,13 +7,13 @@ $ @mod DERIVE_LIB
 #       dictionary requirement across the import boundary, so a caller in another
 #       module still plans the element dictionary.
 
-$ @import DERIVE
+$ @import ARESxDERIVE
 
 $ Wrap : @union t =
     Nothing: {},
     Just: { t },
 
-$ &DERIVE.derive_show "Wrap"
+$ &ARES.derive_show "Wrap"
 
 $ test : @Int = 0
 

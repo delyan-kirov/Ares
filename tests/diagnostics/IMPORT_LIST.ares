@@ -1,5 +1,6 @@
 $ @mod IMPORT_LIST
 
-$ @import V = VEC
+$ @import ARESxALGO
+$ @import V = ARESxVEC
 $ @import STRR  #~ error[UNKNOWN_MODULE]: cannot find module `STRR`
-$ @import O = OPT
+$ @import O = ARESxOPT

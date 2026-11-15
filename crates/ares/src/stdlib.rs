@@ -8,30 +8,32 @@
 
 use std::path::{Path, PathBuf};
 
-/// Module name to source text, one entry per `library/*.ares`. A new
-/// standard-library module must be added here too; the tests below enforce it.
+/// File name to source text, one entry per `library/*.ares`: `CORE`, `C`, and
+/// the parts of the `ARES` module (`ARESxMAP`, ...). A new file must be added
+/// here too; the tests below enforce it.
 pub const MODULES: &[(&str, &str)] = &[
-    ("ASYNC", include_str!("../../../library/ASYNC.ares")),
-    ("BITS", include_str!("../../../library/BITS.ares")),
+    ("ARESxALGO", include_str!("../../../library/ARESxALGO.ares")),
+    ("ARESxASYNC", include_str!("../../../library/ARESxASYNC.ares")),
+    ("ARESxBITS", include_str!("../../../library/ARESxBITS.ares")),
+    ("ARESxCPX", include_str!("../../../library/ARESxCPX.ares")),
+    ("ARESxDERIVE", include_str!("../../../library/ARESxDERIVE.ares")),
+    ("ARESxIO", include_str!("../../../library/ARESxIO.ares")),
+    ("ARESxLA", include_str!("../../../library/ARESxLA.ares")),
+    ("ARESxLIST", include_str!("../../../library/ARESxLIST.ares")),
+    ("ARESxMAP", include_str!("../../../library/ARESxMAP.ares")),
+    ("ARESxMATH", include_str!("../../../library/ARESxMATH.ares")),
+    ("ARESxOPT", include_str!("../../../library/ARESxOPT.ares")),
+    ("ARESxPAR", include_str!("../../../library/ARESxPAR.ares")),
+    ("ARESxPATH", include_str!("../../../library/ARESxPATH.ares")),
+    ("ARESxRANDOM", include_str!("../../../library/ARESxRANDOM.ares")),
+    ("ARESxRESULT", include_str!("../../../library/ARESxRESULT.ares")),
+    ("ARESxSET", include_str!("../../../library/ARESxSET.ares")),
+    ("ARESxSHELL", include_str!("../../../library/ARESxSHELL.ares")),
+    ("ARESxSTM", include_str!("../../../library/ARESxSTM.ares")),
+    ("ARESxSTR", include_str!("../../../library/ARESxSTR.ares")),
+    ("ARESxVEC", include_str!("../../../library/ARESxVEC.ares")),
     ("C", include_str!("../../../library/C.ares")),
     ("CORE", include_str!("../../../library/CORE.ares")),
-    ("CPX", include_str!("../../../library/CPX.ares")),
-    ("DERIVE", include_str!("../../../library/DERIVE.ares")),
-    ("IO", include_str!("../../../library/IO.ares")),
-    ("LA", include_str!("../../../library/LA.ares")),
-    ("LIST", include_str!("../../../library/LIST.ares")),
-    ("MAP", include_str!("../../../library/MAP.ares")),
-    ("MATH", include_str!("../../../library/MATH.ares")),
-    ("OPT", include_str!("../../../library/OPT.ares")),
-    ("PAR", include_str!("../../../library/PAR.ares")),
-    ("PATH", include_str!("../../../library/PATH.ares")),
-    ("RANDOM", include_str!("../../../library/RANDOM.ares")),
-    ("RESULT", include_str!("../../../library/RESULT.ares")),
-    ("SET", include_str!("../../../library/SET.ares")),
-    ("STM", include_str!("../../../library/STM.ares")),
-    ("STR", include_str!("../../../library/STR.ares")),
-    ("ARES_SHELL", include_str!("../../../library/ARES_SHELL.ares")),
-    ("VEC", include_str!("../../../library/VEC.ares")),
 ];
 
 /// The embedded source of a standard-library module.
@@ -88,12 +90,16 @@ mod tests {
         );
     }
 
-    // Catches a mis-paired `include_str!` among fifteen near-identical lines,
-    // which comparing the name set alone cannot see.
+    // Catches a mis-paired `include_str!` among the near-identical lines, which
+    // comparing the name set alone cannot see: a part names its own file.
     #[test]
     fn embedded_sources_declare_their_own_module_name() {
         for (name, src) in MODULES {
-            assert_eq!(src.lines().next(), Some(format!("$ @mod {name}").as_str()));
+            let module = name.split_once('x').map_or(*name, |(m, _)| m);
+            assert_eq!(src.lines().next(), Some(format!("$ @mod {module}").as_str()));
+            if module != *name {
+                assert!(src.contains(&format!("# \\file {name}.ares")), "{name}");
+            }
         }
     }
 }

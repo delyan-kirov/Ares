@@ -106,11 +106,11 @@ and the instance nesting depth and the number of clones are capped.
 Arithmetic is one interface per operation, so a type implements exactly what it
 has (`Money` adds but does not divide): `IAdd ISub IMul IDiv IMod IZero IOne IPow`.
 An operator takes ONE type for both operands, so mixed-width arithmetic is written
-explicitly (`@cast`, `f32_to_f64`, `CPX.of_real`); the 220 mixed-width operator
+explicitly (`@cast`, `f32_to_f64`, `ARES.of_real`); the 220 mixed-width operator
 pairs are gone.
 
 Comparison is `IEq` and `IOrd`. There is no structural fallback for `==`: a type
-needs an `IEq` instance, by hand or from `DERIVE.derive_eq` / `derive_ord`. CORE has
+needs an `IEq` instance, by hand or from `ARES.derive_eq` / `derive_ord`. CORE has
 instances for the base types, tuples, `@Vec`, `@Array` and `Cpx`.
 
 The rest: `IToString` / `IFromString` (which `"?(e)"` interpolation uses), `ICat`
@@ -118,7 +118,7 @@ The rest: `IToString` / `IFromString` (which `"?(e)"` interpolation uses), `ICat
 ordinary interface parameter: `$ IFor : @struct s a e = ...`), and `DERIVE`'s
 three-way `ICmp`.
 
-`MATH.min` / `max` / `clamp` / `abs` / `pow` are ONE definition each over these
+`ARES.min` / `max` / `clamp` / `abs` / `pow` are ONE definition each over these
 interfaces, so they work for any type that has them, `@Str` included.
 
 ## Blessed interfaces

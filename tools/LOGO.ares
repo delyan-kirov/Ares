@@ -16,16 +16,17 @@ $ @mod MAIN
 #       rendered to a raster that ffmpeg scales down to any PNG widths asked for.
 #
 #           ares build tools/LOGO.ares
-#           tools/ares-out/LOGO [design [out.svg [out.png width]...]]
+#           tools/ares-artifacts/LOGO [design [out.svg [out.png width]...]]
 #
 #       With no arguments it writes the `logo` to documentation/assets/logo.svg,
 #       the README's copy. Only the PNGs need ffmpeg.
 
-$ @import STR
-$ @import IO
-$ @import MATH
-$ @import VEC
-$ @import OPT
+$ @import ARESxALGO
+$ @import ARESxSTR
+$ @import ARESxIO
+$ @import ARESxMATH
+$ @import ARESxVEC
+$ @import ARESxOPT
 
 $ Rgb : @struct =
     r: @Int,
@@ -42,7 +43,7 @@ $ Figure : @union =
 # can style or animate its parts.
 $ Layer : @struct =
     name: @Str,
-    color: Option Rgb,
+    color: Opt Rgb,
     figures: @Vec Figure,
 
 # A design's coordinates run from (0, 0) at the top left to (width, height).
@@ -82,8 +83,8 @@ $ box : Real -> Real -> Real -> Real -> Figure = \x0 y0 x1 y1 =>
 # A polygon with its bounding box, which lets the raster skip it at a glance
 # for the many points nowhere near it.
 $ poly : @Vec Point -> Figure = \ps =>
-    let lo = fold (\b p => { MATH.min b.0 p.0, MATH.min b.1 p.1 }) (@vec_get ps 0) ps in
-    let hi = fold (\b p => { MATH.max b.0 p.0, MATH.max b.1 p.1 }) (@vec_get ps 0) ps in
+    let lo = fold (\b p => { ARES.min b.0 p.0, ARES.min b.1 p.1 }) (@vec_get ps 0) ps in
+    let hi = fold (\b p => { ARES.max b.0 p.0, ARES.max b.1 p.1 }) (@vec_get ps 0) ps in
     Figure.Poly.{ ps, lo, hi }
 
 $ disc : Real -> Real -> Real -> Figure = \x y r => Figure.Oval.{ x, y, r, r }
@@ -110,9 +111,9 @@ $ logo : Design = Design.{
     .width = 1.0,
     .height = 1.0,
     .layers = [
-        Layer.{ "shield", Option.Some.{ gold }, ring },
-        Layer.{ "channel", Option.None, [channel] },
-        Layer.{ "spear", Option.Some.{ crimson }, [spear] },
+        Layer.{ "shield", Opt.Some.{ gold }, ring },
+        Layer.{ "channel", Opt.None, [channel] },
+        Layer.{ "spear", Opt.Some.{ crimson }, [spear] },
     ],
 }
 
@@ -142,10 +143,10 @@ $ dory : Real -> @Vec Layer = \cy =>
     ] in
     let midrib = poly [{ 31.2, cy - 0.09 }, { 38.6, cy }, { 31.2, cy + 0.09 }] in
     [
-        Layer.{ "shaft", Option.Some.{ crimson }, [box 2.4 (cy - s) 30.9 (cy + s)] },
+        Layer.{ "shaft", Opt.Some.{ crimson }, [box 2.4 (cy - s) 30.9 (cy + s)] },
         Layer.{
             "fittings",
-            Option.Some.{ gold },
+            Opt.Some.{ gold },
             [
                 spike,
                 box 29.4 (cy - 0.36) 29.8 (cy + 0.36),
@@ -153,7 +154,7 @@ $ dory : Real -> @Vec Layer = \cy =>
                 head
             ],
         },
-        Layer.{ "midrib", Option.Some.{ crimson }, [midrib] },
+        Layer.{ "midrib", Opt.Some.{ crimson }, [midrib] },
     ]
 
 $ spear_sprite : Design = Design.{ .width = 40.0, .height = 2.0, .layers = dory 1.0 }
@@ -166,10 +167,11 @@ $ spear_shield_sprite : Design =
     Design.{
         .width = 40.0,
         .height = 8.0,
-        .layers = append [
-            Layer.{ "shield", Option.Some.{ gold }, rim },
-            Layer.{ "channel", Option.None, [box 0.0 (cy - 0.45) 40.0 (cy + 0.45)] },
-        ] (dory cy),
+        .layers = append
+            (dory cy) [
+                Layer.{ "shield", Opt.Some.{ gold }, rim },
+                Layer.{ "channel", Opt.None, [box 0.0 (cy - 0.45) 40.0 (cy + 0.45)] },
+            ],
     }
 
 # ---- vector: SVG ----
@@ -204,12 +206,12 @@ $ subpath : Figure -> @Str = \f =>
 $ svg_layer : Design -> { @Str, @Int } -> Layer -> { @Str, @Int } = \d acc l =>
     let path = fold (\p f => p ++ subpath f) "" l.figures in
     l.color |> \
-        | Option.Some.{ c } => {
+        | Opt.Some.{ c } => {
             acc.0
                 ++ "<path class=\"?(l.name)\" fill-rule=\"evenodd\" fill=\"?(css c)\" d=\"?(path)\"/>\n",
             acc.1
         }
-        | Option.None =>
+        | Opt.None =>
             let id = "erase?(acc.1)" in
             {
                 "<mask id=\"?(id)\"><rect width=\"?(num d.width)\" height=\"?(num d.height)\" fill=\"#fff\"/>"
@@ -254,14 +256,14 @@ $ inside : Point -> Figure -> @Bool = \p f =>
 $ covers : Point -> Layer -> @Bool = \p l =>
     (fold (\n f => if inside p f => n + 1 else n) 0 l.figures) % 2 == 1
 
-$ color_at : @Vec Layer -> Point -> Option Rgb = \layers p =>
-    fold (\c l => if covers p l => l.color else c) Option.None layers
+$ color_at : @Vec Layer -> Point -> Opt Rgb = \layers p =>
+    fold (\c l => if covers p l => l.color else c) Opt.None layers
 
-$ push_rgba : @Str -> Option Rgb -> @Str = \acc o =>
+$ push_rgba : @Str -> Opt Rgb -> @Str = \acc o =>
     o |> \
-        | Option.Some.{ c } =>
+        | Opt.Some.{ c } =>
             @array_push (@array_push (@array_push (@array_push acc c.r) c.g) c.b) 255
-        | Option.None       => @array_push (@array_push (@array_push (@array_push acc 0) 0) 0) 0
+        | Opt.None       => @array_push (@array_push (@array_push (@array_push acc 0) 0) 0) 0
 
 # One row of the image as RGBA bytes. Appending to a string copies it, so the
 # row is built in short chunks that are joined once.
@@ -280,7 +282,7 @@ $ pam_row : Design -> @Int -> @Int -> @Str = \d cols row =>
                 else
                     go (col + 1) px chunks
     in
-    STR.join "" (go 0 "" (@vec_new {}))
+    ARES.join "" (go 0 "" (@vec_new {}))
 
 # A PAM (P7): a tiny text header, then RGBA bytes row by row. ffmpeg reads it
 # directly, so no image library is needed. Each pixel is one hard sample; the
@@ -293,7 +295,7 @@ $ pam : Design -> @Int -> @Str = \d cols =>
     let header =
         "P7\nWIDTH ?(cols)\nHEIGHT ?(rows)\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
     in
-    header ++ STR.join "" (go 0 (@vec_new {}))
+    header ++ ARES.join "" (go 0 (@vec_new {}))
 
 # ---- output ----
 
@@ -320,14 +322,18 @@ $ pngs : @Vec @Str -> @Str -> @Int -> <@IO> @Int = \args master i =>
 # The widest PNG the arguments ask for, from the width at `i` on. The master
 # raster is three times that, so every PNG averages at least 3x3 samples a pixel.
 $ widest : @Vec @Str -> @Int -> @Int = \args i =>
-    if i >= @vec_len args => 0 else MATH.max (str_to_int (@vec_get args i)) (widest args (i + 2))
+    if i >= @vec_len args =>
+        0
+    else
+        ARES.max (from_str (@vec_get args i) |> \ | Opt.Some.{ w } => w | _ => 0)
+            (widest args (i + 2))
 
-$ design_named : @Str -> Option Design = \name =>
+$ design_named : @Str -> Opt Design = \name =>
     name |> \
-        | "logo"         => Option.Some.{ logo }
-        | "spear"        => Option.Some.{ spear_sprite }
-        | "spear-shield" => Option.Some.{ spear_shield_sprite }
-        | _              => Option.None
+        | "logo"         => Opt.Some.{ logo }
+        | "spear"        => Opt.Some.{ spear_sprite }
+        | "spear-shield" => Opt.Some.{ spear_shield_sprite }
+        | _              => Opt.None
 
 $ usage : @Str = "usage: LOGO [logo|spear|spear-shield [out.svg [out.png width]...]]"
 
@@ -336,8 +342,8 @@ $ @main : @Vec @Str -> <@IO> @Int = \args =>
     let name = if n > 1 => @vec_get args 1 else "logo" in
     let out = if n > 2 => @vec_get args 2 else "documentation/assets/logo.svg" in
     design_named name |> \
-        | Option.None => eprintln usage; 2
-        | Option.Some.{ d } =>
+        | Opt.None => eprintln usage; 2
+        | Opt.Some.{ d } =>
             if n > 2 && n % 2 == 0 =>
                 eprintln usage; 2
             else if not (write_file out (svg d)) =>

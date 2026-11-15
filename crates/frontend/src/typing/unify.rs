@@ -66,6 +66,10 @@ pub struct Unifier {
     /// Set while [`Unifier::unify_expected`] runs: its first operand is the type
     /// found, not the one expected, so a mismatch names them the other way round.
     found_first: bool,
+    /// Variables a variable-to-variable unification links the other way round:
+    /// the other variable is bound to one of these, never this one to it (see
+    /// [`Unifier::keeping`]).
+    keep: HashSet<VarId>,
 }
 
 /// One reversible mutation, recorded so [`Unifier::restore`] can rewind a trial.
@@ -101,7 +105,19 @@ impl Unifier {
             int_vars: HashSet::new(),
             trail: Vec::new(),
             found_first: false,
+            keep: HashSet::new(),
         }
+    }
+
+    /// Run `f` with the variables of `keep` bound last: where one meets another
+    /// variable, that one is linked to it. Unifying with an instance this way
+    /// leaves a signature's variables unbound (they belong to the caller), so a
+    /// generic instance fits a requirement that mentions them.
+    pub fn keeping<T>(&mut self, keep: &HashSet<VarId>, f: impl FnOnce(&mut Unifier) -> T) -> T {
+        let outer = std::mem::replace(&mut self.keep, keep.clone());
+        let out = f(self);
+        self.keep = outer;
+        out
     }
 
     // Note [Rémy levels]
@@ -369,6 +385,9 @@ impl Unifier {
         }
         match (self.types.node(a), self.types.node(b)) {
             (TypeNode::Var(i), TypeNode::Var(j)) if i == j => Ok(()),
+            (TypeNode::Var(i), TypeNode::Var(j)) if self.keep.contains(&i) && !self.keep.contains(&j) => {
+                self.bind(j, a)
+            }
             (TypeNode::Var(i), _) => self.bind(i, b),
             (_, TypeNode::Var(j)) => self.bind(j, a),
             (TypeNode::Con(x), TypeNode::Con(y)) if x == y => Ok(()),

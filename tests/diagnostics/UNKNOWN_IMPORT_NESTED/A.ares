@@ -1,5 +1,6 @@
 $ @mod A
 
+$ @import ARESxALGO
 $ @import NOPE  #~ error[UNKNOWN_MODULE]: cannot find module `NOPE`
 
 $ a : @Int = 1

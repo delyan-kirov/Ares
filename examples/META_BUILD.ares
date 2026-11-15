@@ -10,19 +10,20 @@ $ @mod META_BUILD
 #       `<@Meta>` alone, so it is hermetic: a generator there can compute, parse
 #       and inject, but not touch the world.
 #       Building IS IO, so `@build` is the one context that discharges it.
-#       The IO itself is ORDINARY: `IO.read_dir` is library code over `C.dir_entries`,
+#       The IO itself is ORDINARY: `ARES.read_dir` is library code over `C.dir_entries`,
 #       not a compiler intrinsic, so compile-time IO is the same IO a program
 #       does at run time, and its paths are relative to the WORKING directory
 #       (this module is checked from the repo root, like the rest of the corpus).
 #       `tests/MAIN.ares` is the real use: it reads `examples/` and generates its
 #       own imports and `@main` from what is there.
 
-$ @import IO
-$ @import STR
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxSTR
+$ @import ARESxVEC
 
 $ arx_files : {} -> <@Meta, @IO> @Vec @Str =
-    VEC.filter (\f => STR.ends_with f ".ares") (IO.read_dir "examples")
+    filter (\f => ARES.ends_with ".ares" f) (ARES.read_dir "examples")
 
 # `@build` returns the items to add, as `@Code`. Here: a count of the example
 # files (so the number is baked in, never computed at run time) and the name of
@@ -32,20 +33,20 @@ $ @build : {} -> <@Meta, @IO> @Code =
     @code
         (
             "$ file_count : @Int = "
-                ++ STR.from_int (VEC.len files)
+                ++ to_string (len files)
                 ++ "\n"
                 ++ "$ first_file : @Str = \""
-                ++ VEC.get_or files 0 ""
+                ++ get_or 0 "" files
                 ++ "\"\n"
         )
 
 # `file_count` and `first_file` exist only because `@build` produced them.
 $ ck_count : @Int = if file_count > 0 => 0 else 1
-$ ck_first : @Int = if STR.ends_with first_file ".ares" => 0 else 2
+$ ck_first : @Int = if ARES.ends_with ".ares" first_file => 0 else 2
 
 # This file is one of the files it counted, and the listing is sorted, so the
 # first name cannot sort after this module's own.
-$ ck_self : @Int = if STR.cmp_str first_file "META_BUILD.ares" <= 0 => 0 else 4
+$ ck_self : @Int = if ARES.cmp_str first_file "META_BUILD.ares" <= 0 => 0 else 4
 
 $ test : @Int = ck_count + ck_first + ck_self
 

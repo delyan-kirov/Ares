@@ -282,7 +282,7 @@ Settled under #282 (section 6 has the details):
   waits for its `spawn` tasks before it exits, so a task's `@finale` cleanups
   run exactly once, on the thread that runs the task.
 - **Declaring a handler thread-safe.** No declaration: a task takes its
-  handlers with it (`PAR.spawn_with handler body`), and a handler is ordinary
+  handlers with it (`ARES.spawn_with handler body`), and a handler is ordinary
   code that runs on the task's thread. Only `@IO`, which the runtime serves on
   every thread, reaches a task from outside. A builtin label that other
   threads may serve is added only when the runtime serves one.
@@ -382,10 +382,10 @@ clean report.
 - Builtins: `@par : ({} -> b) -> @Future b` (a pure task),
   `@spawn : ({} -> <@IO> b) -> <@IO> @Future b`, and
   `@await : @Future b -> b`. `@Future` is an opaque base type.
-- `library/PAR.ares`: `Future`, `par`, `spawn`, `get`, `both`, and over
+- `library/ARESxPAR.ares`: `Future`, `par`, `spawn`, `wait`, `both`, and over
   `@Vec` the parallel `map`, `formap` (pure body: a task has no `Loop` to break
-  out of its siblings), `map_chunks` and `reduce`.
-- `library/LA.ares`: `map` over a tensor's leading axis, and its parallel
+  out of its siblings), `map_chunks` and `par_fold`.
+- `library/ARESxLA.ares`: `map` over a tensor's leading axis, and its parallel
   counterparts `par_map` and `par_map_chunks` (#294), which split that axis
   into O(1) slices, map each slice in a `@par` task, and assemble the result
   with `create`. About 6x on 12 threads for a CPU-bound map.
@@ -396,7 +396,7 @@ clean report.
   waiting on a task that is itself suspended below it on the interpreter's
   stack is reported as a deadlock, though threads would make progress (for
   example two tasks that exchange several messages back and forth).
-- `PAR.par_with` / `PAR.spawn_with` run a task under a handler of its own
+- `ARES.par_with` / `ARES.spawn_with` run a task under a handler of its own
   (section 4).
 - **The thread-safety check is the task's row (section 2.3).** For now the only
   thread-safe effect is the builtin `@IO`, the one effect no handler on the
@@ -420,8 +420,8 @@ clean report.
   read set out of the log, since a task it runs while helping uses the same
   log, and waits until a version changes. Without any other task, a receive
   on an empty channel or a retry is a deadlock fault.
-- `library/PAR.ares`: `Channel`, `channel`, `send`, `recv`.
-- `library/STM.ares`: `TVar`, the `Stm` effect (`read`, `write`, `retry`, plus
+- `library/ARESxPAR.ares`: `Channel`, `channel`, `send`, `recv`.
+- `library/ARESxSTM.ares`: `TVar`, the `Stm` effect (`read`, `write`, `retry`, plus
   `save`/`rollback` for `or_else`), `modify`, `or_else`, and `atomically`, a
   handler that runs the transaction against the log, commits, and reruns it
   on a conflict or after a retry. A transaction's row is `<Stm>`, so
@@ -439,16 +439,16 @@ clean report.
 ### `@IO` stays one effect (#297)
 
 - The resource split of #284 is reverted (section 2.5). `@IO` is a plain
-  builtin label again, every `library/C.ares` and `library/IO.ares` binding is
+  builtin label again, every `library/C.ares` and `library/ARESxIO.ares` binding is
   `<@IO>`, and the entry and build checks compare label sets over `@IO` itself.
 - A `par` task that performs `@IO` is reported as "a pure parallel task
   performs effect `@IO`", with `help:` to start it with `spawn`.
 
 ### `Async` on one thread (#279, #291, #292)
 
-- `library/ASYNC.ares`: the effect `Async m e` (`spawn`, `yield`, `chan`,
+- `library/ARESxASYNC.ares`: the effect `Async m e` (`spawn`, `yield`, `chan`,
   `send`, `recv`, `wait_fd`) and `run_async : ({} -> <Async m e | e> a) -> <e>
-  Option a`. A deep handler turns each task into a `Step` (finished, or
+  Opt a`. A deep handler turns each task into a `Step` (finished, or
   stopped at an operation with its continuation), and a round-robin loop
   serves the steps. An operation that can complete at once resumes the same
   task; `yield` requeues it; a full channel parks its sender and an empty one

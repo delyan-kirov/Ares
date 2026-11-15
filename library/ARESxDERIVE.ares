@@ -1,16 +1,16 @@
-$ @mod DERIVE
+$ @mod ARES
 
-# \file DERIVE.ares
+# \file ARESxDERIVE.ares
 # \info Compile-time derives that reflect on a declared type and inject code:
 #       `derive_show "T"` generates a default `to_string`, and `derive_ord "T"`
 #       generates a structural three-way `cmp_T` (plus the `ICmp`/`IOrd`/`IEq`
 #       instances and `lt_T`/`le_T`/`gt_T`/`ge_T`/`eq_T`), both usable via
-#       `$ &DERIVE.derive_* "T"`. See the `derive_ord` section lower down.
+#       `$ &derive_* "T"`. See the `derive_ord` section lower down.
 #
 #       `derive_show "T"` returns the `@Code` for an `IToString T` instance,
 #       injected with `$ &`:
 #
-#           $ &DERIVE.derive_show "Box"
+#           $ &derive_show "Box"
 #
 #       after which `to_string` (and `?(...)` interpolation) works on `T`. It uses
 #       the reflection intrinsics `@type_kind` / `@type_params` / `@type_fields` /
@@ -22,29 +22,30 @@ $ @mod DERIVE
 #       `to_string` works at every instantiation (`Box @Int`, `Pair @Int @Bool`,
 #       nesting). This is `instance (Show a, Show b) => Show (Pair a b)`.
 
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxVEC
 
 # Join non-empty pieces with `sep` (the seed "" is skipped, so no leading sep).
-$ join : @Str -> @Vec @Str -> @Str = \sep xs =>
-    VEC.foldl (\a s => if a == "" => s else a ++ sep ++ s) "" xs
+$ join_nonempty : @Str -> @Vec @Str -> @Str = \sep xs =>
+    foldl (\a s => if a == "" => s else a ++ sep ++ s) "" xs
 
 # Positional binder names `a0 .. a<n-1>` for a variant of arity `n`.
 $ arg_names : @Int -> @Vec @Str = \n =>
-    if n == 0 => VEC.new {} else VEC.push (arg_names (n - 1)) ("a" ++ to_string (n - 1))
+    if n == 0 => new {} else push ("a" ++ to_string (n - 1)) (arg_names (n - 1))
 
 # The rendering body for a struct: interpolate each field. `\?(` emits a literal
 # `?(` so the interpolation happens when the GENERATED code compiles, not now; `\"`
 # / `\\` emit a literal quote / backslash into the generated source.
 $ struct_show : @Str -> <@Meta> @Str = \base =>
     let piece = \acc f => acc ++ " " ++ f ++ " = \?(x." ++ f ++ ")" in
-    let inner = VEC.foldl piece (base ++ " {") (@type_fields base) in
+    let inner = foldl piece (base ++ " {") (@type_fields base) in
     "\\x => \"" ++ inner ++ " }\""
 
 # One match arm for a variant: a nullary tag renders as its name, an n-ary tag as
 # `Tag(?(a0), ...)` matched by the positional pattern `Base.Tag.{a0, ...}`.
 $ arm_for : @Str -> @Str -> @Int -> @Str = \base tag arity =>
     let vars = arg_names arity in
-    let interps = VEC.map (\v => "\?(" ++ v ++ ")") vars in
+    let interps = fmap (\v => "\?(" ++ v ++ ")") vars in
     if arity == 0 =>
         " | " ++ base ++ "." ++ tag ++ " => \"" ++ tag ++ "\""
     else
@@ -53,32 +54,34 @@ $ arm_for : @Str -> @Str -> @Int -> @Str = \base tag arity =>
             ++ "."
             ++ tag
             ++ ".{"
-            ++ join ", " vars
+            ++ join_nonempty ", " vars
             ++ "}"
             ++ " => \""
             ++ tag
             ++ "("
-            ++ join ", " interps
+            ++ join_nonempty ", " interps
             ++ ")\""
 
 # The rendering body for a union: one arm per variant.
 $ union_show : @Str -> <@Meta> @Str = \base =>
-    let arms = VEC.foldl (\acc tv => acc ++ arm_for base tv.0 tv.1) "" (@type_variants base) in
+    let arms = foldl (\acc tv => acc ++ arm_for base tv.0 tv.1) "" (@type_variants base) in
     "\\" ++ arms
 
 # The context an instance for a GENERIC type needs: the renderer of each parameter,
 # one `@use` field each (`show_a: IToString a`). The body never names them: its
 # `?(...)` interpolation finds each by type.
 $ show_ctx : @Vec @Str -> @Str = \params =>
-    let reqs = VEC.map (\p => "show_" ++ p ++ ": IToString " ++ p) params in
-    if VEC.is_empty params => "" else "@use {" ++ join ", " reqs ++ "} -> "
+    let reqs = fmap (\p => "show_" ++ p ++ ": IToString " ++ p) params in
+    if is_empty params => "" else "@use {" ++ join_nonempty ", " reqs ++ "} -> "
 
 # The derive: reflect on the type's parameters and kind, then build the instance.
 # A generic type's instance takes its parameters' renderers as its own context, so
 # the body's `?(...)` interpolation resolves each one by type.
 $ derive_show : @Str -> <@Meta> @Code = \ty =>
     let params = @type_params ty in
-    let applied = if VEC.is_empty params => ty else "(" ++ ty ++ " " ++ join " " params ++ ")" in
+    let applied =
+        if is_empty params => ty else "(" ++ ty ++ " " ++ join_nonempty " " params ++ ")"
+    in
     let body = if @type_kind ty == "struct" => struct_show ty else union_show ty in
     @code
         (
@@ -158,7 +161,7 @@ $ bool_ops : @Str -> @Str = \ty =>
 # A struct's `compare`: a lexicographic chain over its fields, short-circuiting on
 # the first non-equal field.
 $ struct_cmp_chain : @Vec @Str -> @Str = \fields =>
-    VEC.foldr (\f acc =>
+    foldr (\f acc =>
         let v = "c_" ++ f in
         "let "
             ++ v
@@ -192,17 +195,17 @@ $ struct_cmp : @Str -> <@Meta> @Str = \ty =>
 
 # `_, _, ...` (n underscores) and a whole `Base.Tag` / `Base.Tag.{_, _}` pattern
 # that ignores a variant's payload (for the tag-index match).
-$ underscores : @Int -> @Str = \n => join ", " (VEC.map (\x => "_") (arg_names n))
+$ underscores : @Int -> @Str = \n => join_nonempty ", " (fmap (\x => "_") (arg_names n))
 $ ignore_pat : @Str -> @Str -> @Int -> @Str = \base tag arity =>
     if arity == 0 => base ++ "." ++ tag else base ++ "." ++ tag ++ ".{" ++ underscores arity ++ "}"
 
 # `<var> |> \ | Base.Tag... => i | ...`: map each variant to its declaration index,
 # so two values are ordered first by variant.
 $ index_arms : @Str -> @Vec { @Str, @Int } -> @Int -> @Str = \base variants i =>
-    if i >= VEC.len variants =>
+    if i >= len variants =>
         ""
     else
-        let v = VEC.get_or variants i { "", 0 } in
+        let v = get_or i { "", 0 } variants in
         " | "
             ++ ignore_pat base v.0 v.1
             ++ " => "
@@ -211,7 +214,7 @@ $ index_arms : @Str -> @Vec { @Str, @Int } -> @Int -> @Str = \base variants i =>
 
 # Lexicographic compare of two parallel payload binder lists.
 $ payload_lex : @Vec @Str -> @Vec @Str -> @Str = \xs ys =>
-    VEC.foldr (\pair acc =>
+    foldr (\pair acc =>
         let cv = "c_" ++ pair.0 in
         "let "
             ++ cv
@@ -224,7 +227,7 @@ $ payload_lex : @Vec @Str -> @Vec @Str -> @Str = \xs ys =>
             ++ " == 0 => ("
             ++ acc
             ++ ") else "
-            ++ cv) "0" (VEC.zip xs ys)
+            ++ cv) "0" (zip ys xs)
 
 # For a payload variant, the arm that (with tags already known equal) destructures
 # both values and compares their payloads; nullary variants need no arm (they are
@@ -233,28 +236,28 @@ $ payload_arm : @Str -> { @Str, @Int } -> @Str = \base v =>
     if v.1 == 0 =>
         ""
     else
-        let xs = VEC.map (\n => "x" ++ n) (arg_names v.1) in
-        let ys = VEC.map (\n => "y" ++ n) (arg_names v.1) in
+        let xs = fmap (\n => "x" ++ n) (arg_names v.1) in
+        let ys = fmap (\n => "y" ++ n) (arg_names v.1) in
         " | "
             ++ base
             ++ "."
             ++ v.0
             ++ ".{"
-            ++ join ", " xs
+            ++ join_nonempty ", " xs
             ++ "}"
             ++ " => (b |> \\ | "
             ++ base
             ++ "."
             ++ v.0
             ++ ".{"
-            ++ join ", " ys
+            ++ join_nonempty ", " ys
             ++ "}"
             ++ " => "
             ++ payload_lex xs ys
             ++ " | _ => 0)"
 
 $ payload_arms : @Str -> @Vec { @Str, @Int } -> @Str = \base variants =>
-    VEC.foldl (\acc v => acc ++ payload_arm base v) "" variants
+    foldl (\acc v => acc ++ payload_arm base v) "" variants
 
 # A union's `compare`: order by variant index, then (same variant) by payload.
 $ union_cmp : @Str -> <@Meta> @Str = \ty =>
@@ -327,11 +330,11 @@ $ split_applied : @Str -> @Vec @Str = \src =>
                     s.depth
             in
             if depth == 0 =>
-                Split.{ .depth = 0, .cur = "", .out = VEC.push s.out cur }
+                Split.{ .depth = 0, .cur = "", .out = push cur s.out }
             else
                 Split.{ .depth = depth, .cur = cur, .out = s.out }
     in
-    (VEC.foldl step Split.{ .depth = 0, .cur = "", .out = [] } (@lex src)).out
+    (foldl step Split.{ .depth = 0, .cur = "", .out = [] } (@lex src)).out
 
 # `name` with each of `params` replaced by the argument in the same position.
 $ subst_name : @Vec @Str -> @Vec @Str -> @Int -> @Str -> @Str = \params args i name =>
@@ -345,7 +348,7 @@ $ subst_name : @Vec @Str -> @Vec @Str -> @Int -> @Str -> @Str = \params args i n
 # A member's type source over the declaring type's parameters: every type
 # variable of the copied type renamed to its argument. No arguments, no change.
 $ rename : @Vec @Str -> @Vec @Str -> @Str -> @Str = \params args src =>
-    if VEC.is_empty args =>
+    if is_empty args =>
         src
     else
         let word =
@@ -353,11 +356,11 @@ $ rename : @Vec @Str -> @Vec @Str -> @Str -> @Str = \params args src =>
                 let text = @token_text tok in
                 if @token_kind tok == "Word" => subst_name params args 0 text else text
         in
-        join " " <| VEC.map word (@lex src)
+        join_nonempty " " <| fmap word (@lex src)
 
 # Refuse an application with the wrong number of arguments, before copying.
 $ check_args : @Str -> @Vec @Str -> @Vec @Str -> <@Meta> {} = \name params args =>
-    if VEC.is_empty args || @vec_len args == @vec_len params =>
+    if is_empty args || @vec_len args == @vec_len params =>
         {}
     else
         @fail {
@@ -375,13 +378,13 @@ $ check_args : @Str -> @Vec @Str -> @Vec @Str -> <@Meta> {} = \name params args 
 
 $ fields_of : @Str -> <@Meta> @Code = \ty =>
     let parts = split_applied ty in
-    let name = VEC.get_or parts 0 ty in
-    let args = VEC.drop 1 parts in
+    let name = get_or 0 ty parts in
+    let args = drop 1 parts in
     @lookup name |> \
         | Decl.Struct.{ params, fields } =>
             check_args name params args;
             let field = \f => f.0 ++ ": " ++ rename params args f.1 in
-            @code <| join ", " <| VEC.map field fields
+            @code <| join_nonempty ", " <| fmap field fields
         | _ => @fail {
             .message = "`" ++ name ++ "` is not a struct",
             .notes = ["`fields_of` copies a struct's fields into another declaration"],
@@ -390,12 +393,13 @@ $ fields_of : @Str -> <@Meta> @Code = \ty =>
 
 $ variants_of : @Str -> <@Meta> @Code = \ty =>
     let parts = split_applied ty in
-    let name = VEC.get_or parts 0 ty in
-    let args = VEC.drop 1 parts in
+    let name = get_or 0 ty parts in
+    let args = drop 1 parts in
     let render = \params v => if v.1 == "" => v.0 else v.0 ++ ": " ++ rename params args v.1 in
     @lookup name |> \
         | Decl.Union.{ params, variants } =>
-            check_args name params args; @code <| join ", " <| VEC.map (render params) variants
+            check_args name params args;
+            @code <| join_nonempty ", " <| fmap (render params) variants
         | _ => @fail {
             .message = "`" ++ name ++ "` is not a union",
             .notes = ["`variants_of` copies a union's variants into another declaration"],

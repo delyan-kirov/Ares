@@ -1053,12 +1053,12 @@ impl<'a> Checker<'a> {
                 Ok(v)
             }
             Expr::Builtin => {
-                // ARES_SHELL declares the `<@Shell>` builtins the shell performs.
-                if self.module_name != "CORE" && self.module_name != "ARES_SHELL" {
+                // ARESxSHELL declares the `<@Shell>` builtins the shell performs.
+                if self.module_name != "CORE" && self.unit_name() != "ARESxSHELL" {
                     let span = self.ast.expr_span(e).unwrap_or_else(|| Span::at(0));
                     return Err(diag!(
                         Code::TypeMismatch, span, 0,
-                        "only CORE and ARES_SHELL may declare a builtin with `@extern \"ares\"`";
+                        "only CORE and ARESxSHELL may declare a builtin with `@extern \"ares\"`";
                         note: "a builtin is implemented by the compiler and runtime, \
                                not by a library"
                     ));
@@ -1514,7 +1514,7 @@ impl<'a> Checker<'a> {
         } else {
             format!(
                 "handle `{label}` inside the task, around the code that performs it \
-                 (`PAR.spawn_with handler body` and `PAR.par_with` do this)"
+                 (ARESxPAR's `spawn_with handler body` and `par_with` do this)"
             )
         })
     }
@@ -1826,8 +1826,10 @@ impl<'a> Checker<'a> {
             // field, and nothing here can yet say which, so it stays unconstrained
             // until the type is known some other way. This is the one place a
             // field access still fabricates a type.
-            if field.as_str().parse::<usize>().is_ok() {
-                return Ok(self.unifier.fresh());
+            if let Ok(idx) = field.as_str().parse::<usize>() {
+                let t = self.unifier.fresh();
+                self.pending_projs.push((rec_ty, idx, t));
+                return Ok(t);
             }
             let fty = self.unifier.fresh();
             let tail = self.unifier.fresh();

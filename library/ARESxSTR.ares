@@ -1,6 +1,6 @@
-$ @mod STR
+$ @mod ARES
 
-# \file STR.ares
+# \file ARESxSTR.ares
 # \info String operations over the byte-vector `@Str` (see
 #       documentation/language/strings-and-arrays.md; indices are 0-based BYTE offsets, `at`
 #       returns a byte as an @Int in 0..255). The primitive layer --
@@ -8,30 +8,27 @@ $ @mod STR
 #       `==` -- already works on `@Str`; this module builds the searching,
 #       splitting and formatting layer on top of it.
 
-$ @import OPT
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxOPT
+$ @import ARESxVEC
 
-$ len : @Str -> @Int = \s => @array_len s
-
-$ at : @Str -> @Int -> @Int = \s i => @array_get s i
-
-$ is_empty : @Str -> @Bool = \s => (@array_len s) == 0
+$ at : @Int -> @Str -> @Int = \i s => @array_get s i
 
 $ eq : @Str -> @Str -> @Bool = \a b => a == b
 
 # Three-way byte-lexicographic comparison: negative / 0 / positive (strcmp
-# convention; this is the ordering MAP.new_str uses).
+# convention).
 $ cmp_str : @Str -> @Str -> @Int = \a b => if a == b => 0 else if a < b => 0 - 1 else 1
 
 # A one-byte string.
 $ from_byte : @Int -> @Str = \c => @array_push "" c
 
 # The byte range [from, to), clamped to the string.
-$ substr : @Str -> @Int -> @Int -> @Str = \s from to => @array_slice s from to
+$ substr : @Int -> @Int -> @Str -> @Str = \from to s => @array_slice s from to
 
-$ starts_with : @Str -> @Str -> @Bool = \s p => @array_match s 0 p
+$ starts_with : @Str -> @Str -> @Bool = \p s => @array_match s 0 p
 
-$ ends_with : @Str -> @Str -> @Bool = \s p =>
+$ ends_with : @Str -> @Str -> @Bool = \p s =>
     let n = @array_len p in
     let sn = @array_len s in
     if n > sn => @false else @array_match s (sn - n) p
@@ -46,22 +43,22 @@ $ byte_set_not : @Str -> @Str = \bytes => mark_bytes bytes 0 all_bytes 0
 
 # The byte offset of the first occurrence of `needle` at or after `from`.
 # An empty needle matches at `from`.
-$ find_from : @Str -> @Str -> @Int -> Option @Int = \s needle from =>
+$ index_of_from : @Str -> @Int -> @Str -> Opt @Int = \needle from s =>
     let n = @array_len needle in
     if from + n > @array_len s =>
-        Option.None
+        Opt.None
     else if matches_at s needle from 0 =>
-        Option.Some.{ from }
+        Opt.Some.{ from }
     else
-        find_from s needle (from + 1)
+        index_of_from needle (from + 1) s
 
-$ find : @Str -> @Str -> Option @Int = \s needle => find_from s needle 0
+$ index_of : @Str -> @Str -> Opt @Int = \needle s => index_of_from needle 0 s
 
-$ contains : @Str -> @Str -> @Bool = \s needle => is_some (find s needle)
+$ contains : @Str -> @Str -> @Bool = \needle s => is_some (index_of needle s)
 
 # Split on a non-empty separator; N separators yield N+1 pieces ("a,,b" on
 # "," is ["a", "", "b"]). An empty separator returns the whole string whole.
-$ split : @Str -> @Str -> @Vec @Str = \s sep =>
+$ split : @Str -> @Str -> @Vec @Str = \sep s =>
     if (@array_len sep) == 0 => [s] else split_onto (@vec_new {}) s sep 0 0
 
 # The lines of `s`, split on '\n'. A trailing newline does not produce a
@@ -71,45 +68,41 @@ $ lines : @Str -> @Vec @Str = \s =>
     if n == 0 =>
         []
     else if (@array_get s (n - 1)) == 10 =>
-        split (@array_slice s 0 (n - 1)) "\n"
+        split "\n" (@array_slice s 0 (n - 1))
     else
-        split s "\n"
+        split "\n" s
 
 $ join : @Str -> @Vec @Str -> @Str = \sep parts =>
     parts |> \ | h :: t => (t |> \ | [] => h | _ => h ++ sep ++ join sep t) | _ => ""
 
-$ repeat : @Str -> @Int -> @Str = \s n => if n <= 0 => "" else s ++ repeat s (n - 1)
-
-$ concat : @Vec @Str -> @Str = \parts => join "" parts
+$ repeat : @Int -> @Str -> @Str = \n s => if n <= 0 => "" else s ++ repeat (n - 1) s
 
 # Pad with spaces to at least `width` bytes (no-op if already wider).
-$ pad_left : @Str -> @Int -> @Str = \s width => repeat " " (width - @array_len s) ++ s
+$ pad_left : @Int -> @Str -> @Str = \width s => repeat (width - @array_len s) " " ++ s
 
-$ pad_right : @Str -> @Int -> @Str = \s width => s ++ repeat " " (width - @array_len s)
+$ pad_right : @Int -> @Str -> @Str = \width s => s ++ repeat (width - @array_len s) " "
 
 # Replace every (non-overlapping) occurrence; an empty needle returns `s`.
-$ replace : @Str -> @Str -> @Str -> @Str = \s needle repl =>
+$ replace : @Str -> @Str -> @Str -> @Str = \needle repl s =>
     if (@array_len needle) == 0 =>
         s
     else
-        find s needle |> \
-            | Option.Some.{ i } =>
+        index_of needle s |> \
+            | Opt.Some.{ i } =>
                 let head : @Str = @array_slice s 0 i in
                 let rest : @Str = @array_slice s (i + @array_len needle) (@array_len s) in
-                head ++ repl ++ replace rest needle repl
+                head ++ repl ++ replace needle repl rest
             | _ => s
 
 # Number of (non-overlapping) occurrences; an empty needle counts 0.
-$ count : @Str -> @Str -> @Int = \s needle =>
+$ count : @Str -> @Str -> @Int = \needle s =>
     if (@array_len needle) == 0 =>
         0
     else
-        find s needle |> \
-            | Option.Some.{ i } =>
-                1 + count (@array_slice s (i + @array_len needle) (@array_len s)) needle
-            | _                 => 0
-
-$ reverse : @Str -> @Str = \s => rev_onto s (@array_len s) ""
+        index_of needle s |> \
+            | Opt.Some.{ i } =>
+                1 + count needle (@array_slice s (i + @array_len needle) (@array_len s))
+            | _              => 0
 
 # ---- character (byte) predicates ----
 
@@ -157,44 +150,57 @@ $ to_lower : @Str -> @Str = \s =>
 
 $ map_bytes : (@Int -> @Int) -> @Str -> @Str = \f s => map_bytes_from f s 0 ""
 
-# ---- number formatting / parsing ----
+# ---- characters (Unicode code points) ----
 
-$ from_int : @Int -> @Str = \n => if n < 0 => "-" ++ digits_of (0 - n) "" else digits_of n ""
+# A Unicode code point: one character of a `@Str`'s UTF-8 text. A string literal
+# where a `Char` is expected builds one (`let c : Char = "é"`); a literal that is
+# not exactly one code point builds U+FFFD, the replacement character. A `@Str`
+# answers `fmap`, `for` and `foldl` over its characters, decoding the UTF-8 as it
+# goes; `len` and `at` stay byte-based.
+$ Char : @struct = code: @Int,
 
-# Parse a (possibly '-'-signed) run of decimal digits; anything else is None.
-$ to_int : @Str -> Option @Int = \s =>
-    if (@array_len s) == 0 =>
-        Option.None
-    else if (@array_get s 0) == 45 =>
-        (if (@array_len s) == 1 => Option.None else opt_map (\n => 0 - n) (digits_val s 1 0))
-    else
-        digits_val s 0 0
+$ char_code : Char -> @Int = \c => c.code
+$ char_of_code : @Int -> Char = \n => Char.{ .code = n }
+
+$ impl_IStrLit_for_Char : @IStrLit Char = .{
+    .of_str = \s =>
+        let d = utf8_decode s 0 in
+        if d.1 == @array_len s && @array_len s > 0 =>
+            Char.{ .code = d.0 }
+        else
+            Char.{ .code = 65533 },
+}
+$ impl_IEq_for_Char : IEq Char = .{ .eq = \a b => a.code == b.code }
+$ impl_IOrd_for_Char : IOrd Char = .{ .lt = \a b => a.code < b.code }
+$ impl_IToString_for_Char : IToString Char = .{ .show = \c => utf8_encode c.code "" }
+
+# The characters of `s`, in order.
+$ chars : @Str -> @Vec Char = \s => chars_onto s 0 (@vec_new {})
+
+$ impl_IFmap_for_str : IFmap @Str Char @Str Char = .{ .fmap = \f s => fmap_chars f s 0 "" }
+$ impl_IFor_for_str : IFor @Str Char e = .{ .each = \s body => for_chars s body 0 }
+$ impl_IFoldl_for_str : IFoldl @Str a Char = .{ .foldl = \f acc s => foldl_chars f acc s 0 }
+
+# ---- the collection interfaces ----
+
+$ impl_ILen_for_str : ILen @Str = .{ .len = \s => @array_len s }
+$ impl_IEmpty_for_str : IEmpty @Str = .{ .is_empty = \s => (@array_len s) == 0 }
+$ impl_IReverse_for_str : IReverse @Str = .{ .reverse = \s => rev_bytes_onto s (@array_len s) "" }
+# The pieces, end to end: `join ""`.
+$ impl_IConcat_for_str : IConcat (@Vec @Str) @Str = .{ .concat = \parts => join "" parts }
 
 # ---- internal recursion workers ----
 
 $ @private
 
-$ rev_onto : @Str -> @Int -> @Str -> @Str = \s i acc =>
-    if i == 0 => acc else rev_onto s (i - 1) (@array_push acc (@array_get s (i - 1)))
+$ rev_bytes_onto : @Str -> @Int -> @Str -> @Str = \s i acc =>
+    if i == 0 => acc else rev_bytes_onto s (i - 1) (@array_push acc (@array_get s (i - 1)))
 
 $ map_bytes_from : (@Int -> @Int) -> @Str -> @Int -> @Str -> @Str = \f s i acc =>
     if i == @array_len s =>
         acc
     else
         map_bytes_from f s (i + 1) (@array_push acc (f (@array_get s i)))
-
-$ digits_of : @Int -> @Str -> @Str = \n acc =>
-    if n < 10 =>
-        (@array_push "" (48 + n)) ++ acc
-    else
-        digits_of (n / 10) ((@array_push "" (48 + n % 10)) ++ acc)
-
-$ digits_val : @Str -> @Int -> @Int -> Option @Int = \s i acc =>
-    if i == @array_len s =>
-        Option.Some.{ acc }
-    else
-        let c = @array_get s i in
-        if is_digit c => digits_val s (i + 1) (acc * 10 + (c - 48)) else Option.None
 
 # Does `needle` occur in `s` at byte `pos`, from needle byte `j` on? Compares in
 # place, so a search allocates nothing per position.
@@ -237,3 +243,69 @@ $ repeat_byte : @Int -> @Int -> @Str = \b n =>
         @array_push (repeat_byte b (n - 1)) b
     else
         let half = repeat_byte b (n / 2) in half ++ half
+
+# The code point at byte `i` and the byte after it. A malformed sequence decodes
+# as U+FFFD and moves on one byte.
+$ utf8_decode : @Str -> @Int -> { @Int, @Int } = \s i =>
+    let b0 = @array_get s i in
+    let n = @array_len s in
+    let cont =
+        \k =>
+            if i + k < n =>
+                (let b = @array_get s (i + k) in if b >= 128 && b < 192 => b - 128 else 0 - 1)
+            else
+                0 - 1
+    in
+    if b0 < 128 =>
+        { b0, i + 1 }
+    else if b0 >= 192 && b0 < 224 && cont 1 >= 0 =>
+        { (b0 - 192) * 64 + cont 1, i + 2 }
+    else if b0 >= 224 && b0 < 240 && cont 1 >= 0 && cont 2 >= 0 =>
+        { ((b0 - 224) * 64 + cont 1) * 64 + cont 2, i + 3 }
+    else if b0 >= 240 && b0 < 248 && cont 1 >= 0 && cont 2 >= 0 && cont 3 >= 0 =>
+        { (((b0 - 240) * 64 + cont 1) * 64 + cont 2) * 64 + cont 3, i + 4 }
+    else
+        { 65533, i + 1 }
+
+# `acc` with the UTF-8 bytes of code point `c` appended.
+$ utf8_encode : @Int -> @Str -> @Str = \c acc =>
+    if c < 128 =>
+        @array_push acc c
+    else if c < 2048 =>
+        @array_push (@array_push acc (192 + c / 64)) (128 + c % 64)
+    else if c < 65536 =>
+        @array_push (@array_push (@array_push acc (224 + c / 4096)) (128 + (c / 64) % 64))
+            (128 + c % 64)
+    else
+        @array_push
+            (
+                @array_push
+                    (@array_push (@array_push acc (240 + c / 262144)) (128 + (c / 4096) % 64))
+                    (128 + (c / 64) % 64)
+            ) (128 + c % 64)
+
+$ chars_onto : @Str -> @Int -> @Vec Char -> @Vec Char = \s i acc =>
+    if i >= @array_len s =>
+        acc
+    else
+        let d = utf8_decode s i in chars_onto s d.1 (@vec_push acc Char.{ .code = d.0 })
+
+$ fmap_chars : (Char -> Char) -> @Str -> @Int -> @Str -> @Str = \f s i acc =>
+    if i >= @array_len s =>
+        acc
+    else
+        let d = utf8_decode s i in
+        fmap_chars f s d.1 (utf8_encode (f Char.{ .code = d.0 }).code acc)
+
+$ for_chars : @Str -> (Char -> <Loop | e> {}) -> @Int -> <e> {} = \s body i =>
+    if i >= @array_len s =>
+        {}
+    else
+        let d = utf8_decode s i in
+        if loop_body Char.{ .code = d.0 } body => for_chars s body d.1 else {}
+
+$ foldl_chars : (a -> Char -> a) -> a -> @Str -> @Int -> a = \f acc s i =>
+    if i >= @array_len s =>
+        acc
+    else
+        (let d = utf8_decode s i in foldl_chars f (f acc Char.{ .code = d.0 }) s d.1)

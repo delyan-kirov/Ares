@@ -2,47 +2,48 @@ $ @mod STDLIB_SET
 
 # \file STDLIB_SET.ares
 # \info The standard library's ordered set (the AVL map with unit values).
-#       Sets carry their element ordering, are values (add/remove return
+#       Elements order through `IOrd`, are values (add/remove return
 #       copies), and iterate in ascending order.
 
-$ @import SET
-$ @import VEC
-$ @import MATH
-$ @import STR
+$ @import ARESxALGO
+$ @import ARESxSET
+$ @import ARESxVEC
+$ @import ARESxMATH
+$ @import ARESxSTR
 
-$ s : Set @Int = SET.from_list cmp_int [3, 1, 2, 3, 1]
+$ s : Set @Int = from_list [3, 1, 2, 3, 1]
 
 $ ck_size : @Int =
-    if (size s) == 3 =>
+    if (len s) == 3 =>
         0
     else
         1 # duplicates collapse
-$ ck_has : @Int = if has s 2 => 0 else 1
-$ ck_miss : @Int = if has s 9 => 1 else 0
-$ ck_rm : @Int = if has (remove s 2) 2 => 1 else 0
-$ ck_rmsz : @Int = if (size (remove s 2)) == 2 => 0 else 1
+$ ck_has : @Int = if has 2 s => 0 else 1
+$ ck_miss : @Int = if has 9 s => 1 else 0
+$ ck_rm : @Int = if has 2 (remove 2 s) => 1 else 0
+$ ck_rmsz : @Int = if (len (remove 2 s)) == 2 => 0 else 1
 $ ck_shared: @Int =
-    if (size s) == 3 =>
+    if (len s) == 3 =>
         0
     else
         1 # original undisturbed
-$ ck_empty : @Int = if SET.is_empty (SET.new cmp_int) => 0 else 1
+$ ck_empty : @Int = let e : Set @Int = new {} in if is_empty e => 0 else 1
 
 # Ascending iteration regardless of insertion order.
-$ ck_order : @Int = if (foldl (\a x => a * 10 + x) 0 (SET.to_list s)) == 123 => 0 else 1
-$ ck_fold : @Int = if (SET.fold (\a x => a + x) 0 s) == 6 => 0 else 1
+$ ck_order : @Int = if (foldl (\a x => a * 10 + x) 0 (to_list s)) == 123 => 0 else 1
+$ ck_fold : @Int = if (fold (\a x => a + x) 0 s) == 6 => 0 else 1
 
 # Algebra: {1,2,3} vs {2,3,4}.
-$ t : Set @Int = SET.from_list cmp_int [2, 3, 4]
-$ ck_merge : @Int = if (size (merge s t)) == 4 => 0 else 1
-$ ck_inter : @Int = if (foldl (\a x => a * 10 + x) 0 (SET.to_list (inter s t))) == 23 => 0 else 1
-$ ck_diff : @Int = if (foldl (\a x => a * 10 + x) 0 (SET.to_list (diff s t))) == 1 => 0 else 1
-$ ck_filter: @Int = if (size (SET.filter (\x => x % 2 == 1) s)) == 2 => 0 else 1
+$ t : Set @Int = from_list [2, 3, 4]
+$ ck_merge : @Int = if (len (merge t s)) == 4 => 0 else 1
+$ ck_inter : @Int = if (foldl (\a x => a * 10 + x) 0 (to_list (inter t s))) == 23 => 0 else 1
+$ ck_diff : @Int = if (foldl (\a x => a * 10 + x) 0 (to_list (diff t s))) == 1 => 0 else 1
+$ ck_filter: @Int = if (len (filter (\x => x % 2 == 1) s)) == 2 => 0 else 1
 
-# String elements via the baked-in ordering.
-$ names : Set @Str = add (add (add new_str "bob") "alice") "bob"
-$ ck_str : @Int = if (size names) == 2 => 0 else 1
-$ ck_strh: @Int = if has names "alice" => 0 else 1
+# String elements, ordered by the `@Str` instance.
+$ names : Set @Str = add "bob" (add "alice" (add "bob" (new {})))
+$ ck_str : @Int = if (len names) == 2 => 0 else 1
+$ ck_strh: @Int = if has "alice" names => 0 else 1
 
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int =

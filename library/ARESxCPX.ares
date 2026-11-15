@@ -1,25 +1,19 @@
-$ @mod CPX
+$ @mod ARES
 
-# \file CPX.ares
+# \file ARESxCPX.ares
 # \info Complex-number math over CORE's `Cpx`. The type, the `i` literal and
 #       `+ - * /` live in CORE (implicitly imported, so `3.4 + 1.2i` needs no
 #       import); everything here is the rest of the surface: parts, polar form,
 #       roots, and the transcendentals, all ordinary Ares over libm through the
 #       `C` namespace.
 
-$ @import MATH
+$ @import ARESxALGO
+$ @import ARESxMATH
 
 # ---- constants ----
 
-# `zero` and `one` double as LA's element dictionary (with `add`/`mul` below), so
-# `dot`/`matmul` reduce a `@Tensor n Cpx` with no tensor-side support.
 $ zero : Cpx = Cpx.{ 0.0, 0.0 }
 $ one : Cpx = Cpx.{ 1.0, 0.0 }
-
-# The rest of LA's element dictionary. The operators do the work; these only give
-# the arithmetic the names `@ctx` resolves by.
-$ add : Cpx -> Cpx -> Cpx = \a b => a + b
-$ mul : Cpx -> Cpx -> Cpx = \a b => a * b
 
 # ---- parts and predicates ----
 
@@ -31,9 +25,9 @@ $ of_real : Real -> Cpx = \x => Cpx.{ x, 0.0 }
 $ conj : Cpx -> Cpx = \z => Cpx.{ z.re, 0.0 - z.im }
 
 # `|z|`, via libm `hypot` so a large component does not overflow the squares.
-$ abs : Cpx -> Real = \z => C.hypot { z.re, z.im }
+$ magnitude : Cpx -> Real = \z => C.hypot { z.re, z.im }
 
-# `|z|^2`. Cheaper than `abs` and exact for exactly-representable parts, which
+# `|z|^2`. Cheaper than `magnitude` and exact for exactly-representable parts, which
 # is why comparisons and `recip` use it.
 $ norm : Cpx -> Real = \z => z.re * z.re + z.im * z.im
 
@@ -52,7 +46,7 @@ $ recip : Cpx -> Cpx = \z => let d = norm z in Cpx.{ z.re / d, (0.0 - z.im) / d 
 # Smith's division: it scales by the smaller of the divisor's parts, so it keeps
 # its range where CORE's `/` (which forms `|b|^2` directly) would overflow.
 $ div_smith : Cpx -> Cpx -> Cpx = \a b =>
-    if MATH.abs b.re >= MATH.abs b.im =>
+    if abs b.re >= abs b.im =>
         let r = b.im / b.re in
         let d = b.re + b.im * r in
         Cpx.{ (a.re + a.im * r) / d, (a.im - a.re * r) / d }
@@ -63,45 +57,48 @@ $ div_smith : Cpx -> Cpx -> Cpx = \a b =>
 
 # ---- polar form ----
 
-$ polar : Cpx -> { Real, Real } = \z => { abs z, arg z }
+$ polar : Cpx -> { Real, Real } = \z => { magnitude z, arg z }
 
-$ from_polar : Real -> Real -> Cpx = \r theta => Cpx.{ r * MATH.cos theta, r * MATH.sin theta }
+$ from_polar : Real -> Real -> Cpx = \r theta => Cpx.{ r * cos theta, r * sin theta }
 
 # ---- transcendentals ----
 
 # `exp z = e^x (cos y + i sin y)`.
-$ exp : Cpx -> Cpx = \z => let m = MATH.exp z.re in Cpx.{ m * MATH.cos z.im, m * MATH.sin z.im }
+$ impl_IExp_for_Cpx : IExp Cpx = .{ .exp = cpx_exp }
+$ cpx_exp : Cpx -> Cpx = \z => let m = exp z.re in Cpx.{ m * cos z.im, m * sin z.im }
 
 # The principal branch: the imaginary part is `arg z`, so it lies in (-pi, pi].
-$ log : Cpx -> Cpx = \z => Cpx.{ MATH.log (abs z), arg z }
+$ impl_ILog_for_Cpx : ILog Cpx = .{ .log = cpx_log }
+$ cpx_log : Cpx -> Cpx = \z => Cpx.{ log (magnitude z), arg z }
 
 # The principal square root, from the polar form at half the argument.
-$ sqrt : Cpx -> Cpx = \z =>
-    let r = MATH.sqrt (abs z) in
-    let half = arg z / 2.0 in
-    Cpx.{ r * MATH.cos half, r * MATH.sin half }
+$ impl_ISqrt_for_Cpx : ISqrt Cpx = .{ .sqrt = cpx_sqrt }
+$ cpx_sqrt : Cpx -> Cpx = \z =>
+    let r = sqrt (magnitude z) in let half = arg z / 2.0 in Cpx.{ r * cos half, r * sin half }
 
 # `z^w = exp (w * log z)`, principal branch. `0^0` is 1, as for reals.
-$ pow : Cpx -> Cpx -> Cpx = \z w =>
-    if is_zero z => (if is_zero w => one else zero) else exp (w * log z)
+$ cpx_pow : Cpx -> Cpx -> Cpx = \z w =>
+    if is_zero z => (if is_zero w => one else zero) else cpx_exp (w * cpx_log z)
 
-$ powi : Cpx -> @Int -> Cpx = \z n =>
-    if n < 0 => recip (powi z (0 - n)) else if n == 0 => one else z * powi z (n - 1)
+$ powi : @Int -> Cpx -> Cpx = \n z =>
+    if n < 0 => recip (powi (0 - n) z) else if n == 0 => one else z * powi (n - 1) z
 
 # `z ^ w` on two complexes goes through CORE's `IPow`. An INTEGER exponent is
 # `powi` by name: one operator takes one type for both operands, so a mixed pair is
 # not expressible (and `powi` is the faster algorithm anyway).
-$ impl_IPow_for_Cpx : IPow Cpx = .{ .raise = CPX.pow }
+$ impl_IPow_for_Cpx : IPow Cpx = .{ .raise = cpx_pow }
 
-$ sin : Cpx -> Cpx = \z => Cpx.{ MATH.sin z.re * C.cosh z.im, MATH.cos z.re * C.sinh z.im }
+$ impl_ISin_for_Cpx : ISin Cpx = .{ .sin = cpx_sin }
+$ cpx_sin : Cpx -> Cpx = \z => Cpx.{ sin z.re * C.cosh z.im, cos z.re * C.sinh z.im }
 
-$ cos : Cpx -> Cpx = \z => Cpx.{ MATH.cos z.re * C.cosh z.im, 0.0 - (MATH.sin z.re * C.sinh z.im) }
+$ impl_ICos_for_Cpx : ICos Cpx = .{ .cos = cpx_cos }
+$ cpx_cos : Cpx -> Cpx = \z => Cpx.{ cos z.re * C.cosh z.im, 0.0 - (sin z.re * C.sinh z.im) }
 
-$ tan : Cpx -> Cpx = \z => sin z / cos z
+$ impl_ITan_for_Cpx : ITan Cpx = .{ .tan = \z => cpx_sin z / cpx_cos z }
 
-$ sinh : Cpx -> Cpx = \z => Cpx.{ C.sinh z.re * MATH.cos z.im, C.cosh z.re * MATH.sin z.im }
+$ sinh : Cpx -> Cpx = \z => Cpx.{ C.sinh z.re * cos z.im, C.cosh z.re * sin z.im }
 
-$ cosh : Cpx -> Cpx = \z => Cpx.{ C.cosh z.re * MATH.cos z.im, C.sinh z.re * MATH.sin z.im }
+$ cosh : Cpx -> Cpx = \z => Cpx.{ C.cosh z.re * cos z.im, C.sinh z.re * sin z.im }
 
 $ tanh : Cpx -> Cpx = \z => sinh z / cosh z
 
@@ -112,8 +109,8 @@ $ roots_of_unity : @Int -> @Vec Cpx = \n => roots_onto (@vec_new {}) 1.0 0.0 n 0
 
 # The `n` `n`th roots of `z`, counter-clockwise from the principal one. Empty for
 # `n <= 0`.
-$ roots : Cpx -> @Int -> @Vec Cpx = \z n =>
-    let r = MATH.pow (abs z) (1.0 / C.i2d n) in roots_onto (@vec_new {}) r (arg z / C.i2d n) n 0
+$ roots : @Int -> Cpx -> @Vec Cpx = \n z =>
+    let r = pow (magnitude z) (1.0 / C.i2d n) in roots_onto (@vec_new {}) r (arg z / C.i2d n) n 0
 
 $ @private
 
@@ -123,5 +120,5 @@ $ roots_onto : @Vec Cpx -> Real -> Real -> @Int -> @Int -> @Vec Cpx = \acc r bas
     if k >= n =>
         acc
     else
-        let step = 2.0 * MATH.pi * C.i2d k / C.i2d n in
+        let step = 2.0 * pi * C.i2d k / C.i2d n in
         roots_onto (@vec_push acc (from_polar r (base + step))) r base n (k + 1)

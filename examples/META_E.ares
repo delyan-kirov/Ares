@@ -17,6 +17,8 @@ $ @mod META_E
 #       link directive) returns `""`.
 
 # Ordinary functions, run here at compile time by the generators below.
+$ @import ARESxALGO
+
 $ fib : @Int -> @Int = \n => if n < 2 => n else fib (n - 1) + fib (n - 2)
 $ dbl : @Int -> @Int = \x => x * 2
 $ inc : @Int -> @Int = \x => x + 1

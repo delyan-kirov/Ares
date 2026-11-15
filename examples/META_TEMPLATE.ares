@@ -10,7 +10,7 @@ $ @mod META_TEMPLATE
 #       schema at build time. Compare INTERPOLATION.ares, where a runtime
 #       instance keeps holes apart with no macro at all.
 
-$ @import STR
+$ @import ARESxSTR
 
 $ Param : @union = PInt: @Int, PStr: @Str
 $ Query : @struct = text: @Str, params: @Vec Param
@@ -21,7 +21,7 @@ $ schema : @Vec @Str = ["users", "orders"]
 $ known_table : @Str -> @Int -> @Bool = \text i =>
     if i >= @vec_len schema =>
         @false
-    else if STR.contains text ("FROM " ++ @vec_get schema i) =>
+    else if ARES.contains ("FROM " ++ @vec_get schema i) text =>
         @true
     else
         known_table text (i + 1)

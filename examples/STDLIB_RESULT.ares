@@ -8,24 +8,25 @@ $ @mod STDLIB_RESULT
 #       `untry` / `expect` bridge Results and Options back into a Fail
 #       computation.
 
-$ @import RESULT
-$ @import OPT
-$ @import STR
+$ @import ARESxALGO
+$ @import ARESxRESULT
+$ @import ARESxOPT
+$ @import ARESxSTR
 
 $ good : Result @Int @Str = Result.Ok.{ 42 }
 $ bad : Result @Int @Str = Result.Err.{ "boom" }
 
 $ ck_ok : @Int = if is_ok good => 0 else 1
 $ ck_err : @Int = if is_err bad => 0 else 1
-$ ck_unw : @Int = if (RESULT.unwrap_or good 0) == 42 => 0 else 1
-$ ck_unwd : @Int = if (RESULT.unwrap_or bad 7) == 7 => 0 else 1
-$ ck_map : @Int = if (RESULT.unwrap_or (map_ok (\x => x + 1) good) 0) == 43 => 0 else 1
+$ ck_unw : @Int = if (unwrap_or 0 good) == 42 => 0 else 1
+$ ck_unwd : @Int = if (unwrap_or 7 bad) == 7 => 0 else 1
+$ ck_map : @Int = if (unwrap_or 0 (map_ok (\x => x + 1) good)) == 43 => 0 else 1
 $ ck_maperr: @Int =
     map_err (\e => e ++ "!") bad |> \ | Result.Err.{ m } => (if m == "boom!" => 0 else 1) | _ => 1
 $ ck_then : @Int =
     let checked = \x => if x > 0 => Result.Ok.{ x * 2 } else Result.Err.{ "neg" } in
-    if (RESULT.unwrap_or (and_then checked good) 0) == 84 => 0 else 1
-$ ck_opt : @Int = if (OPT.unwrap_or (ok_opt good) 0) == 42 => 0 else 1
+    if (unwrap_or 0 (and_then checked good)) == 84 => 0 else 1
+$ ck_opt : @Int = if (unwrap_or 0 (ok_opt good)) == 42 => 0 else 1
 
 # ---- the Fail effect ----
 
@@ -41,9 +42,9 @@ $ pipeline : @Int -> <Fail> @Int = \n => (half n) + (half (n / 2))
 $ ck_prop : @Int = if (try_or (\u => pipeline 84) (0 - 1)) == 63 => 0 else 1
 $ ck_prop_fail : @Int = if (try_or (\u => pipeline 86) (0 - 1)) + 1 == 0 => 0 else 1
 
-# Bridges: a Result re-raised into a Fail computation, an Option required.
+# Bridges: a Result re-raised into a Fail computation, an Opt required.
 $ ck_untry : @Int = if (try_or (\u => (untry good) + 1) 0) == 43 => 0 else 1
-$ ck_expect : @Int = if (try_or (\u => expect Option.None "absent") 9) == 9 => 0 else 1
+$ ck_expect : @Int = if (try_or (\u => expect Opt.None "absent") 9) == 9 => 0 else 1
 
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int =

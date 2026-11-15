@@ -9,7 +9,8 @@ $ @mod FIELD_SCOPE
 #       which `&` splices in, so the names are spelled out in the generated
 #       code rather than appearing from the type.
 
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxVEC
 
 $ Point : @struct = x: @Int, y: @Int
 $ Named : @struct = name: @Str, age: @Int
@@ -37,7 +38,7 @@ $ open_fields : @Str -> @Str -> @Str -> <@Meta> @Code = \subject ty body =>
     @lookup ty |> \
         | Decl.Struct.{ _, fields } =>
             let bind = \acc f => acc ++ "let " ++ f.0 ++ " = " ++ subject ++ "." ++ f.0 ++ " in " in
-            @parse_str <| VEC.foldl bind "" fields ++ body
+            @parse_str <| foldl bind "" fields ++ body
         | _ => @fail <| diag <| "`" ++ ty ++ "` is not a struct"
 
 $ scoped : Point -> @Int = \q => &open_fields "q" "Point" "x * y"

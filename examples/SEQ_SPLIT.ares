@@ -7,7 +7,7 @@ $ @mod SEQ_SPLIT
 #       it step its `@ISeqViewBack` from the back. A sized tensor checks every
 #       length at compile time instead.
 
-$ @import LA
+$ @import ARESxLA
 
 # Strings: prefix, suffix, and both around one middle.
 $ ext : @Str -> @Str = \s => s |> \ | name ++ ".ares" => name | _ => "?"
@@ -48,7 +48,7 @@ $ ck_two : @Int = if two [3, 4, 5] == 7 => 0 else 1
 $ v3 : @Tensor 3 @Int = [10, 20, 30]
 $ sum3 : @Tensor 3 @Int -> @Int = \t => t |> \ | [x, y, z] => x + y + z
 $ rest_sum : @Tensor 4 @Int -> @Int = \t =>
-    t |> \ | [a] ++ mid ++ [d] => a + d + sum3 (concat [0] mid)
+    t |> \ | [a] ++ mid ++ [d] => a + d + sum3 (concat_tensors [0] mid)
 $ split_head : @Tensor 3 @Int -> @Tensor 2 @Int = \t => t |> \ | [_] ++ r => r
 
 $ ck_sum3 : @Int = if sum3 v3 == 60 => 0 else 1

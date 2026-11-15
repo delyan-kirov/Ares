@@ -3,7 +3,7 @@ $ @mod META_HYGIENE_LIB
 # \file META_HYGIENE_LIB.ares
 # \info Generators for `META_HYGIENE`, whose code lands in that module.
 
-$ @import MATH
+$ @import ARESxMATH
 
 $ scale : @Int -> @Int = \x => x * 10
 

@@ -229,7 +229,7 @@ shell is a compile-time site: its items run with the same hosts a `$ @e` has, an
 `$ _= @scope {}`, `$ _= @type_of "f"` or `$ _= @check <| @parse_str "1 + 2"` work
 at the prompt. A `$ @e` item (or an `@e` inside a definition) expands as in a
 file, and the shell keeps the expanded items. The shell has no `:` commands:
-every session imports `library/ARES_SHELL.ares`, whose `type "1 + 2"` and
+every session imports `library/ARESxSHELL.ares`, whose `type "1 + 2"` and
 `scope "vec"` print what that reflection finds, and whose `quit`/`reset`/`list`/
 `help` call `@shell_*` builtins of the built-in `<@Shell>` effect. The shell is
 their host (`interpreter::machine::set_shell_host`), like the compiler is
@@ -252,11 +252,11 @@ disambiguate a name shared across modules). They resolve through a driver-instal
 host (`machine::set_type_host`, fed from `Declarations::reflect` plus each round's
 checked global types). They read the program being compiled, so they carry
 `<@Meta>`: a call in ordinary code is a type error, and a helper that reflects
-declares `<@Meta>` (as `DERIVE.derive_show` does). `@type_of "fib"` is
+declares `<@Meta>` (as `ARES.derive_show` does). `@type_of "fib"` is
 `"@Int -> @Int"`, exactly as `ares check` prints it, `@use` fields included. In a
 round that still has unexpanded sites a type may be partial, so a generator that
-depends on it should not run before the sites it reads. On top of them, `library/DERIVE.ares`
-derives a default `to_string` for any struct or union (`$ @e (DERIVE.derive_show
+depends on it should not run before the sites it reads. On top of them, `library/ARESxDERIVE.ares`
+derives a default `to_string` for any struct or union (`$ @e (ARES.derive_show
 "Rgb")`); see `examples/DERIVE_SHOW.ares`. This is the first real derive-style
 macro, exercising reflection + forward-referenced injection (2b) + overload
 extension together.
@@ -333,7 +333,7 @@ then `&x`.
 $ &assert (fib 10 == 55) "fib 10 should be 55"           # item
 $ fib10 : @Int = &fib 10                                 # expression: inserts `55`
 $ n : &wide {} = 1024                                    # type
-$ Point3 : @struct = &DERIVE.fields_of "Point", z: @Int  # member
+$ Point3 : @struct = &ARES.fields_of "Point", z: @Int  # member
 $ run : {} -> <&logging {}, State @Int> @Int = ...      # row
 x |> \ | &answer => a                                   # pattern: a constant
        | answer  => b                                    # always binds
@@ -481,7 +481,7 @@ An IO result reifies into the AST by the section 3 rules: inside `@build`,
 literal.
 
 Status: **LANDED.** `@IO` is a real builtin effect: the effect-row parser accepts
-`@`-form labels, IO primitives (`library/C.ares` OS externs, `library/IO.ares`)
+`@`-form labels, IO primitives (`library/C.ares` OS externs, `library/ARESxIO.ares`)
 carry `<@IO>`, and the checker enforces it (a pure-typed function that performs
 IO is rejected: "effect `@IO` is performed but not handled"). Effects propagate
 through the effect-polymorphic combinators and reach the entry, whose `<@IO>` row
@@ -494,16 +494,16 @@ interpreter performs the IO for real (its FFI is the same one the program uses).
 `$ @e` keeps its hermetic ambient, so the boundary holds:
 
 ```
-$ @e <| IO.read_dir "."     # error: effect `@IO` is performed but not handled
-$ @build : {} -> <@Meta, @IO> @Code = ... IO.read_dir "." ...   # fine
+$ @e <| ARES.read_dir "."     # error: effect `@IO` is performed but not handled
+$ @build : {} -> <@Meta, @IO> @Code = ... ARES.read_dir "." ...   # fine
 ```
 
 **There is no compile-time IO primitive, and deliberately so.** Compile-time IO
-is the *same* IO a program does at run time: `library/IO.ares` over the `C`
+is the *same* IO a program does at run time: `library/ARESxIO.ares` over the `C`
 namespace, performed by the compile-time interpreter through the ordinary FFI.
 Nothing in the compiler is marked "build-time only", so a function is usable at
 both times and the only thing deciding which is the effect row of the context
-that calls it. The one addition this needed was `IO.read_dir` (a directory's
+that calls it. The one addition this needed was `ARES.read_dir` (a directory's
 entry names, sorted), which goes through `ls` over `C.popen` because `readdir`
 returns a `struct dirent *` and the FFI cannot dereference a C pointer.
 
@@ -638,7 +638,7 @@ site. At the splice the driver parses the code in its category and rewrites it:
 
 **Pattern binders** follow (open question 4): a binder the generator spells is
 invisible to the arm body, so a generator that binds for its caller takes the
-binder as code, `\v => "Option.Some.{?(v)}"` used as `&some_of "x"`. Spelling it
+binder as code, `\v => "Opt.Some.{?(v)}"` used as `&some_of "x"`. Spelling it
 with `@code` text (`$ it : @Code = @code "it"`) is the deliberate escape: the
 binder then reads as written at the site. An arm body that names a renamed
 binder gets an unbound-name error saying so.
@@ -770,7 +770,7 @@ the common case.
 the driver), is backed by a synthetic `@build#call` global (`Program.ct_build` in
 `desugar.rs`), and is forced first in each expansion round by `lower_all`, which
 appends its items to the module's source (`driver.rs`). It needed no new
-intrinsic: the IO is `library/IO.ares` over the `C` namespace, run by the
+intrinsic: the IO is `library/ARESxIO.ares` over the `C` namespace, run by the
 compile-time interpreter through the normal FFI. Section 10 has the details.
 
 **Still to come (the metaprogramming layer).** `@e` returning `@Code` splices
@@ -900,8 +900,8 @@ the `@build` message loop (`@msg`/`@add_code`/`@modules`).
    `$ @build : {} -> <@Meta, @IO> @Code` is a definition whose `@Code` result is
    appended to its module, run first in each expansion round, once per module, in
    any module (sections 6 and 10). No compile-time IO primitive came with it: the
-   IO is ordinary `library/IO.ares` over the `C` namespace, so paths are relative
-   to the working directory. `IO.read_dir` (a sorted directory listing, over
+   IO is ordinary `library/ARESxIO.ares` over the `C` namespace, so paths are relative
+   to the working directory. `ARES.read_dir` (a sorted directory listing, over
    `C.popen`) was the one library addition. `tests/MAIN.ares` generates its imports
    and `@main` from `examples/`; `examples/META_BUILD.ares` demonstrates it.
 7. Hygiene (scopes, LANDED with #457 step 4, section 9), then `@build`'s `@msg`/`@add_code`/query

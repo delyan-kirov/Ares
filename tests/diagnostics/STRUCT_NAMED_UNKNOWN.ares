@@ -1,4 +1,6 @@
 $ @mod STRUCT_NAMED_UNKNOWN
 
+$ @import ARESxALGO
+
 $ P : @struct = x: @Int, y: @Int,
 $ p : P = P.{ .x = 1, .z = 2 }  #~ error[TYPE_MISMATCH]: struct `P` has no field `z`

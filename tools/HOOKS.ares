@@ -6,11 +6,12 @@ $ @mod HOOKS
  - \note documentation/tooling/workflow.md describes the workflow they add up to.
  -#
 
-$ @import IO
-$ @import OPT
-$ @import STR
-$ @import VEC
-$ @import RESULT
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxOPT
+$ @import ARESxSTR
+$ @import ARESxVEC
+$ @import ARESxRESULT
 $ @import SH
 $ @import FORGE
 
@@ -24,8 +25,8 @@ $ hook : @Vec @Str -> <Forge, @IO, Fail> {} = \args =>
         | "pre-push"              => pre_push {}
         | "post-checkout"         =>
             (if arg_at args 5 == "1" => sync_trunk {} else {}); editors_refresh {}
-        | "post-merge" =>
-            (if STR.is_empty (env "THRAX_SYNCING") => prune_merged {} else {}); editors_refresh {}
+        | "post-merge"            =>
+            (if is_empty (env "THRAX_SYNCING") => prune_merged {} else {}); editors_refresh {}
         | "editors-pre-commit"    => editors_pre_commit {}
         | "editors-post-commit"   => editors_post_commit {}
         | "editors-post-checkout" => editors_refresh {}
@@ -34,21 +35,21 @@ $ hook : @Vec @Str -> <Forge, @IO, Fail> {} = \args =>
         | other                   => Fail.fail ("unknown hook `" ++ other ++ "`")
 
 # The issue a commit subject names: `#351 Fix it` is 351.
-$ subject_issue : @Str -> Option @Int = \s =>
-    if STR.starts_with s "#" => number_before s 1 " " else Option.None
+$ subject_issue : @Str -> Opt @Int = \s =>
+    if ARES.starts_with "#" s => number_before s 1 " " else Opt.None
 
 # The issue a branch is for: `351-fix-it` is 351.
-$ branch_issue : @Str -> Option @Int = \b => number_before b 0 "-"
+$ branch_issue : @Str -> Opt @Int = \b => number_before b 0 "-"
 
 # At most 40 bytes, cut between words.
 $ slug : @Str -> @Str = \title =>
-    let s = squeeze (STR.to_lower title) 0 "" in
-    if STR.len s <= 40 =>
+    let s = squeeze (ARES.to_lower title) 0 "" in
+    if len s <= 40 =>
         trim_dashes s
-    else if STR.at s 40 == 45 =>
-        STR.substr s 0 40
+    else if ARES.at 40 s == 45 =>
+        ARES.substr 0 40 s
     else
-        trim_dashes (STR.substr s 0 (last_dash s 40))
+        trim_dashes (ARES.substr 0 (last_dash s 40) s)
 
 # Every editor brought up to date with the grammar: Zed's pin moved to its last
 # commit, the highlight queries checked against it, the grammars Zed and Helix
@@ -77,11 +78,8 @@ $ editors_update : {} -> <@IO, Fail> {} =
 $ editors_refresh : {} -> <@IO, Fail> {} =
     let ext = editors ++ "/zed/" in
     let parser = [editors ++ "/tree-sitter-ares/src/parser.c"] in
-    let srcs = VEC.append
-        (VEC.map (\f => ext ++ "src/" ++ f) (read_dir (ext ++ "src"))) [
-            ext ++ "Cargo.toml",
-            ext ++ "extension.toml"
-        ] in
+    let srcs = append [ext ++ "Cargo.toml", ext ++ "extension.toml"]
+        (fmap (\f => ext ++ "src/" ++ f) (read_dir (ext ++ "src"))) in
     (
         if zed_installed {}
             && (
@@ -96,7 +94,7 @@ $ editors_refresh : {} -> <@IO, Fail> {} =
     );
     (
         if vscode_installed {}
-            && out_of_date vsix (VEC.map (\f => editors ++ "/vscode/" ++ f) vscode_srcs) =>
+            && out_of_date vsix (fmap (\f => editors ++ "/vscode/" ++ f) vscode_srcs) =>
             say "reinstalling the VS Code extension ...";
             vscode_build {};
             say "VS Code extension reinstalled, reload VS Code to load it"
@@ -119,29 +117,29 @@ $ sh : @Str -> <@IO, Fail> {} = \cmd =>
 
 $ current_branch : {} -> <@IO> @Str = output "git branch --show-current"
 
-$ first_line : @Str -> @Str = \s => OPT.unwrap_or (VEC.first (STR.lines s)) ""
+$ first_line : @Str -> @Str = \s => unwrap_or "" (ARES.first (ARES.lines s))
 
 $ digits_end : @Str -> @Int -> @Int = \s i =>
-    if i < STR.len s && STR.is_digit (STR.at s i) => digits_end s (i + 1) else i
+    if i < len s && ARES.is_digit (ARES.at i s) => digits_end s (i + 1) else i
 
 # The number at `from`, when the digits run to the end of `s` or into `sep`.
-$ number_before : @Str -> @Int -> @Str -> Option @Int = \s from sep =>
+$ number_before : @Str -> @Int -> @Str -> Opt @Int = \s from sep =>
     let j = digits_end s from in
     if j == from =>
-        Option.None
-    else if j == STR.len s || STR.starts_with (STR.substr s j (STR.len s)) sep =>
-        STR.to_int (STR.substr s from j)
+        Opt.None
+    else if j == len s || ARES.starts_with sep (ARES.substr j (len s) s) =>
+        from_str (ARES.substr from j s)
     else
-        Option.None
+        Opt.None
 
 $ squeeze : @Str -> @Int -> @Str -> @Str = \s i acc =>
-    if i >= STR.len s =>
+    if i >= len s =>
         acc
     else
-        let c = STR.at s i in
-        if STR.is_alnum c =>
+        let c = ARES.at i s in
+        if ARES.is_alnum c =>
             squeeze s (i + 1) (@array_push acc c)
-        else if STR.is_empty acc || STR.ends_with acc "-" =>
+        else if is_empty acc || ARES.ends_with "-" acc =>
             squeeze s (i + 1) acc
         else
             squeeze s (i + 1) (@array_push acc 45)
@@ -150,45 +148,44 @@ $ squeeze : @Str -> @Int -> @Str -> @Str = \s i acc =>
 $ last_dash : @Str -> @Int -> @Int = \s i => last_dash_from s i (i - 1)
 
 $ last_dash_from : @Str -> @Int -> @Int -> @Int = \s i j =>
-    if j <= 0 => i else if STR.at s j == 45 => j else last_dash_from s i (j - 1)
+    if j <= 0 => i else if ARES.at j s == 45 => j else last_dash_from s i (j - 1)
 
 $ trim_dashes : @Str -> @Str = \s =>
-    if STR.ends_with s "-" => trim_dashes (STR.substr s 0 (STR.len s - 1)) else s
+    if ARES.ends_with "-" s => trim_dashes (ARES.substr 0 (len s - 1) s) else s
 
 $ dir_of : @Str -> @Str = \path =>
-    let parts = STR.split path "/" in
-    if @vec_len parts <= 1 => "" else STR.join "/" (VEC.init parts) ++ "/"
+    let parts = ARES.split "/" path in
+    if @vec_len parts <= 1 => "" else ARES.join "/" (ARES.init parts) ++ "/"
 
 # ---- pre-commit ----
 
 # Checks picked by what is staged. The .ares files are formatted in the index
 # (and in the working tree when it matches), the rest only checked.
 $ pre_commit : {} -> <@IO, Fail> {} =
-    let staged = STR.lines (output "git diff --cached --name-only --diff-filter=ACMR") in
+    let staged = ARES.lines (output "git diff --cached --name-only --diff-filter=ACMR") in
     let ares =
-        VEC.filter (\f => STR.ends_with f ".ares" && !(STR.starts_with f "tests/diagnostics/"))
-            staged
+        filter (\f => ARES.ends_with ".ares" f && !(ARES.starts_with "tests/diagnostics/" f)) staged
     in
     let bad = unformatted ares 0 [] in
     (
-        if VEC.is_empty bad =>
+        if is_empty bad =>
             {}
         else
-            Fail.fail ("not formatted, commit stopped: " ++ STR.join ", " bad)
+            Fail.fail ("not formatted, commit stopped: " ++ ARES.join ", " bad)
     );
     (
-        if VEC.any (\f => STR.ends_with f ".rs" || STR.ends_with f "Cargo.toml") staged =>
+        if any (\f => ARES.ends_with ".rs" f || ARES.ends_with "Cargo.toml" f) staged =>
             say "cargo check ..."; sh "cargo check --workspace --quiet"
         else
             {}
     );
     (
-        if VEC.any (\f => f == "documentation/syntax/ares.y") staged =>
+        if any (\f => f == "documentation/syntax/ares.y") staged =>
             say "grammar check ..."; sh "bison -o /dev/null documentation/syntax/ares.y"
         else
             {}
     );
-    if VEC.any (\f => f == editors) staged =>
+    if any (\f => f == editors) staged =>
         let c = output ("git rev-parse :" ++ editors) in
         let pinned =
             pinned_rev (output ("git -C " ++ editors ++ " show " ++ c ++ ":zed/extension.toml")) in
@@ -217,30 +214,27 @@ $ unformatted : @Vec @Str -> @Int -> @Vec @Str -> <@IO, Fail> @Vec @Str = \fs i 
 # The STAGED version is formatted, so a partially staged file commits only its
 # staged hunks. tests/diagnostics/ is exempt: its files pin error positions.
 $ fmt_staged : @Str -> <@IO, Fail> @Bool = \f =>
-    let ares = if STR.is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN" in
+    let ares = if is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN" in
     let
     # Beside the original, so `ares fmt` finds the same BUILD.ares.
     tmp =
-        dir_of f ++ ".fmt.thrax." ++ VEC.get_or (VEC.reverse (STR.split f "/")) 0 f
-    in
+        dir_of f ++ ".fmt.thrax." ++ get_or 0 f (reverse (ARES.split "/" f)) in
     let staged = (capture ("git show " ++ quote (":" ++ f))).out in
     write_file tmp staged;
     if !(succeeds (ares ++ " fmt " ++ quote tmp ++ " 2>/dev/null")) =>
         say ("ares fmt refused " ++ f ++ ":");
-        eprint (STR.replace (capture (ares ++ " fmt --check " ++ quote tmp ++ " 2>&1")).out tmp f);
+        eprint (ARES.replace tmp f (capture (ares ++ " fmt --check " ++ quote tmp ++ " 2>&1")).out);
         remove_file tmp;
         @false
     else
-        let formatted = OPT.unwrap_or (read_file tmp) staged in
+        let formatted = unwrap_or staged (read_file tmp) in
         if formatted == staged =>
             remove_file tmp; @true
         else
-            let mode =
-                OPT.unwrap_or
-                    (VEC.first (STR.split (output ("git ls-files -s -- " ++ quote f)) " ")) "100644"
-            in
+            let mode = unwrap_or "100644"
+                (ARES.first (ARES.split " " (output ("git ls-files -s -- " ++ quote f)))) in
             let blob = output ("git hash-object -w -- " ++ quote tmp) in
-            (if OPT.unwrap_or (read_file f) "" == staged => write_file f formatted else @true);
+            (if unwrap_or "" (read_file f) == staged => write_file f formatted else @true);
             sh ("git update-index --cacheinfo " ++ quote (mode ++ "," ++ blob ++ "," ++ f));
             remove_file tmp;
             say ("formatted " ++ f);
@@ -256,8 +250,8 @@ $ rev_line : @Str -> @Str = \rev => "rev = \"" ++ rev ++ "\""
 
 # The `rev` an extension.toml pins the grammar at.
 $ pinned_rev : @Str -> @Str = \toml =>
-    let line = OPT.unwrap_or (VEC.find (\l => STR.starts_with l "rev = ") (STR.lines toml)) "" in
-    STR.replace (STR.replace line "rev = " "") "\"" ""
+    let line = unwrap_or "" (find (\l => ARES.starts_with "rev = " l) (ARES.lines toml)) in
+    ARES.replace "\"" "" (ARES.replace line "rev = " "")
 
 # The last commit up to `c` in tools/editors that changed the grammar.
 $ grammar_rev : @Str -> <@IO> @Str = \c =>
@@ -267,12 +261,12 @@ $ grammar_rev : @Str -> <@IO> @Str = \c =>
 # zed/extension.toml; whether it moved.
 $ write_zed_pin : {} -> <@IO> @Bool =
     let rev = grammar_rev "HEAD" in
-    let text = OPT.unwrap_or (read_file zed_toml) "" in
+    let text = unwrap_or "" (read_file zed_toml) in
     let old = pinned_rev text in
     if rev == old =>
         @false
     else
-        write_file zed_toml (STR.replace text (rev_line old) (rev_line rev)); @true
+        write_file zed_toml (ARES.replace (rev_line old) (rev_line rev) text); @true
 
 $ pin_zed_grammar : {} -> <@IO> {} =
     (
@@ -288,7 +282,7 @@ $ pin_zed_grammar : {} -> <@IO> {} =
             {}
     );
     let rev = grammar_rev "HEAD" in
-    if STR.is_empty (output ("git -C " ++ editors ++ " branch -r --contains " ++ rev)) =>
+    if is_empty (output ("git -C " ++ editors ++ " branch -r --contains " ++ rev)) =>
         say ("Zed fetches the grammar from the remote, and " ++ rev ++ " is not pushed")
     else
         {}
@@ -313,13 +307,13 @@ $ queries : @Vec @Str = ["helix/queries/ares/highlights.scm", "zed/languages/are
 
 $ check_queries : {} -> <@IO, Fail> {} =
     let bad = bad_queries 0 [] in
-    if VEC.is_empty bad =>
+    if is_empty bad =>
         {}
     else
         Fail.fail
             (
                 "highlight queries do not match the grammar:\n  "
-                    ++ STR.join "\n  " bad
+                    ++ ARES.join "\n  " bad
                     ++ "\nhelp: rename the node types the grammar renamed"
             )
 
@@ -336,28 +330,28 @@ $ bad_queries : @Int -> @Vec @Str -> <@IO> @Vec @Str = \i acc =>
                     ++ q
                     ++ " ../TAGS.ares 2>&1 >/dev/null"
             ) in
-        let why = VEC.filter (\l => STR.contains l "error") (STR.lines r.out) in
-        bad_queries (i + 1) (if r.ok => acc else @vec_push acc (q ++ ": " ++ STR.join " " why))
+        let why = filter (\l => ARES.contains "error" l) (ARES.lines r.out) in
+        bad_queries (i + 1) (if r.ok => acc else @vec_push acc (q ++ ": " ++ ARES.join " " why))
 
 # The hooks of the tools/editors repository (tools/editors/hooks), run from the
 # Ares root. A commit that changes the grammar is followed by one that moves
 # Zed's pin to it.
 $ editors_pre_commit : {} -> <@IO, Fail> {} =
-    let staged = STR.lines (output ("git -C " ++ editors ++ " diff --cached --name-only")) in
+    let staged = ARES.lines (output ("git -C " ++ editors ++ " diff --cached --name-only")) in
     let inputs = ["tree-sitter-ares/", "helix/queries/", "zed/languages/"] in
-    if VEC.any (\f => VEC.any (\p => STR.starts_with f p) inputs) staged =>
+    if any (\f => any (\p => ARES.starts_with p f) inputs) staged =>
         say "checking the highlight queries ..."; check_queries {}
     else
         {}
 
 $ editors_post_commit : {} -> <@IO, Fail> {} =
-    let changed = STR.lines
+    let changed = ARES.lines
         (output ("git -C " ++ editors ++ " diff-tree --no-commit-id --name-only -r HEAD")) in
-    (if VEC.any (\f => STR.starts_with f "tree-sitter-ares/") changed => commit_zed_pin {} else {});
+    (if any (\f => ARES.starts_with "tree-sitter-ares/" f) changed => commit_zed_pin {} else {});
     editors_refresh {}
 
 $ config_home : {} -> <@IO> @Str =
-    if STR.is_empty (env "XDG_CONFIG_HOME") => env "HOME" ++ "/.config" else env "XDG_CONFIG_HOME"
+    if is_empty (env "XDG_CONFIG_HOME") => env "HOME" ++ "/.config" else env "XDG_CONFIG_HOME"
 
 # Helix has Ares when it has compiled the grammar once (`hx --grammar build`).
 $ helix_grammar : {} -> <@IO> @Str = config_home {} ++ "/helix/runtime/grammars/ares.so"
@@ -402,10 +396,7 @@ $ vscode_build : {} -> <@IO, Fail> {} = sh
 
 $ zed_installed : {} -> <@IO> @Bool =
     let data =
-        if STR.is_empty (env "XDG_DATA_HOME") =>
-            env "HOME" ++ "/.local/share"
-        else
-            env "XDG_DATA_HOME"
+        if is_empty (env "XDG_DATA_HOME") => env "HOME" ++ "/.local/share" else env "XDG_DATA_HOME"
     in
     is_some (mtime (data ++ "/zed/extensions/installed/ares"))
 
@@ -413,13 +404,13 @@ $ zed_build : {} -> <@IO, Fail> {} = sh ("nix run path:" ++ editors ++ "#zed-bui
 
 # Whether `target` is missing or older than one of `srcs`.
 $ out_of_date : @Str -> @Vec @Str -> <@IO> @Bool = \target srcs =>
-    mtime target |> \ | Option.Some.{ t } => newer_than t srcs 0 | _ => @true
+    mtime target |> \ | Opt.Some.{ t } => newer_than t srcs 0 | _ => @true
 
 $ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> @Bool = \t srcs i =>
     if i >= @vec_len srcs =>
         @false
     else
-        OPT.unwrap_or (mtime (@vec_get srcs i)) 0 > t || newer_than t srcs (i + 1)
+        unwrap_or 0 (mtime (@vec_get srcs i)) > t || newer_than t srcs (i + 1)
 
 # ---- commit-msg / post-commit ----
 
@@ -428,9 +419,9 @@ $ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> @Bool = \t srcs i =>
 $ marker : {} -> <@IO> @Str = output "git rev-parse --git-path thrax-move"
 
 $ exempt : @Str -> @Bool = \s =>
-    VEC.any (\p => STR.starts_with s p) ["Merge ", "Revert ", "fixup!", "squash!", "amend!"]
+    any (\p => ARES.starts_with p s) ["Merge ", "Revert ", "fixup!", "squash!", "amend!"]
 
-$ is_new : @Str -> @Bool = \s => s == "#new" || STR.starts_with s "#new "
+$ is_new : @Str -> @Bool = \s => s == "#new" || ARES.starts_with "#new " s
 
 $ need_issue : @Str =
     "a commit on master names its issue\n"
@@ -443,29 +434,27 @@ $ commit_msg : @Str -> <Forge, @IO, Fail> {} = \path =>
     let subject = first_line text in
     let branch = current_branch {} in
     remove_file (marker {});
-    if exempt subject || STR.is_empty (STR.trim subject) =>
+    if exempt subject || is_empty (ARES.trim subject) =>
         {}
     else
         subject_issue subject |> \
-            | Option.Some.{ n } =>
-                let rest =
-                    STR.trim (STR.substr subject (1 + STR.len (int_to_str n)) (STR.len subject)) in
+            | Opt.Some.{ n } =>
+                let rest = ARES.trim (ARES.substr (1 + len (int_to_str n)) (len subject) subject) in
                 claim branch n (issue_title n rest)
             | _ =>
                 if is_new subject =>
-                    let title = STR.trim (STR.substr subject 4 (STR.len subject)) in
-                    if STR.is_empty title =>
+                    let title = ARES.trim (ARES.substr 4 (len subject) subject) in
+                    if is_empty title =>
                         Fail.fail "`#new` needs a title, `#new <title>`"
                     else
                         let n = expect (Forge.create_issue title) "could not open the issue" in
                         say ("opened issue #" ++ int_to_str n);
-                        write_file path ("#" ++ int_to_str n ++ STR.substr text 4 (STR.len text));
+                        write_file path ("#" ++ int_to_str n ++ ARES.substr 4 (len text) text);
                         claim branch n title
                 else
                     branch_issue branch |> \
-                        | Option.Some.{ m } =>
-                            write_file path ("#" ++ int_to_str m ++ " " ++ text); {}
-                        | _                 => if branch == trunk => Fail.fail need_issue else {}
+                        | Opt.Some.{ m } => write_file path ("#" ++ int_to_str m ++ " " ++ text); {}
+                        | _              => if branch == trunk => Fail.fail need_issue else {}
 
 # The open issue's title. `fallback` when the forge does not answer, so working
 # offline only loses the check.
@@ -489,7 +478,7 @@ $ issue_branch : @Int -> <@IO> @Str = \n => first_line
 $ claim : @Str -> @Int -> @Str -> <@IO, Fail> {} = \branch n title =>
     let num = int_to_str n in
     branch_issue branch |> \
-        | Option.Some.{ m } =>
+        | Opt.Some.{ m } =>
             if m == n =>
                 {}
             else
@@ -506,9 +495,9 @@ $ claim : @Str -> @Int -> @Str -> <@IO, Fail> {} = \branch n title =>
         | _ =>
             if branch == trunk =>
                 let existing = issue_branch n in
-                if STR.is_empty existing =>
+                if is_empty existing =>
                     let s = slug title in
-                    write_file (marker {}) (if STR.is_empty s => num else num ++ "-" ++ s); {}
+                    write_file (marker {}) (if is_empty s => num else num ++ "-" ++ s); {}
                 else
                     Fail.fail
                         (
@@ -529,11 +518,11 @@ $ claim : @Str -> @Int -> @Str -> <@IO, Fail> {} = \branch n title =>
 $ post_commit : {} -> <@IO, Fail> {} =
     let m = marker {} in
     read_file m |> \
-        | Option.Some.{ text } =>
+        | Opt.Some.{ text } =>
             remove_file m;
-            let branch = STR.trim text in
+            let branch = ARES.trim text in
             let head = output "git rev-parse HEAD" in
-            if current_branch {} == trunk && !(STR.is_empty head) =>
+            if current_branch {} == trunk && !(is_empty head) =>
                 sh ("git branch " ++ quote branch ++ " " ++ head);
                 sh ("git symbolic-ref HEAD refs/heads/" ++ branch);
                 sh ("git update-ref refs/heads/" ++ trunk ++ " " ++ head ++ "~1 " ++ head);
@@ -548,12 +537,12 @@ $ post_commit : {} -> <@IO, Fail> {} =
 $ pre_push : {} -> <@IO, Fail> {} = push_lines (read_line {})
 
 $ push_lines : @Str -> <@IO, Fail> {} = \line =>
-    if STR.is_empty line =>
+    if is_empty line =>
         {}
     else
-        let parts = STR.split line " " in
+        let parts = ARES.split " " line in
         let sha = arg_at parts 1 in
-        let branch = STR.replace (arg_at parts 2) "refs/heads/" "" in
+        let branch = ARES.replace "refs/heads/" "" (arg_at parts 2) in
         (
             if branch == trunk =>
                 Fail.fail
@@ -562,7 +551,7 @@ $ push_lines : @Str -> <@IO, Fail> {} = \line =>
                             ++ "help: commit on master with `#N <subject>` and the commit moves to its branch;"
                             ++ " `git push --no-verify` pushes anyway"
                     )
-            else if STR.starts_with sha "0000000000" =>
+            else if ARES.starts_with "0000000000" sha =>
                 {}
             else
                 check_pushed sha "applications";
@@ -577,9 +566,9 @@ $ push_lines : @Str -> <@IO, Fail> {} = \line =>
 $ check_pushed : @Str -> @Str -> <@IO, Fail> {} = \sha path =>
     let rev = output ("git rev-parse " ++ sha ++ ":" ++ path ++ " 2>/dev/null") in
     let git = "git -C " ++ path in
-    if STR.is_empty rev
+    if is_empty rev
         || not (succeeds (git ++ " cat-file -e " ++ rev ++ "^{commit} 2>/dev/null"))
-        || not (STR.is_empty (output (git ++ " branch -r --contains " ++ rev))) =>
+        || not (is_empty (output (git ++ " branch -r --contains " ++ rev))) =>
         {}
     else
         Fail.fail
@@ -596,7 +585,7 @@ $ check_pushed : @Str -> @Str -> <@IO, Fail> {} = \sha path =>
 # The pull request can only be opened once the branch is on the remote, which
 # is after this hook returns, so a detached helper waits for it.
 $ spawn_open_pr : @Str -> @Str -> <@IO> {} = \branch sha =>
-    let thrax = if STR.is_empty (env "THRAX_BIN") => "thrax" else env "THRAX_BIN" in
+    let thrax = if is_empty (env "THRAX_BIN") => "thrax" else env "THRAX_BIN" in
     C.system
         (
             "("
@@ -615,8 +604,8 @@ $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
     else
         Forge.pr branch |> \
             | .Absent =>
-                let n = OPT.unwrap_or (branch_issue branch) 0 in
-                let subjects = STR.lines
+                let n = unwrap_or 0 (branch_issue branch) in
+                let subjects = ARES.lines
                     (
                         output
                             (
@@ -627,9 +616,7 @@ $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
                             )
                     ) in
                 let title =
-                    OPT.unwrap_or (VEC.find (\s => OPT.unwrap_or (subject_issue s) 0 == n) subjects)
-                        branch
-                in
+                    unwrap_or branch (find (\s => unwrap_or 0 (subject_issue s) == n) subjects) in
                 (
                     Forge.open_pr
                         PrSpec.{
@@ -639,8 +626,8 @@ $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
                             .body = "Closes #" ++ int_to_str n
                         }
                         |> \
-                            | Option.Some.{ url } => say ("opened " ++ url)
-                            | _                   =>
+                            | Opt.Some.{ url } => say ("opened " ++ url)
+                            | _                =>
                                 say ("could not open a pull request for `" ++ branch ++ "`")
                 )
             | .Open.{ url } => {}
@@ -649,7 +636,7 @@ $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
                 ("the pull request of `" ++ branch ++ "` is closed, reopen it to review this push")
 
 $ reached : @Str -> @Str -> @Int -> <@IO> @Bool = \branch sha tries =>
-    if STR.starts_with (output ("git ls-remote origin " ++ quote ("refs/heads/" ++ branch))) sha =>
+    if ARES.starts_with sha (output ("git ls-remote origin " ++ quote ("refs/heads/" ++ branch))) =>
         @true
     else if tries <= 0 =>
         @false
@@ -670,7 +657,7 @@ $ sync_trunk : {} -> <Forge, @IO, Fail> {} =
 
 $ prune_merged : {} -> <Forge, @IO, Fail> {} =
     let here = current_branch {} in
-    let branches = STR.lines (output "git for-each-ref --format='%(refname:short)' refs/heads/") in
+    let branches = ARES.lines (output "git for-each-ref --format='%(refname:short)' refs/heads/") in
     for branches (\b =>
         if b != here && is_some (branch_issue b) =>
             (

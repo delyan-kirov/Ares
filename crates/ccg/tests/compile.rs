@@ -277,26 +277,26 @@ fn float32_intrinsics_match_interpreter() {
 
 #[test]
 fn scalar_serialization_matches_interpreter() {
-    // `to_string` / `from_string` are pure CORE (byte-level `@array_*` plus
+    // `to_string` / `from_str` are pure CORE (byte-level `@array_*` plus
     // arithmetic), so the C backend must render and parse scalars identically to
     // the interpreter. `to_string` cases also pin the shared textual encoding.
     for (body, entry) in [
         ("$ a : @Str = to_string 1234", "a"),
         ("$ a : @Str = to_string (0 - 42)", "a"),
         ("$ a : @Str = to_string (let n : @Nat = 250 in n)", "a"),
-        ("$ a : @Bool = (from_string (to_string 1234)) == 1234", "a"),
+        ("$ a : @Bool = (from_str (to_string 1234)) == Opt.Some.{ 1234 }", "a"),
         (
-            "$ a : @Bool = let n : @Int32 = from_string \"77\" in (to_string n) == \"77\"",
+            "$ a : @Bool = let n : @Int32 = (from_str \"77\" |> \\ | Opt.Some.{ v } => v | _ => 0) in (to_string n) == \"77\"",
             "a",
         ),
-        ("$ a : @Bool = (from_string \"true\") == (1 == 1)", "a"),
+        ("$ a : @Bool = (from_str \"true\") == Opt.Some.{ 1 == 1 }", "a"),
         // Floats serialize via the C runtime seam (`arx_real_to_str` /
         // `arx_f32_to_str` + libc `atof`); the shortest-decimal rule must render
         // identically on both engines.
         ("$ a : @Str = to_string (let x : @Float64 = 3.5 in x)", "a"),
-        ("$ a : @Str = to_string (let x : @Float32 = from_string \"0.5\" in x)", "a"),
+        ("$ a : @Str = to_string (let x : @Float32 = (from_str \"0.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in x)", "a"),
         (
-            "$ a : @Bool = let x : @Float64 = 2.25 in (from_string (to_string x)) == x",
+            "$ a : @Bool = let x : @Float64 = 2.25 in (from_str (to_string x)) == Opt.Some.{ x }",
             "a",
         ),
     ] {
@@ -309,8 +309,8 @@ fn float_widening_matches_interpreter() {
     // Widening is explicit now (`f32_to_f64`, the `arx_f2d` runtime conversion); the
     // C backend must produce the same `@Float64` result as the interpreter.
     let src = "$ @mod M\n\
-               $ x : @Float32 = from_string \"1.5\"\n\
-               $ y : @Float64 = from_string \"2.25\"\n\
+               $ x : @Float32 = (from_str \"1.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0)\n\
+               $ y : @Float64 = (from_str \"2.25\" |> \\ | Opt.Some.{ v } => v | _ => 0.0)\n\
                $ fwd : @Float64 = f32_to_f64 x + y\n\
                $ rev : @Float64 = y + f32_to_f64 x\n";
     assert_matches(src, "fwd");
@@ -322,7 +322,7 @@ fn sized_arithmetic_matches_interpreter() {
     // A bare literal drops into sized arithmetic; a word-typed variable is `@cast`
     // first. The C backend must agree with the interpreter on both.
     let src = "$ @mod M\n\
-               $ p : @Int32 = from_string \"3\"\n\
+               $ p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0)\n\
                $ x : @Int = 5\n\
                $ cast : @Int32 = (let y : @Int32 = @cast x in y) * p\n\
                $ lit : @Int32 = 2 * p\n";
@@ -885,16 +885,15 @@ fn ffi_nested_struct_by_value() {
 }
 
 #[test]
-fn open_range_stream() {
-    // `[lo ...]` lowers to `count_from lo`, an unbounded stream; the C
-    // backend must observe it lazily just like the interpreter. `[lo ... hi]`
-    // lowers to `range lo hi`, a finite list.
-    // `Stream`, `count_from`, and `range` come from CORE (`[lo ...]` /
-    // `[lo ... hi]` lower to them), so the test uses those and defines only `len`.
+fn open_range_list() {
+    // `[lo ...]` lowers to `count_from lo`, an unbounded List; the C backend
+    // must observe it lazily just like the interpreter. `[lo ... hi]` is a List
+    // too, unless a `@Vec` is expected, as `len`'s parameter here makes it.
     let src = "$ @mod M\n\
                $ len : @Vec @Int -> @Int = \\xs => xs |> \\ | [] => 0 | h :: t => 1 + len t\n\
-               $ s : Stream @Int = [3 ...]\n\
-               $ test : @Int = s.head + s.tail.head + len [1 ... 4]\n";
+               $ two : List @Int -> @Int = \\l => l |> \\ | List.Cons.{ h, t } => (t |> \\ | List.Cons.{ x, _ } => h + x | _ => h) | _ => 0\n\
+               $ s : List @Int = [3 ...]\n\
+               $ test : @Int = two s + len [1 ... 4]\n";
     assert_matches(src, "test");
 }
 
@@ -1200,14 +1199,16 @@ fn a_self_referential_lazy_global_is_not_a_cycle_at_definition() {
 }
 
 #[test]
-fn for_over_a_lazy_list_stops_at_break() {
-    // `for` over a List walks the spine a cons at a time, so an unbounded list is
-    // fine as long as the body breaks: only the cells reached are ever built.
+fn walking_a_lazy_list_stops_early() {
+    // A List tail is lazy, so an unbounded list is fine as long as the walk
+    // stops: only the cells reached are ever built.
     let src = "$ @mod M\n\
                $ Acc : @effect = add : @Int -> {},\n\
                $ from : @Int -> List @Int = \\n => List.Cons.{ n, from (n + 1) }\n\
+               $ walk : List @Int -> <Acc> {} = \\l =>\n\
+               \tl |> \\ | List.Cons.{ x, t } => (if x > 5 => {} else (Acc.add x; walk t)) | _ => {}\n\
                $ test : @Int =\n\
-               \tdo for (from 1) (\\x => if x > 5 => break {} else Acc.add x)\n\
+               \tdo walk (from 1)\n\
                \tctl k | Acc.add n => n + k {}\n\
                \t      | r => 0\n";
     assert_matches(src, "test");

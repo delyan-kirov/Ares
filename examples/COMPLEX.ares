@@ -6,9 +6,9 @@ $ @mod COMPLEX
 #       the `Cpx` struct. So the arithmetic below is ordinary interface resolution,
 #       and CPX holds the math.
 
-$ @import CPX
-$ @import LA
-$ @import MATH
+$ @import ARESxCPX
+$ @import ARESxLA
+$ @import ARESxMATH
 
 # ---- literals ----
 # The suffix takes any numeric literal form: whole, fractional, or scientific.
@@ -19,12 +19,12 @@ $ frac : Cpx = 1.2i
 $ sci : Cpx = 2.5e-2i
 
 # The canonical spelling: a real plus an imaginary part.
-$ z : Cpx = CPX.of_real 3.4 + 1.2i
+$ z : Cpx = ARES.of_real 3.4 + 1.2i
 
 # The struct literal is always available too (positional, or bare where the
 # expected type is known). An INTEGER left side is deliberately a type error:
 # write `1.0 + 3i`, not `1 + 3i`.
-$ whole_re : Cpx = CPX.of_real 1.0 + 3i
+$ whole_re : Cpx = ARES.of_real 1.0 + 3i
 $ built : Cpx = Cpx.{ 1.0, 3.0 }
 $ bare : Cpx = .{ 1.0, 3.0 }
 
@@ -38,8 +38,8 @@ $ ck_bare : @Int = if bare == built => 0 else 1
 
 # ---- arithmetic ----
 
-$ a : Cpx = CPX.of_real 3.0 + 4.0i
-$ b : Cpx = CPX.of_real 1.0 - 2.0i
+$ a : Cpx = ARES.of_real 3.0 + 4.0i
+$ b : Cpx = ARES.of_real 1.0 - 2.0i
 
 $ ck_add : @Int = if a + b == Cpx.{ 4.0, 2.0 } => 0 else 1
 $ ck_sub : @Int = if a - b == Cpx.{ 2.0, 6.0 } => 0 else 1
@@ -50,28 +50,28 @@ $ ck_div : @Int = if a / b == Cpx.{ -1.0, 2.0 } => 0 else 1
 $ ck_neg : @Int = if -a == Cpx.{ -3.0, -4.0 } => 0 else 1
 
 # An operator takes ONE type for both operands, so a real joins a complex only by
-# being made one: `CPX.of_real` on a real, `f32_to_f64` first on a `@Float32`.
+# being made one: `ARES.of_real` on a real, `f32_to_f64` first on a `@Float32`.
 # Nothing is promoted silently, in either direction.
-$ ck_rl : @Int = if CPX.of_real 2.0 * a == Cpx.{ 6.0, 8.0 } => 0 else 1
-$ ck_rr : @Int = if a * CPX.of_real 2.0 == Cpx.{ 6.0, 8.0 } => 0 else 1
+$ ck_rl : @Int = if ARES.of_real 2.0 * a == Cpx.{ 6.0, 8.0 } => 0 else 1
+$ ck_rr : @Int = if a * ARES.of_real 2.0 == Cpx.{ 6.0, 8.0 } => 0 else 1
 $ half : @Float32 = 0.5
-$ wide : Cpx = CPX.of_real (f32_to_f64 half)
+$ wide : Cpx = ARES.of_real (f32_to_f64 half)
 $ ck_fl : @Int = if wide * a == Cpx.{ 1.5, 2.0 } => 0 else 1
 $ ck_fr : @Int = if a - wide == Cpx.{ 2.5, 4.0 } => 0 else 1
 
 # Smith's division agrees with the plain one on ordinary operands.
-$ ck_smith : @Int = if CPX.div_smith a b == a / b => 0 else 1
+$ ck_smith : @Int = if ARES.div_smith a b == a / b => 0 else 1
 
 # ---- parts ----
 
-$ ck_re : @Int = if CPX.re a == 3.0 => 0 else 1
-$ ck_im : @Int = if CPX.im a == 4.0 => 0 else 1
-$ ck_conj : @Int = if CPX.conj a == Cpx.{ 3.0, -4.0 } => 0 else 1
-$ ck_abs : @Int = if CPX.abs a == 5.0 => 0 else 1
-$ ck_norm : @Int = if CPX.norm a == 25.0 => 0 else 1
-$ ck_recip : @Int = if near (CPX.recip b) (Cpx.{ 0.2, 0.4 }) => 0 else 1
-$ ck_arg : @Int = if near_real (CPX.arg 1.0i) (MATH.pi / 2.0) => 0 else 1
-$ ck_real : @Int = if CPX.is_real (Cpx.{ 2.0, 0.0 }) && !(CPX.is_real a) => 0 else 1
+$ ck_re : @Int = if ARES.re a == 3.0 => 0 else 1
+$ ck_im : @Int = if ARES.im a == 4.0 => 0 else 1
+$ ck_conj : @Int = if ARES.conj a == Cpx.{ 3.0, -4.0 } => 0 else 1
+$ ck_abs : @Int = if ARES.magnitude a == 5.0 => 0 else 1
+$ ck_norm : @Int = if ARES.norm a == 25.0 => 0 else 1
+$ ck_recip : @Int = if near (ARES.recip b) (Cpx.{ 0.2, 0.4 }) => 0 else 1
+$ ck_arg : @Int = if near_real (ARES.arg 1.0i) (ARES.pi / 2.0) => 0 else 1
+$ ck_real : @Int = if ARES.is_real (Cpx.{ 2.0, 0.0 }) && !(ARES.is_real a) => 0 else 1
 
 $ ck_show : @Int = if to_string a == "3 + 4i" => 0 else 1
 $ ck_show2 : @Int = if to_string b == "1 - 2i" => 0 else 1
@@ -79,37 +79,37 @@ $ ck_show2 : @Int = if to_string b == "1 - 2i" => 0 else 1
 # ---- transcendentals ----
 
 # e^(i pi) = -1, the identity worth checking first.
-$ ck_euler : @Int = if near (CPX.exp (Cpx.{ 0.0, MATH.pi })) (Cpx.{ -1.0, 0.0 }) => 0 else 1
-$ ck_log : @Int = if near (CPX.exp (CPX.log a)) a => 0 else 1
+$ ck_euler : @Int = if near (exp (Cpx.{ 0.0, ARES.pi })) (Cpx.{ -1.0, 0.0 }) => 0 else 1
+$ ck_log : @Int = if near (exp (log a)) a => 0 else 1
 # sqrt(i) = (1 + i)/sqrt 2
-$ ck_sqrt : @Int =
-    if near (CPX.sqrt 1.0i) (Cpx.{ 0.7071067811865476, 0.7071067811865476 }) => 0 else 1
-$ ck_sqr : @Int = if near (CPX.sqrt a * CPX.sqrt a) a => 0 else 1
+$ ck_sqrt : @Int = if near (sqrt 1.0i) (Cpx.{ 0.7071067811865476, 0.7071067811865476 }) => 0 else 1
+$ ck_sqr : @Int = if near (sqrt a * sqrt a) a => 0 else 1
 # i^2 = -1. `^` takes ONE type for both operands, so a complex exponent is `^`
-# (through `exp`/`log`) and an INTEGER exponent is `CPX.powi` by name, the exact
+# (through `exp`/`log`) and an INTEGER exponent is `ARES.powi` by name, the exact
 # repeated-multiplication path.
-$ ck_powi : @Int = if near (CPX.powi 1.0i 2) (Cpx.{ -1.0, 0.0 }) => 0 else 1
+$ ck_powi : @Int = if near (ARES.powi 2 1.0i) (Cpx.{ -1.0, 0.0 }) => 0 else 1
 $ ck_hatc : @Int = if near (a ^ (Cpx.{ 2.0, 0.0 })) (a * a) => 0 else 1
 # The numeric cases reach their own instances, untouched by the complex one.
 $ ck_hatint : @Int = if 3 ^ 2 == 9 => 0 else 1
-$ ck_pow : @Int = if near (CPX.pow a (Cpx.{ 2.0, 0.0 })) (a * a) => 0 else 1
-$ ck_powneg : @Int = if near (CPX.powi b (0 - 1)) (CPX.recip b) => 0 else 1
+$ ck_pow : @Int = if near (ARES.pow a (Cpx.{ 2.0, 0.0 })) (a * a) => 0 else 1
+$ ck_powneg : @Int = if near (ARES.powi (0 - 1) b) (ARES.recip b) => 0 else 1
 # sin^2 + cos^2 = 1 holds on the complex plane too.
-$ ck_trig : @Int = if near (CPX.sin z * CPX.sin z + CPX.cos z * CPX.cos z) CPX.one => 0 else 1
-$ ck_tan : @Int = if near (CPX.tan z) (CPX.sin z / CPX.cos z) => 0 else 1
+$ ck_trig : @Int = if near (sin z * sin z + cos z * cos z) ARES.one => 0 else 1
+$ ck_tan : @Int = if near (tan z) (sin z / cos z) => 0 else 1
 # cosh^2 - sinh^2 = 1.
-$ ck_hyp : @Int = if near (CPX.cosh z * CPX.cosh z - CPX.sinh z * CPX.sinh z) CPX.one => 0 else 1
-$ ck_tanh : @Int = if near (CPX.tanh z) (CPX.sinh z / CPX.cosh z) => 0 else 1
+$ ck_hyp : @Int =
+    if near (ARES.cosh z * ARES.cosh z - ARES.sinh z * ARES.sinh z) ARES.one => 0 else 1
+$ ck_tanh : @Int = if near (ARES.tanh z) (ARES.sinh z / ARES.cosh z) => 0 else 1
 
 # ---- polar form and roots ----
 
-$ ck_polar : @Int = let p = CPX.polar a in if near (CPX.from_polar p.0 p.1) a => 0 else 1
+$ ck_polar : @Int = let p = ARES.polar a in if near (ARES.from_polar p.0 p.1) a => 0 else 1
 
 # The fourth roots of unity are 1, i, -1, -i.
-$ fourth : @Vec Cpx = CPX.roots_of_unity 4
+$ fourth : @Vec Cpx = ARES.roots_of_unity 4
 $ ck_rou : @Int =
     if @vec_len fourth == 4
-        && near (@vec_get fourth 0) CPX.one
+        && near (@vec_get fourth 0) ARES.one
         && near (@vec_get fourth 1) 1.0i
         && near (@vec_get fourth 2) (Cpx.{ -1.0, 0.0 })
         && near (@vec_get fourth 3) (Cpx.{ 0.0, -1.0 }) =>
@@ -118,11 +118,11 @@ $ ck_rou : @Int =
         1
 
 # Every `n`th root really is one: raising it back gives `z`.
-$ cubes : @Vec Cpx = CPX.roots a 3
+$ cubes : @Vec Cpx = ARES.roots 3 a
 $ ck_roots : @Int =
     if @vec_len cubes == 3
-        && near (CPX.powi (@vec_get cubes 0) 3) a
-        && near (CPX.powi (@vec_get cubes 2) 3) a =>
+        && near (ARES.powi 3 (@vec_get cubes 0)) a
+        && near (ARES.powi 3 (@vec_get cubes 2)) a =>
         0
     else
         1
@@ -150,6 +150,6 @@ $ &assert (test == 0) "COMPLEX: a check failed"
 $ @private
 
 # Floating-point results need a tolerance, not `==`.
-$ near_real : Real -> Real -> @Bool = \x y => MATH.abs (x - y) < 0.000000001
+$ near_real : Real -> Real -> @Bool = \x y => ARES.abs (x - y) < 0.000000001
 
-$ near : Cpx -> Cpx -> @Bool = \p q => CPX.abs (p - q) < 0.000000001
+$ near : Cpx -> Cpx -> @Bool = \p q => ARES.magnitude (p - q) < 0.000000001

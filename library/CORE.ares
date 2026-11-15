@@ -624,6 +624,15 @@ $ impl_IEq_for_tup2 : @use { ea: IEq a, eb: IEq b } -> IEq { a, b } =
 $ impl_IEq_for_tup3 : @use { ea: IEq a, eb: IEq b, ec: IEq c } -> IEq { a, b, c } =
     .{ .eq = \x y => ea.eq x.0 y.0 && eb.eq x.1 y.1 && ec.eq x.2 y.2 }
 
+# Tuples order lexicographically: the first component decides, later ones break ties.
+$ impl_IOrd_for_tup2 : @use { oa: IOrd a, ob: IOrd b } -> IOrd { a, b } =
+    .{ .lt = \x y => oa.lt x.0 y.0 || (not (oa.lt y.0 x.0) && ob.lt x.1 y.1) }
+$ impl_IOrd_for_tup3 : @use { oa: IOrd a, ob: IOrd b, oc: IOrd c } -> IOrd { a, b, c } = .{
+    .lt = \x y =>
+        oa.lt x.0 y.0
+            || (not (oa.lt y.0 x.0) && (ob.lt x.1 y.1 || (not (ob.lt y.1 x.1) && oc.lt x.2 y.2)))
+}
+
 $ vec_eq_from : @use { d: IEq t } -> @Vec t -> @Vec t -> @Int -> @Bool = \x y i =>
     if i >= @vec_len x =>
         @true
@@ -637,6 +646,14 @@ $ impl_IEq_for_vec : @use { d: IEq t } -> IEq (@Vec t) =
 
 $ impl_IEq_for_array : IEq @Array = .{ .eq = \a b => @seq a b }
 
+# Two `Opt`s are equal when both are absent, or both hold equal values.
+$ impl_IEq_for_Opt : @use { e: IEq t } -> IEq (Opt t) = .{
+    .eq = \a b =>
+        a |> \
+            | Opt.Some.{ x } => (b |> \ | Opt.Some.{ y } => e.eq x y | _ => @false)
+            | _              => (b |> \ | Opt.Some.{ _ } => @false | _ => @true),
+}
+
 # Function composition as a value: `compose f g` is `\x => f (g x)`, and it is what
 # the operator's function form `(<|>)` refers to (the infix `f <|> g` expands to the
 # lambda instead, so no global is spelled `<|>`). One row `e` covers both steps, so
@@ -645,16 +662,17 @@ $ impl_IEq_for_array : IEq @Array = .{ .eq = \a b => @seq a b }
 $ compose : (b -> <e> c) -> (a -> <e> b) -> a -> <e> c = \f g x => f (g x)
 
 # Rendering and parsing, as interfaces. `to_string` takes the renderer for its
-# argument's type; `from_string` takes the parser for the type the CALLER expects,
-# so `let n : @Int = from_string s` picks the `@Int` parser by the expected type
-# rather than by an argument. `?(e)` interpolation desugars to `to_string e`, so a
-# type joins string interpolation by having an `IToString` instance (write one, or
-# let `DERIVE.derive_show` generate it).
+# argument's type; `from_str` takes the parser for the type the CALLER expects, so
+# `let n : Opt @Int = from_str s` picks the `@Int` parser by the expected type
+# rather than by an argument. Parsing can fail, so `from_str` answers an `Opt`:
+# `None` when the text is not a value of the type. `?(e)` interpolation desugars
+# to `to_string e`, so a type joins string interpolation by having an `IToString`
+# instance (write one, or let `derive_show` in ARESxDERIVE generate it).
 $ IToString : @struct t = show: t -> @Str,
-$ IFromString : @struct t = parse: @Str -> t,
+$ IFromStr : @struct t = from_str: @Str -> Opt t,
 
 $ to_string : @use { d: IToString t } -> t -> @Str = \x => d.show x
-$ from_string : @use { d: IFromString t } -> @Str -> t = \s => d.parse s
+$ from_str : @use { d: IFromStr t } -> @Str -> Opt t = \s => d.from_str s
 
 $ impl_IToString_for_str : IToString @Str = .{ .show = \s => s }
 $ impl_IToString_for_bool : IToString @Bool = .{ .show = \b => if b => "true" else "false" }
@@ -696,43 +714,72 @@ $ f32_to_str : @Float32 -> @Str = @extern "C" "arx_f32_to_str" ""
 $ impl_IToString_for_float64 : IToString @Float64 = .{ .show = real_to_str }
 $ impl_IToString_for_float32 : IToString @Float32 = .{ .show = f32_to_str }
 
-# `from_string` reads bytes with `@array_get`/`@array_len`, so parsing stays in the
-# language; only the float parser is foreign.
-$ str_to_int : @Str -> @Int = \s =>
-    if @array_len s == 0 =>
-        0
-    else if @array_get s 0 == 45 =>
-        0 - from_string_digits s 1 0
+# `from_str` reads bytes with `@array_get`/`@array_len`, so parsing stays in the
+# language; only the float conversion is foreign, after the text is checked.
+# An integer is an optional `-` and one or more decimal digits.
+$ str_to_int : @Str -> Opt @Int = \s =>
+    let minus = @array_len s > 0 && @array_get s 0 == 45 in
+    let start = if minus => 1 else 0 in
+    if @array_len s <= start =>
+        Opt.None
     else
-        from_string_digits s 0 0
+        from_str_digits s start 0 |>
+            \ | Opt.Some.{ n } => Opt.Some.{ if minus => 0 - n else n } | _ => Opt.None
 
-$ impl_IFromString_for_str : IFromString @Str = .{ .parse = \s => s }
-$ impl_IFromString_for_bool : IFromString @Bool = .{ .parse = \s => s == "true" }
-$ impl_IFromString_for_int : IFromString @Int = .{ .parse = str_to_int }
-$ impl_IFromString_for_nat : IFromString @Nat =
-    .{ .parse = \s => let n : @Nat = @cast (str_to_int s) in n }
+# Each integer type parses as `@Int` and narrows (an erased width reinterpret).
+$ int_as : (@Int -> t) -> @Str -> Opt t = \f s =>
+    str_to_int s |> \ | Opt.Some.{ n } => Opt.Some.{ f n } | _ => Opt.None
 
+$ impl_IFromStr_for_str : IFromStr @Str = .{ .from_str = \s => Opt.Some.{ s } }
+$ impl_IFromStr_for_bool : IFromStr @Bool = .{
+    .from_str = \s =>
+        if s == "true" =>
+            Opt.Some.{ @true }
+        else if s == "false" =>
+            Opt.Some.{ @false }
+        else
+            Opt.None,
+}
+$ impl_IFromStr_for_int : IFromStr @Int = .{ .from_str = str_to_int }
+$ impl_IFromStr_for_nat : IFromStr @Nat =
+    .{ .from_str = int_as (\n => let m : @Nat = @cast n in m) }
+$ impl_IFromStr_for_int8 : IFromStr @Int8 =
+    .{ .from_str = int_as (\n => let m : @Int8 = @cast n in m) }
+$ impl_IFromStr_for_int16 : IFromStr @Int16 =
+    .{ .from_str = int_as (\n => let m : @Int16 = @cast n in m) }
+$ impl_IFromStr_for_int32 : IFromStr @Int32 =
+    .{ .from_str = int_as (\n => let m : @Int32 = @cast n in m) }
+$ impl_IFromStr_for_int64 : IFromStr @Int64 =
+    .{ .from_str = int_as (\n => let m : @Int64 = @cast n in m) }
+$ impl_IFromStr_for_nat8 : IFromStr @Nat8 =
+    .{ .from_str = int_as (\n => let m : @Nat8 = @cast n in m) }
+$ impl_IFromStr_for_nat16 : IFromStr @Nat16 =
+    .{ .from_str = int_as (\n => let m : @Nat16 = @cast n in m) }
+$ impl_IFromStr_for_nat32 : IFromStr @Nat32 =
+    .{ .from_str = int_as (\n => let m : @Nat32 = @cast n in m) }
+$ impl_IFromStr_for_nat64 : IFromStr @Nat64 =
+    .{ .from_str = int_as (\n => let m : @Nat64 = @cast n in m) }
+
+# A float is digits with an optional sign, point and exponent: at least one digit,
+# and only the bytes `0-9 + - . e E`. libc `atof` converts the checked text.
 $ str_to_real : @Str -> @Float64 = @extern "C" "atof" "libc"
-$ impl_IFromString_for_float64 : IFromString @Float64 = .{ .parse = str_to_real }
-$ impl_IFromString_for_float32 : IFromString @Float32 =
-    .{ .parse = \s => f64_to_f32 (str_to_real s) }
-
-$ impl_IFromString_for_int8 : IFromString @Int8 =
-    .{ .parse = \s => let n : @Int8 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_int16 : IFromString @Int16 =
-    .{ .parse = \s => let n : @Int16 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_int32 : IFromString @Int32 =
-    .{ .parse = \s => let n : @Int32 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_int64 : IFromString @Int64 =
-    .{ .parse = \s => let n : @Int64 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_nat8 : IFromString @Nat8 =
-    .{ .parse = \s => let n : @Nat8 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_nat16 : IFromString @Nat16 =
-    .{ .parse = \s => let n : @Nat16 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_nat32 : IFromString @Nat32 =
-    .{ .parse = \s => let n : @Nat32 = @cast (str_to_int s) in n }
-$ impl_IFromString_for_nat64 : IFromString @Nat64 =
-    .{ .parse = \s => let n : @Nat64 = @cast (str_to_int s) in n }
+$ float_text : @Str -> @Int -> @Bool -> @Bool = \s i digit =>
+    if i >= @array_len s =>
+        digit
+    else
+        let c = @array_get s i in
+        if c >= 48 && c <= 57 =>
+            float_text s (i + 1) @true
+        else if c == 43 || c == 45 || c == 46 || c == 101 || c == 69 =>
+            float_text s (i + 1) digit
+        else
+            @false
+$ impl_IFromStr_for_float64 : IFromStr @Float64 =
+    .{ .from_str = \s => if float_text s 0 @false => Opt.Some.{ str_to_real s } else Opt.None }
+$ impl_IFromStr_for_float32 : IFromStr @Float32 = .{
+    .from_str = \s =>
+        if float_text s 0 @false => Opt.Some.{ f64_to_f32 (str_to_real s) } else Opt.None,
+}
 
 # ---- complex numbers ----
 # `Cpx` is an ordinary struct, not a base type: the compiler knows only the `i`
@@ -790,13 +837,8 @@ $ impl_ICons_for_vec : ICons t (@Vec t) = .{ .cons = \x v => vcons x v }
 # length is a runtime value, not the static size of a `@Tensor n T`.
 $ range : @Int -> @Int -> @Vec @Int = \lo hi => range_onto (@vec_new {}) lo hi
 
-# A closed range `[lo ... hi]` builds whatever its `@IRange` instance returns. A
-# sequence type joins the range surface with an instance of its own; `@Vec` is what
-# the bare form builds, because this instance is declared FIRST.
-$ impl_IRange_for_vec : @IRange @Int (@Vec @Int) = .{ .range = \lo hi => range lo hi }
-
-# The OPTIONAL persistent cons list, an ordinary `@union` (not a compiler builtin,
-# and no longer the default). It is also the worked example of a type joining the
+# The persistent cons list, an ordinary `@union` (not a compiler builtin). It is
+# what a range builds by default, and also the worked example of a type joining the
 # whole `[]` surface from user space: the three overloads below give it literals,
 # `::`, and sequence patterns, with no compiler support of its own.
 $ List : @union a = Nil: {}, Cons: { a, List a },
@@ -807,13 +849,18 @@ $ impl_ISeqLit_for_List : @ISeqLit t (List t) = .{
 
 $ impl_ICons_for_List : ICons t (List t) = .{ .cons = \x l => List.Cons.{ x, l } }
 
-# The same closed range as a List. The tail slot is lazy, so this one is built a
-# cell at a time: `[lo ... hi]` over a huge bound costs only what is walked, where
-# the `@Vec` overload above materializes every element up front.
+# A closed range `[lo ... hi]` builds whatever its `@IRange` instance returns, and a
+# sequence type joins the range surface with an instance of its own. A bare range
+# builds a List, because this instance is declared FIRST. The tail slot is lazy, so
+# the list is built a cell at a time: a huge bound costs only what is walked.
 $ range_list : @Int -> @Int -> List @Int = \lo hi =>
     if lo > hi => List.Nil else List.Cons.{ lo, range_list (lo + 1) hi }
 
 $ impl_IRange_for_List : @IRange @Int (List @Int) = .{ .range = \lo hi => range_list lo hi }
+
+# The same closed range as a `@Vec`, where one is expected, with every element
+# built up front.
+$ impl_IRange_for_vec : @IRange @Int (@Vec @Int) = .{ .range = \lo hi => range lo hi }
 
 # `++` joins two of a kind, through its own interface, so a sequence type of your
 # own joins the surface by having an instance. `@Str` and `@Array` are the packed
@@ -918,35 +965,10 @@ $ impl_ISeqViewBack_for_str : @ISeqViewBack @Str @Int = .{
             SeqView.More.{ @array_get s (n - 1), @array_slice s 0 (n - 1) },
 }
 
-# The canonical infinite stream: `.head` is the current element and `.tail` the
-# rest. `tail` is recursive, so it holds its value lazily and a stream is
-# genuinely unbounded: each cell is built when something looks at it.
-$ Stream : @struct t = head : t, tail : Stream t
-
-# The ascending Ints from `lo` upward, with no end. A `Stream` is the only shape
-# that can hold an unbounded sequence (not a finite `@Vec`, not a `@Tensor n T`).
-$ count_from : @Int -> Stream @Int = \lo => { .head = lo, .tail = count_from (lo + 1) }
-
-# The open range `[lo ...]` counterpart of `@IRange`. Declared FIRST, so a bare
-# `[lo ...]` builds a `Stream`.
-$ impl_IRangeFrom_for_Stream : @IRangeFrom @Int (Stream @Int) =
-    .{ .range_from = \lo => count_from lo }
-
-# The open range as a List. A `List` tail is lazy, so an unbounded one is just as
-# representable as a `Stream`; this is the instance `([lo ...] : List T)` picks.
-$ count_from_list : @Int -> List @Int = \lo => List.Cons.{ lo, count_from_list (lo + 1) }
-$ impl_IRangeFrom_for_List : @IRangeFrom @Int (List @Int) =
-    .{ .range_from = \lo => count_from_list lo }
-
-# The `Loop` effect gives imperative `break` / `continue` to the iteration
-# combinators below: `break` stops the loop, `continue` skips the rest of the
-# current step. Neither resumes or carries a value (each just aborts the body, like
-# `Exn.throw`). Any OTHER effects the body performs pass through to the outer
-# handler. `break {}` / `continue {}` work anywhere via these prelude wrappers (an
-# effect's ops are unqualified only inside its own module).
-$ Loop : @effect = break : {} -> a, continue : {} -> a,
-$ break : {} -> <Loop> a = Loop.break {}
-$ continue : {} -> <Loop> a = Loop.continue {}
+# The open range `[lo ...]`: the ascending Ints from `lo` upward, with no end. A
+# `List` tail is lazy, so the list is built a cell at a time as it is walked.
+$ count_from : @Int -> List @Int = \lo => List.Cons.{ lo, count_from (lo + 1) }
+$ impl_IRangeFrom_for_List : @IRangeFrom @Int (List @Int) = .{ .range_from = \lo => count_from lo }
 
 # A union with no variants, so no expression builds one and no value has this
 # type. A function that never returns needs no such type (its result is a type
@@ -964,9 +986,15 @@ $ Result : @union t e =
     Ok: t,
     Err: e,
 
+# A value that may be absent: `Some` carries it, `None` is the absence. A lookup
+# answers with one; ARESxOPT holds the functions over it.
+$ Opt : @union t =
+    Some: t,
+    None: {},
+
 # A type whose values count as good or bad joins with an instance mapping each
 # value to a `Result`: the good case and what it carries become `Ok`, the bad case
-# `Err`. A `@Bool` is `Ok {}` or `Err {}`; OPT's `Option` is `Ok` its payload or
+# `Err`. A `@Bool` is `Ok {}` or `Err {}`; an `Opt` is `Ok` its payload or
 # `Err {}`.
 $ IToResult : @struct c t e = to_result: c -> Result t e,
 
@@ -975,86 +1003,15 @@ $ impl_IToResult_for_bool : IToResult @Bool {} {} =
 
 $ impl_IToResult_for_Result : IToResult (Result t e) t e = .{ .to_result = \r => r }
 
+$ impl_IToResult_for_Opt : IToResult (Opt t) t {} = .{
+    .to_result = \o => o |> \ | Opt.Some.{ x } => Result.Ok.{ x } | _ => Result.Err.{ {} },
+}
+
 # `when c <| \x => body` is an `if` with no `else`: it runs `body` for its effects
 # on what `c` carries when `c` is good, and is `{}` otherwise. The body's effect
 # row is a parameter, so one `when` serves any effects.
 $ when : @use { d: IToResult c t e } -> c -> (t -> <r> {}) -> <r> {} = \c body =>
     d.to_result c |> \ | Result.Ok.{ x } => body x | _ => {}
-
-# `for` runs `body` on each element FOR ITS EFFECTS, returning `{}`.
-# Iteration is an interface too, and the one whose shape needs the most from the
-# type system: the body's effect row is a PARAMETER of the interface, so an instance
-# stays polymorphic in it and each use site instantiates it (a body that prints runs
-# under `<@IO>`, a pure one under `<>`).
-$ IFor : @struct s a e = each: s -> (a -> <Loop | e> {}) -> <e> {},
-
-$ for : @use { d: IFor s a e } -> s -> (a -> <Loop | e> {}) -> <e> {} = \xs body => d.each xs body
-
-$ impl_IFor_for_vec : IFor (@Vec a) a e = .{ .each = \xs body => for_go xs body 0 }
-
-$ forever : Stream {} = { .head = {}, .tail = forever }
-
-# Over a `Stream`, iteration is INDEFINITE: it runs until `break`, or forever
-# (`forever` and `count_from` are ready-made infinite sources).
-$ stream_for : Stream a -> (a -> <Loop | e> {}) -> <e> {} = \s body =>
-    let more =
-        do body s.head
-        ctl k
-        | Loop.continue u => @true
-        | Loop.break u    => @false
-        | _               => @true
-    in
-    if more => stream_for s.tail body else {}
-
-$ impl_IFor_for_Stream : IFor (Stream a) a e = .{ .each = stream_for }
-
-# Over a List, iteration walks the spine one cons at a time. The tail slot is lazy,
-# so a list the body stops early on is only ever built as far as the body looked.
-$ list_for : List a -> (a -> <Loop | e> {}) -> <e> {} = \xs body =>
-    xs |> \
-        | List.Nil => {}
-        | List.Cons.{ h, t } =>
-            let more =
-                do body h
-                ctl k
-                | Loop.continue u => @true
-                | Loop.break u    => @false
-                | _               => @true
-            in
-            if more => list_for t body else {}
-
-$ impl_IFor_for_List : IFor (List a) a e = .{ .each = list_for }
-
-# `formap` TRANSFORMS: it maps `body` over the structure and returns the result
-# (the effectful analogue of `map`, like Haskell's `traverse`). `continue` drops an
-# element, `break` stops early keeping what was collected. The three ways a step can
-# end:
-$ LoopStep : @union b = Keep: { b }, Skip: {}, Stop: {},
-
-# `formap`'s interface carries the result structure as well, since mapping changes
-# the element type: `@Vec a` goes to `@Vec b`, a `List a` to a `List b`.
-$ IFormap : @struct s a t b e = mapping: s -> (a -> <Loop | e> b) -> <e> t,
-
-$ formap : @use { d: IFormap s a t b e } -> s -> (a -> <Loop | e> b) -> <e> t = \xs f =>
-    d.mapping xs f
-
-$ impl_IFormap_for_vec : IFormap (@Vec a) a (@Vec b) b e = .{
-    .mapping = \xs f => formap_vec xs f 0 (@vec_new {}),
-}
-
-# `let`-force each step: a data constructor's fields are lazy, so building the Cons
-# directly would defer the effects until the result were observed.
-$ list_formap : List a -> (a -> <Loop | e> b) -> <e> List b = \xs f =>
-    xs |> \
-        | List.Cons.{ h, t } => (
-            formap_step h f |> \
-                | LoopStep.Keep.{ y } => let ys = list_formap t f in List.Cons.{ y, ys }
-                | LoopStep.Skip       => list_formap t f
-                | _                   => List.Nil
-        )
-        | _                  => List.Nil
-
-$ impl_IFormap_for_List : IFormap (List a) a (List b) b e = .{ .mapping = list_formap }
 
 # ---- quotations ----
 # A string literal expected as `@Code` is a quotation: its text is source code,
@@ -1100,7 +1057,7 @@ $ impl_IStrLit_for_Template : @IStrLit Template =
 $ assert : @Bool -> @Str -> <@Meta> @Code = \ok msg => if ok => "" else @abort msg
 
 # ---- internal recursion workers ----
-# The accumulator loops the public `to_string` / `from_string` / `vcons` / `range`
+# The accumulator loops the public `to_string` / `from_str` / `vcons` / `range`
 # / `for` / `formap` above are built from. Hidden: an importer sees only those.
 
 $ @private
@@ -1122,8 +1079,12 @@ $ to_string_udigits : @Nat -> @Str -> @Str = \n acc =>
     else
         to_string_udigits (n / 10) ((@array_push "" (48 + to_string_udigit (n % 10))) ++ acc)
 
-$ from_string_digits : @Str -> @Int -> @Int -> @Int = \s i acc =>
-    if i == @array_len s => acc else from_string_digits s (i + 1) (acc * 10 + (@array_get s i - 48))
+$ from_str_digits : @Str -> @Int -> @Int -> Opt @Int = \s i acc =>
+    if i == @array_len s =>
+        Opt.Some.{ acc }
+    else
+        let c = @array_get s i in
+        if c >= 48 && c <= 57 => from_str_digits s (i + 1) (acc * 10 + (c - 48)) else Opt.None
 
 $ array_onto : @Array -> @Vec @Int -> @Int -> @Array = \acc v i =>
     if i >= @vec_len v => acc else array_onto (@array_push acc (@vec_get v i)) v (i + 1)
@@ -1137,32 +1098,3 @@ $ vcons_onto : @Vec t -> @Vec t -> @Int -> @Vec t = \acc v i =>
 
 $ range_onto : @Vec @Int -> @Int -> @Int -> @Vec @Int = \acc lo hi =>
     if lo > hi => acc else range_onto (@vec_push acc lo) (lo + 1) hi
-
-$ for_go : @Vec a -> (a -> <Loop | e> {}) -> @Int -> <e> {} = \xs body i =>
-    if i >= @vec_len xs =>
-        {}
-    else
-        let more =
-            do body (@vec_get xs i)
-            ctl k
-            | Loop.continue u => @true
-            | Loop.break u    => @false
-            | _               => @true
-        in
-        if more => for_go xs body (i + 1) else {}
-
-$ formap_step : a -> (a -> <Loop | e> b) -> <e> LoopStep b = \x f =>
-    do let y = f x in LoopStep.Keep.{ y }
-    ctl k
-    | Loop.continue u => LoopStep.Skip
-    | Loop.break u    => LoopStep.Stop
-    | s               => s
-
-$ formap_vec : @Vec a -> (a -> <Loop | e> b) -> @Int -> @Vec b -> <e> @Vec b = \xs f i acc =>
-    if i >= @vec_len xs =>
-        acc
-    else
-        formap_step (@vec_get xs i) f |> \
-            | LoopStep.Keep.{ y } => formap_vec xs f (i + 1) (@vec_push acc y)
-            | LoopStep.Skip       => formap_vec xs f (i + 1) acc
-            | _                   => acc

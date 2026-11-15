@@ -10,7 +10,7 @@ tmp.*
 lib/*
 
 build
-ares-out
+ares-artifacts
 result
 target
 !/crates/utilities/src/target/

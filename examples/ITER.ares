@@ -5,6 +5,10 @@ $ @mod ITER
 # `Loop` effect: `break` stops, `continue` skips a step. Other effects the body
 # performs (here `Yield`) pass through to the outer handler.
 
+$ @import ARESxALGO
+$ @import ARESxVEC
+$ @import ARESxLIST
+
 $ Yield : @effect = yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
     do a {}

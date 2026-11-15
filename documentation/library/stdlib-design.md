@@ -118,7 +118,7 @@ The original analysis, for the record:
 1. **Generic vectors first** (`Vec \`T`: `vec_new/len/get/set/push` with the
    same rc==1 in-place trick the byte vectors use). Then `Table \`K \`V` is
    ~150 lines of stdlib: open addressing, MINSTD-style probe, resize at 0.75
-   load, Jai's API surface (`set`, `find` -> Option, `remove`, `for` via
+   load, Jai's API surface (`set`, `find` -> Opt, `remove`, `for` via
    `fold`). This is the principled path: one language feature unlocks the
    whole imperative-collections family (Vec, Table, Bit_Array, ...).
 2. **Koka v1's mdict pattern, today**: a `State`-style effect wrapping the
@@ -141,7 +141,7 @@ The ONLY remaining piece is `Table \`K \`V`, and it needs NO compiler work --
 it's ~150 lines of pure stdlib over Vec. Concrete shape (route 1 above):
 open-addressing table backed by a `Vec` of slots (flat array, not chained),
 linear/MINSTD probe, resize + rehash at 0.75 load, Jai surface (`new`, `set`,
-`find` -> Option, `remove`, `has`, `len`, `is_empty`, `fold`, `from_list`/
+`find` -> Opt, `remove`, `has`, `len`, `is_empty`, `fold`, `from_list`/
 `to_list`). Hashing is dictionary-passed like `MAP`'s `cmp` (`new hash_int
 impl_IEq_for_int`, ...); @Int + Str hashers to start. Deliverables:
 `library/TABLE.ares`, `examples/STDLIB_TABLE.ares` (a `$ test : @Int` that
@@ -187,9 +187,9 @@ examples/TUPLES.ares):
 The stdlib half is DONE too: PAIR is REMOVED (not sugar -- deleted).
 LIST's `zip`/`unzip`/`span`/`split_at`/`partition`/`lookup`, MAP's
 `from_list`/`to_list`/`min_entry`/`max_entry` and RANDOM's `next` family
-all speak `{\`A, \`B}` with `.0`/`.1` access. `MAP.cmp_pair` (lexicographic
-composition of element orderings) ships the tuple-keyed-map convenience:
-`new (cmp_pair cmp_int cmp_str)` orders a `Map {@Int, Str} \`V`.
+all speak `{\`A, \`B}` with `.0`/`.1` access. CORE's lexicographic
+`IOrd` instances for tuples make tuple-keyed maps work with no setup: a
+`Map {@Int, @Str} \`V` orders by type.
 
 ## 6. Target module tree and phases
 
@@ -210,14 +210,14 @@ join the resolution fixpoint conservatively; see documentation/library/standard-
    mutates a uniquely-owned (rc==1) spine in place for `set`/`push` like
    the byte vectors (no capacity field yet, so a non-unique push is O(n)
    pointer memcpy -- add capacity when it shows up). `library/VEC.ares` is
-   the derived surface: checked `get` -> Option / `set` (out-of-range =
+   the derived surface: checked `get` -> Opt / `set` (out-of-range =
    unchanged), `from_list`/`to_list`, `map`/`fold`. Next: `TABLE` is ~150
    lines of stdlib over it: open addressing, resize at 0.75 load, Jai's
-   surface (`set`, `find` -> Option, `remove`, iteration via `fold`).
+   surface (`set`, `find` -> Opt, `remove`, iteration via `fold`).
 2. **Tuples `{A, B}`** (section 5): DONE, out of order -- landed before
    Vec because the surface turned out small (anonymous structs, zero
    engine work). PAIR is gone; `zip`/`span`/`partition`/`Map.to_list`
-   speak tuples; `MAP.cmp_pair` composes element orderings for tuple keys.
+   speak tuples; CORE's tuple `IOrd` instances order tuple keys.
 3. **Alternative pure-stdlib track** (when compiler work is unwelcome):
    the remaining OS layer below.
 
@@ -235,7 +235,7 @@ Phase 2 -- OS layer, pure C wrapping, no language work:
 Phase 3 -- language-gated (ordering above):
 - Generic `Vec \`T`: DONE -> `TABLE` (mutable hash map, section 4),
   `BIT_ARRAY`.
-- Tuples (section 5): DONE (PAIR removed); `MAP.cmp_pair` shipped.
+- Tuples (section 5): DONE (PAIR removed); tuple keys order through CORE's tuple `IOrd`.
 - C `int` return marshalling (kills `IO.is_byte`), argv, buffered readers.
 
 Phase 4 -- text:
@@ -300,7 +300,7 @@ Two footnotes:
 - (Superseded: sequence patterns now go through `@ISeqView`/`@ISeqViewBack` for
   any type, and `[a, b, ..rest]` is written `[a, b] ++ rest` since #324.)
   PATTERNS stay hardwired to List/Array for now. `is [a, b, ..rest]` for a
-  custom type needs an uncons VIEW (`seq_uncons : T -> Option {head,
+  custom type needs an uncons VIEW (`seq_uncons : T -> Opt {head,
   rest}`), i.e. view patterns -- a separate, later design.
 - The desugaring turns one literal node into n applications; if literal
   performance ever matters the compiler can keep the current fused path as

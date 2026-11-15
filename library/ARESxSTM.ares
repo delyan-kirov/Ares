@@ -1,6 +1,6 @@
-$ @mod STM
+$ @mod ARES
 
-# \file STM.ares
+# \file ARESxSTM.ares
 # \info Software transactional memory: shared state that parallel tasks update
 #       without locks. A `TVar` is a transactional variable. A transaction is a
 #       function with the row `<Stm>`, so it can read and write variables
@@ -16,7 +16,8 @@ $ @mod STM
 #       there never conflicts, and a `retry` runs the tasks still waiting to
 #       start until one changes what it read.
 
-$ @import OPT
+$ @import ARESxALGO
+$ @import ARESxOPT
 
 $ TVar : @alias a = @TVar a
 
@@ -46,25 +47,25 @@ $ or_else : ({} -> <Stm> a) -> ({} -> <Stm> a) -> <Stm> a = \first second =>
     let mark = Stm.save {} in
     let r =
         do first {}
-        ctl k | Stm.retry u => Option.None | v => Option.Some.{ v }
+        ctl k | Stm.retry u => Opt.None | v => Opt.Some.{ v }
     in
-    r |> \ | Option.Some.{ v } => v | _ => (Stm.rollback mark; second {})
+    r |> \ | Opt.Some.{ v } => v | _ => (Stm.rollback mark; second {})
 
 $ atomically : ({} -> <Stm> a) -> <@IO | e> a = \tx =>
     @stm_begin {}; attempt tx |> \
-        | Option.Some.{ v } => if @stm_commit {} => v else atomically tx
-        | _                 => (@stm_wait {}; atomically tx)
+        | Opt.Some.{ v } => if @stm_commit {} => v else atomically tx
+        | _              => (@stm_wait {}; atomically tx)
 
 $ @private
 
 # One run of the transaction against this thread's log: its result, or `None`
 # when it retried.
-$ attempt : ({} -> <Stm> a) -> <@IO | e> Option a = \tx =>
+$ attempt : ({} -> <Stm> a) -> <@IO | e> Opt a = \tx =>
     do tx {}
     ctl k
     | Stm.read t     => k (@stm_read t)
     | Stm.write p    => (@stm_write p.0 p.1; k {})
-    | Stm.retry u    => Option.None
+    | Stm.retry u    => Opt.None
     | Stm.save u     => k (@stm_save {})
     | Stm.rollback m => (@stm_rollback m; k {})
-    | v              => Option.Some.{ v }
+    | v              => Opt.Some.{ v }

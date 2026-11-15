@@ -10,25 +10,26 @@ $ @mod TYPE_SPLICE
 #       is applied to the new type's own parameters (`fields_of "Pair b"`), and
 #       an importer may use a generated type before its module has expanded it.
 
-$ @import DERIVE
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxDERIVE
+$ @import ARESxVEC
 $ @import TYPE_SPLICE_LIB
 
 $ Point : @struct = x: @Int, y: @Int
-$ Point3 : @struct = &DERIVE.fields_of "Point", z: @Int     # x, y, then z
-$ Located : @struct = &DERIVE.fields_of "Point3", tag: @Int # x, y, z, tag
+$ Point3 : @struct = &ARES.fields_of "Point", z: @Int     # x, y, then z
+$ Located : @struct = &ARES.fields_of "Point3", tag: @Int # x, y, z, tag
 
 $ Base : @union = Red: {}, Green: {}
-$ Color : @union = &DERIVE.variants_of "Base", Blue: {} # Red, Green, then Blue
+$ Color : @union = &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 
 # A generic struct, copied over the new type's own parameter.
 $ Pair : @struct a = fst: a, snd: a
-$ Labeled : @struct b = label: @Str, &DERIVE.fields_of "Pair b"
+$ Labeled : @struct b = label: @Str, &ARES.fields_of "Pair b"
 
 # Any generator can build the entries: here, one field per name. `@code`
 # turns computed text into code; the struct checks it spells fields.
 $ counters : @Vec @Str -> @Code = \names =>
-    @code <| DERIVE.join ", " <| VEC.map (\n => n ++ ": @Int") names
+    @code <| ARES.join_nonempty ", " <| fmap (\n => n ++ ": @Int") names
 $ Stats : @struct = &counters ["hits", "misses"]
 
 $ rank : Color -> @Int = \c =>

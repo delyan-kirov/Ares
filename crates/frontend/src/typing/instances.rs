@@ -250,6 +250,30 @@ impl<'a> Checker<'a> {
     /// binder qualifies only when its type's head constructor is already the
     /// requirement's: a binder whose type is still open is not a candidate, because
     /// matching it would decide its type rather than read it.
+    /// Extend `heads` with the heads of the contexts the instances of each one take,
+    /// transitively.
+    fn instance_context_heads(&self, heads: &mut Vec<utilities::StrId>) {
+        let mut i = 0;
+        while i < heads.len() {
+            for inst in self.instances.get(&heads[i]).into_iter().flatten().filter(|inst| inst.has_ctx) {
+                let Some(own) = self.bundle_parts(inst.bundle).1 else { continue };
+                let own = self.unifier.zonk(own);
+                let parts = match self.unifier.types.node(own) {
+                    TypeNode::Tuple(items) => self.unifier.types.items(items).to_vec(),
+                    _ => vec![own],
+                };
+                for part in parts {
+                    if let Some(h) = self.ctx_head(self.unifier.zonk(part)) {
+                        if !heads.contains(&h) {
+                            heads.push(h);
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+
     pub(super) fn ctx_locals(&mut self, req: Type) -> Vec<CtxLocal> {
         let entries: Vec<(usize, StrId, Type)> = self
             .scopes
@@ -259,9 +283,11 @@ impl<'a> Checker<'a> {
             .flat_map(|(d, s)| s.iter().map(move |(n, t)| (d, *n, *t)))
             .collect();
         // A bundle requirement (a callee with several `@use` fields) is resolved
-        // component by component, so each component's head is wanted.
+        // component by component, so each component's head is wanted. So is every
+        // head an instance of those needs as its own context, which resolving the
+        // instance searches for next (`IFilter (Set t)` needs `IOrd t`).
         let zonked = self.unifier.zonk(req);
-        let wants: Vec<utilities::StrId> = match self.unifier.types.node(zonked) {
+        let mut wants: Vec<utilities::StrId> = match self.unifier.types.node(zonked) {
             TypeNode::Tuple(items) => {
                 let parts = self.unifier.types.items(items).to_vec();
                 parts.into_iter().filter_map(|p| self.ctx_head(self.unifier.zonk(p))).collect()
@@ -271,6 +297,7 @@ impl<'a> Checker<'a> {
         if wants.is_empty() {
             return Vec::new();
         }
+        self.instance_context_heads(&mut wants);
         let wanted = |h: Option<utilities::StrId>| h.is_some_and(|h| wants.contains(&h));
         let mut out = Vec::new();
         for (depth, name, ty) in entries {
@@ -356,6 +383,7 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            progress |= self.solve_projections()?;
             if failed.is_empty() {
                 return Ok(());
             }
@@ -378,6 +406,26 @@ impl<'a> Checker<'a> {
             }
             return Ok(());
         }
+    }
+
+    /// Link each pending positional projection whose record has turned out a
+    /// tuple to that tuple's component. Whether any was linked.
+    fn solve_projections(&mut self) -> Result<bool> {
+        let mut progress = false;
+        for (rec, idx, t) in std::mem::take(&mut self.pending_projs) {
+            let rec = self.unifier.resolve(rec);
+            match self.unifier.types.node(rec) {
+                TypeNode::Var(_) => self.pending_projs.push((rec, idx, t)),
+                TypeNode::Tuple(items) => {
+                    if let Some(&item) = self.unifier.types.items(items).get(idx) {
+                        self.unifier.unify(item, t, "projecting a tuple component")?;
+                        progress = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(progress)
     }
 
     /// One attempt at a planned requirement, with the types as they stand now.
@@ -512,7 +560,7 @@ impl<'a> Checker<'a> {
             let save = self.unifier.save();
             let inst = self.unifier.instantiate(c.bundle);
             let exposed = self.bundle_parts(inst).0;
-            let mut ok = self.unifier.unify(exposed, req, "resolving a context").is_ok();
+            let mut ok = self.unifier.keeping(&open, |u| u.unify(exposed, req, "resolving a context")).is_ok();
             if ok {
                 ok = self.keeps_open(&open);
             }
@@ -536,11 +584,7 @@ impl<'a> Checker<'a> {
         };
         let inst = self.unifier.instantiate(c.bundle);
         let (exposed, own) = self.bundle_parts(inst);
-        self.unifier.unify(
-            exposed,
-            req,
-            &format!("resolving the context of `{fname}`"),
-        )?;
+        self.unifier.keeping(&open, |u| u.unify(exposed, req, &format!("resolving the context of `{fname}`")))?;
         let base = match c.module {
             Some(m) => CtxVal::Qualified {
                 module: m,

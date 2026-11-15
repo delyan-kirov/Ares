@@ -1,5 +1,7 @@
 $ @mod IMPORT_LIST_DUPLICATE
 
-$ @import V = VEC
-$ @import V = LIST  #~ error[DUPLICATE_SYMBOL]: import alias `V` names more than one thing
-$ @import O = OPT
+# Two parts of one module may share an alias; two modules may not.
+$ @import V = ARESxVEC
+$ @import V = ARESxLIST
+$ @import V = CORE  #~ error[DUPLICATE_SYMBOL]: import alias `V` names more than one thing
+$ @import O = ARESxOPT

@@ -1,16 +1,17 @@
 $ @mod STDLIB_ASYNC_IO
 
 # \file STDLIB_ASYNC_IO.ares
-# \info `ASYNC.run_io`: tasks that perform `@IO`, and a task that waits on a file
+# \info `ARES.run_io`: tasks that perform `@IO`, and a task that waits on a file
 #       descriptor. One task reads a command's output from a pipe, parking in
 #       `wait_fd` until poll(2) says a read will not block, while another
 #       computes and yields; the group sleeps in poll(2) only when every task is
 #       blocked. The answers do not depend on how the two interleave, so both
 #       engines agree whatever the timing.
 
-$ @import ASYNC
-$ @import OPT
-$ @import STR
+$ @import ARESxALGO
+$ @import ARESxASYNC
+$ @import ARESxOPT
+$ @import ARESxSTR
 
 $ fileno : @Int -> <@IO> @Int32 = @extern "C" "fileno" "libc"
 # `@Int32`: C's `int` result, so EOF reads back as -1.
@@ -50,9 +51,9 @@ $ both : {} -> <Async, @IO> @Str =
     Async.spawn (computer out 0 0);
     let a = Async.recv out in
     let b = Async.recv out in
-    if STR.len a < STR.len b => a ++ "|" ++ b else b ++ "|" ++ a
+    if len a < len b => a ++ "|" ++ b else b ++ "|" ++ a
 
-$ ck_pipe : {} -> <@IO> @Int = if unwrap_or (run_io both) "" == "1596|one\ntwo\n" => 0 else 1
+$ ck_pipe : {} -> <@IO> @Int = if unwrap_or "" (run_io both) == "1596|one\ntwo\n" => 0 else 1
 
 # Performs `@IO`, so the runner calls it as `test {}` (like `STDLIB_IO`).
 $ test : {} -> <@IO> @Int = ck_pipe {}

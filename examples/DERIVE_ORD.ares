@@ -8,7 +8,7 @@ $ @mod DERIVE_ORD
 #       and `==` work on a custom struct or union. A struct compares
 #       lexicographically by field; a union by variant order, then payload.
 
-$ @import DERIVE
+$ @import ARESxDERIVE
 
 $ Coord : @struct =
     x: @Int,
@@ -20,8 +20,8 @@ $ Geom : @union =
     Rect: { @Int, @Int },
 
 # Generate `cmp_T`, the `IOrd`/`IEq` instances, and the named comparisons.
-$ &DERIVE.derive_ord "Coord"
-$ &DERIVE.derive_ord "Geom"
+$ &ARES.derive_ord "Coord"
+$ &ARES.derive_ord "Geom"
 
 # Struct: lexicographic by field.
 $ ck_lt : @Int = if lt_Coord (Coord.{ .x = 1, .y = 2 }) (Coord.{ .x = 1, .y = 3 }) => 0 else 1

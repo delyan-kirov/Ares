@@ -1,6 +1,7 @@
 $ @mod README_GEN
 
-$ @import STR
+$ @import ARESxALGO
+$ @import ARESxSTR
 
 # \file README_GEN.ares
 # \info Parse and test examples in readme and generate the README file
@@ -9,7 +10,7 @@ $ @import STR
 # each snippet as `ares fmt` writes it. `@format` traps on text that does not
 # parse as items, which fails the build.
 $ formatted : @Str -> @Str -> @Code = \name src =>
-    "$ ?(@code name) : @Str = ?(STR.trim_right (@format src))"
+    "$ ?(@code name) : @Str = ?(ARES.trim_right (@format src))"
 
 # ---- Markdown helpers -----------------------------------------------------
 

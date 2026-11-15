@@ -27,7 +27,8 @@ use utilities::{Aol, Span, StrId};
 /// their own names) for the qualified names it now spells.
 pub(super) struct Resolved {
     pub text: String,
-    pub imports: Vec<StrId>,
+    /// Each import the site needs, as `(file, module)`: `$ @import module = file`.
+    pub imports: Vec<(StrId, StrId)>,
 }
 
 /// Rewrite `code`, which parses as `kind`, so the runs of it in `quoted` resolve
@@ -102,7 +103,7 @@ struct Walk<'a> {
     env: Vec<Binder>,
     /// Rewrites of `src`, keyed by start: `start -> (end, replacement)`.
     edits: HashMap<usize, (usize, String)>,
-    imports: Vec<StrId>,
+    imports: Vec<(StrId, StrId)>,
     /// The values and types the fragment's items declare.
     globals: HashSet<StrId>,
     types: HashSet<StrId>,
@@ -156,17 +157,27 @@ impl<'a> Walk<'a> {
     }
 
     /// The qualifier the site reaches `module` by, `None` for the site itself.
-    fn qualifier(&mut self, module: StrId) -> Option<StrId> {
+    /// `unit` is the file to import when the site does not reach it yet: the
+    /// part of `module` that defines the name (`ARESxMATH` for `cmp_int`).
+    fn qualifier(&mut self, module: StrId, unit: StrId) -> Option<StrId> {
         if module == self.site {
             return None;
         }
-        if let Some(q) = self.homes.get(&self.site).and_then(|h| h.qualifiers.get(&module)) {
-            return Some(*q);
+        let reached = self.homes.get(&self.site).and_then(|h| h.qualifiers.get(&module)).copied();
+        if let Some(q) = reached {
+            if module == unit || self.homes.get(&self.site).is_some_and(|h| h.units.values().any(|u| *u == unit)) {
+                return Some(q);
+            }
         }
-        if !self.imports.contains(&module) {
-            self.imports.push(module);
+        if !self.imports.contains(&(unit, module)) {
+            self.imports.push((unit, module));
         }
-        Some(module)
+        Some(reached.unwrap_or(module))
+    }
+
+    /// The file that defines `name`, as the module `quoted` was written in reaches it.
+    fn unit_of(&self, quoted: StrId, name: StrId, module: StrId) -> StrId {
+        self.homes.get(&quoted).and_then(|h| h.units.get(&name)).copied().unwrap_or(module)
     }
 
     // -- names ----------------------------------------------------------------
@@ -232,7 +243,8 @@ impl<'a> Walk<'a> {
             return;
         }
         let Some(home) = self.homes.get(&q.module).and_then(|h| h.values.get(&name)).copied() else { return };
-        if let Some(qual) = self.qualifier(home) {
+        let unit = self.unit_of(q.module, name, home);
+        if let Some(qual) = self.qualifier(home, unit) {
             self.edit(at, at + name.as_str().len(), format!("{qual}.{name}"));
         }
     }
@@ -250,7 +262,8 @@ impl<'a> Walk<'a> {
         if self.homes.get(&self.site).and_then(|h| h.types.get(&name)) == Some(&home) {
             return;
         }
-        if let Some(qual) = self.qualifier(home) {
+        let unit = self.unit_of(q.module, name, home);
+        if let Some(qual) = self.qualifier(home, unit) {
             self.edit(at, at + name.as_str().len(), format!("{qual}.{name}"));
         }
     }
@@ -261,7 +274,7 @@ impl<'a> Walk<'a> {
         let Some(at) = self.word_in(span, module) else { return };
         let Some(q) = self.quoted_at(at) else { return };
         let Some(target) = self.homes.get(&q.module).and_then(|h| h.modules.get(&module)).copied() else { return };
-        let qual = self.qualifier(target).unwrap_or(self.site);
+        let qual = self.qualifier(target, target).unwrap_or(self.site);
         if qual != module {
             self.edit(at, at + module.as_str().len(), qual.to_string());
         }

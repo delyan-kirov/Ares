@@ -13,7 +13,7 @@ $ @mod META_PATTERN
 #       if they were written there. A name the generator's own quotation spells
 #       is hygienic: it binds only names the same quotation spells.
 
-$ @import OPT
+$ @import ARESxOPT
 
 $ answer : @Int = 6 * 7
 
@@ -29,8 +29,8 @@ $ classify : @Int -> @Str = \n =>
 
 # A generated pattern that binds: the site names the binder, `"x"`, so the
 # body sees `x` as if it were written.
-$ some_of : @Code -> @Code = \v => "Option.Some.{?(v)}"
-$ or_zero : Option @Int -> @Int = \ | &some_of "x" => x | _ => 0
+$ some_of : @Code -> @Code = \v => "Opt.Some.{?(v)}"
+$ or_zero : Opt @Int -> @Int = \ | &some_of "x" => x | _ => 0
 
 # In a `let`: the pattern is a tuple the generator builds.
 $ pair_of : @Code -> @Code -> @Code = \a b => "{?(a), ?(b)}"
@@ -39,7 +39,7 @@ $ sum_pair : @Int = let &pair_of "a" "b" = { 3, 4 } in a + b
 $ ck1 : @Int = if is_answer 42 && !(is_answer 41) => 0 else 1
 $ ck2 : @Int = if classify 6 == "six" && classify 43 == "forty-three" => 0 else 2
 $ ck3 : @Int = if classify 7 == "other" => 0 else 4
-$ ck4 : @Int = if or_zero (Option.Some.{ 5 }) == 5 && or_zero Option.None == 0 => 0 else 8
+$ ck4 : @Int = if or_zero (Opt.Some.{ 5 }) == 5 && or_zero Opt.None == 0 => 0 else 8
 $ ck5 : @Int = if sum_pair == 7 => 0 else 16
 
 $ test : @Int = ck1 + ck2 + ck3 + ck4 + ck5

@@ -402,7 +402,7 @@ fn an_import_that_cannot_be_loaded_is_reported() {
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dir.canonicalize().unwrap();
     std::fs::write(dir.join("LOCAL.ares"), "$ @mod LOCAL\n$ @import NOPE\n$ one : @Int = 1\n").unwrap();
-    let src = "$ @mod MAIN\n$ @import VECC\n$ n : @Int = 1\n";
+    let src = "$ @mod MAIN\n$ @import ARESxVECC\n$ n : @Int = 1\n";
     std::fs::write(dir.join("MAIN.ares"), src).unwrap();
     let uri = ares::lsp::path_to_uri(&dir.join("MAIN.ares"));
 
@@ -437,7 +437,7 @@ fn an_import_that_cannot_be_loaded_is_reported() {
             ("context", Json::obj([("diagnostics", Json::Arr(vec![]))])),
         ]),
     );
-    let fix = actions.as_arr().iter().find(|a| a.get("title").as_str() == Some("did you mean `VEC`?"));
+    let fix = actions.as_arr().iter().find(|a| a.get("title").as_str() == Some("did you mean `ARESxVEC`?"));
     assert!(fix.is_some(), "{actions}");
 
     let change = |c: &mut Client, version: i64, text: &str| {
@@ -449,7 +449,7 @@ fn an_import_that_cannot_be_loaded_is_reported() {
             ]),
         );
     };
-    change(&mut c, 2, "$ @mod MAIN\n$ @import VEC\n$ n : @Int = 1\n");
+    change(&mut c, 2, "$ @mod MAIN\n$ @import ARESxVEC\n$ n : @Int = 1\n");
     let diags = c.diagnostics(&uri);
     assert!(diags.is_empty(), "{diags:?}");
 
@@ -537,8 +537,8 @@ fn members_a_splice_generates_are_not_errors_while_editing() {
     let dir = std::env::temp_dir().join(format!("ares-lsp-splice-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("COPY.ares");
-    let src = "$ @mod COPY\n\n$ @import DERIVE\n\n$ Point : @struct = x: @Int, y: @Int\n\
-               $ Point3 : @struct = &DERIVE.fields_of \"Point\", z: @Int\n\n\
+    let src = "$ @mod COPY\n\n$ @import ARESxDERIVE\n\n$ Point : @struct = x: @Int, y: @Int\n\
+               $ Point3 : @struct = &ARES.fields_of \"Point\", z: @Int\n\n\
                $ sum : Point3 -> @Int = \\p => p.x + p.z\n";
     std::fs::write(&path, src).unwrap();
     let path = path.canonicalize().unwrap();

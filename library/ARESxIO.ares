@@ -1,6 +1,6 @@
-$ @mod IO
+$ @mod ARES
 
-# \file IO.ares
+# \file ARESxIO.ares
 # \info Console and file IO over the auto-injected `C` libc namespace.
 #       Console output goes through unbuffered `C.write` (never mixed with
 #       C's buffered stdout, so ordering is deterministic); files go through
@@ -9,9 +9,10 @@ $ @mod IO
 #       not arrive as negative Ints across the FFI, so end-of-stream is
 #       detected as "not a byte" (outside 0..255) and errors as `not == 0`.
 
-$ @import OPT
-$ @import STR
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxOPT
+$ @import ARESxSTR
+$ @import ARESxVEC
 
 # ---- console ----
 
@@ -23,10 +24,6 @@ $ eprint : @Str -> <@IO> {} = \s => C.write { 2, s, @array_len s }; {}
 
 $ eprintln : @Str -> <@IO> {} = \s => C.write { 2, s, @array_len s }; C.write { 2, "\n", 1 }; {}
 
-$ print_int : @Int -> <@IO> {} = \n => print (from_int n)
-
-$ println_int : @Int -> <@IO> {} = \n => println (from_int n)
-
 # One line from stdin, without the trailing newline. Returns "" at
 # end-of-input (indistinguishable from an empty line).
 $ read_line : {} -> <@IO> @Str = read_line_acc ""
@@ -36,10 +33,10 @@ $ read_line : {} -> <@IO> @Str = read_line_acc ""
 # The whole file as a @Str, byte-exact; None when it cannot be opened. A
 # regular file is sized with `lseek` and read into one buffer; a stream that
 # cannot seek (a pipe, a terminal) is read in chunks to end of file.
-$ read_file : @Str -> <@IO> Option @Str = \path =>
+$ read_file : @Str -> <@IO> Opt @Str = \path =>
     let fd = C.open { path, 0 } in
     if fd < 0 =>
-        Option.None
+        Opt.None
     else
         let n = C.lseek { fd, 0, 2 } in
         let body =
@@ -48,13 +45,13 @@ $ read_file : @Str -> <@IO> Option @Str = \path =>
             else
                 C.lseek { fd, 0, 0 }; read_sized fd n
         in
-        C.close fd; Option.Some.{ body }
+        C.close fd; Opt.Some.{ body }
 
 # The names (not paths) of a directory's entries, `.` and `..` excluded, sorted
 # byte-wise so the result never depends on the filesystem's or the locale's
 # order. Empty when the directory cannot be read.
-$ read_dir : @Str -> <@IO> @Vec @Str = \dir => VEC.sort_by STR.cmp_str
-    (VEC.filter (\name => !(STR.is_empty name)) (STR.lines (C.dir_entries dir)))
+$ read_dir : @Str -> <@IO> @Vec @Str = \dir =>
+    sort_by cmp_str (filter (\name => !(is_empty name)) (lines (C.dir_entries dir)))
 
 # A directory's entries with their kinds, in the order the system lists them.
 # The kind needs no `stat` per entry where the system reports it while listing.
@@ -73,8 +70,8 @@ $ EntryKind : @union =
 
 # When the file was last modified, in nanoseconds since the epoch (as fine as
 # the system keeps it); None when it does not exist or cannot be read.
-$ mtime : @Str -> <@IO> Option @Int = \path =>
-    let t = C.mtime path in if t < 0 => Option.None else Option.Some.{ t }
+$ mtime : @Str -> <@IO> Opt @Int = \path =>
+    let t = C.mtime path in if t < 0 => Opt.None else Opt.Some.{ t }
 
 # Write (truncating) / append `content` to the file; true on success, false
 # on failure to open.
@@ -146,7 +143,7 @@ $ entries : @Str -> @Int -> @Vec Entry -> @Vec Entry = \s i acc =>
         in
         entries s (nl + 1) (@vec_push acc Entry.{ kind, @array_slice s (i + 1) nl })
 
-$ newline : @Str = STR.byte_set "\n"
+$ newline : @Str = byte_set "\n"
 
 $ spill_file : @Str -> @Str -> @Str -> <@IO> @Bool = \path content mode =>
     let f = C.fopen { path, mode } in

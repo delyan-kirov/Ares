@@ -15,13 +15,13 @@ how a module name resolves to a file.
 
 ## 1. The model
 
-Every source file opens with `$ @mod NAME`. Files that share a name are one
-module. A module exposes its public names to any module that imports it with
-`$ @import NAME`. The guiding rule for a name that an importer uses:
+Every source file opens with `$ @mod NAME`. A module exposes its public names to
+any module that imports it with `$ @import NAME`. The guiding rule for a name that
+an importer uses:
 
-**Strip by default.** A public name is used unqualified. `$ @import LIST` makes
-`length`, `map`, ... available as bare `length`, `map`, and they also stay
-reachable qualified as `LIST.length`.
+**Strip by default.** A public name is used unqualified. `$ @import ARESxLIST`
+makes `head`, `singleton`, ... available as bare `head`, `singleton`, and they also
+stay reachable qualified as `ARES.head`.
 
 That default only gets interesting when two imported modules expose the same
 name. There are exactly three cases.
@@ -59,12 +59,31 @@ usual type-directed pick runs among just its candidates.
 
 ### 1d. Aliased imports are qualified only
 
-`$ @import V = VEC` brings none of `VEC`'s names in bare. Its values, types and
+`$ @import V = ARESxVEC` brings none of `ARESxVEC`'s names in bare. Its values, types and
 constructors are reachable only as `V.name`, `V.Type` and `V.Type.Tag`, and not
-as `VEC.name` either. `$ @import VEC = VEC` keeps the module's own name as the
+as `ARES.name` either. `$ @import ARES = ARESxVEC` keeps the module's own name as the
 qualifier. The checker registers the module's exports under each alias, and
-lowering rewrites the alias back to the module, so `V.len` reaches `VEC.len`.
+lowering rewrites the alias back to the module, so `V.push` reaches `ARES.push`.
 Effect operations keep their effect's name as the qualifier (`State.get`).
+
+### 1e. A module in parts
+
+A module may span several files. Each is a PART, the file `MODxPART.ares` (a
+lowercase `x` joins the module's name and the part's), and declares the module's
+name, `$ @mod MOD`. A part is imported on its own: `$ @import MODxPART` brings in
+that part's public names, bare and qualified as `MOD.name`, and nothing from the
+other parts. Several parts of one module may share an alias.
+
+The parts are one module: lowering names every definition `MOD.name`, and the types
+of all parts are declared in `MOD`. So the parts share one namespace, and a name,
+private or not, or a variant tag, is defined in only one of them
+(`DUPLICATE_SYMBOL`, checked in `check_parts` in the driver). A part that uses
+another's names imports it like any module does.
+
+The standard library is the module `ARES` in parts (`ARESxVEC`, `ARESxMAP`,
+`ARESxSTR`, ...). The operations its containers share (`len`, `map`, `filter`,
+`get`, `fold`, ...) are interfaces in `CORE`, each part giving its container's
+instances, so one name stays one definition.
 
 ---
 

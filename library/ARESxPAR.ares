@@ -1,8 +1,8 @@
-$ @mod PAR
+$ @mod ARES
 
-# \file PAR.ares
+# \file ARESxPAR.ares
 # \info Parallel tasks. `par f` starts the task `f {}` and returns its `Future`;
-#       `get` waits for the result. A `par` task must be PURE (its arrow has the
+#       `wait` waits for the result. A `par` task must be PURE (its arrow has the
 #       empty effect row), so it gives the same answer on any core in any order:
 #       parallelism never changes what a program means. A `spawn` task may also
 #       perform `@IO`, the one effect no handler on the spawning thread serves;
@@ -10,10 +10,13 @@ $ @mod PAR
 #       thread-safety check). The native backend runs tasks on a work-stealing
 #       pool of `ARES_THREADS` threads (default: one per core); the
 #       interpreter, the reference semantics, runs each task where it is
-#       spawned. The parallel map over tensors is `LA.par_map`. Tasks talk
+#       spawned. `par_map` is a parallel `map`, over vectors here and over
+#       tensors in LA. Tasks talk
 #       over channels (`channel`, `send`, `recv`); shared state that several
 #       tasks update goes through `STM`. A program exits only after every
 #       `spawn` task has finished.
+
+$ @import ARESxALGO
 
 $ Future : @alias b = @Future b
 
@@ -23,7 +26,7 @@ $ par : ({} -> b) -> Future b = \f => @par f
 # interleaves in any order too.
 $ spawn : ({} -> <@IO> b) -> <@IO> Future b = \f => @spawn f
 
-$ get : Future b -> b = \fut => @await fut
+$ wait : Future b -> b = \fut => @await fut
 
 # ---- channels ----
 
@@ -84,8 +87,8 @@ $ join_chunks : @Vec (Future (@Vec b)) -> @Int -> @Vec b -> @Vec b = \futs i acc
 $ append_onto : @Vec t -> @Vec t -> @Int -> @Vec t = \acc xs i =>
     if i >= @vec_len xs => acc else append_onto (@vec_push acc (@vec_get xs i)) xs (i + 1)
 
-# `map f v` with the work split into `chunks` parallel tasks. The result equals
-# `VEC.map f v`, element for element.
+# `fmap f v` with the work split into `chunks` parallel tasks. The result equals
+# `fmap f v`, element for element.
 $ map_chunks : @Int -> (a -> b) -> @Vec a -> @Vec b = \chunks f v =>
     let n = @vec_len v in
     if n == 0 =>
@@ -94,16 +97,21 @@ $ map_chunks : @Int -> (a -> b) -> @Vec a -> @Vec b = \chunks f v =>
         let size = chunk_size n (if chunks < 1 => 1 else chunks) in
         join_chunks (spawn_chunks f v size 0 (@vec_new {})) 0 (@vec_new {})
 
-$ map : (a -> b) -> @Vec a -> @Vec b = \f v => map_chunks default_chunks f v
+# A parallel `fmap`: equal to `fmap f xs`, element for element, for a pure `f`.
+$ IParMap : @struct s a t b = par_map: (a -> b) -> s -> t,
+$ par_map : @use { d: IParMap s a t b } -> (a -> b) -> s -> t = \f xs => d.par_map f xs
+
+$ impl_IParMap_for_vec : IParMap (@Vec a) a (@Vec b) b =
+    .{ .par_map = \f v => map_chunks default_chunks f v }
 
 # The parallel counterpart of `formap` for a pure body (no `Loop` control: a
 # task cannot break out of its siblings).
-$ formap : @Vec a -> (a -> b) -> @Vec b = \v f => map f v
+$ par_formap : @Vec a -> (a -> b) -> @Vec b = \v f => map_chunks default_chunks f v
 
-# Fold each chunk in parallel, then combine the chunk results in order.
+# `par_fold combine zero f v`: fold each chunk in parallel, then combine the chunk results in order.
 # `combine` must be associative with `zero` as its identity (as for any
 # parallel reduction), so the answer equals the sequential fold.
-$ reduce : (b -> b -> b) -> b -> (a -> b) -> @Vec a -> b = \combine zero f v =>
+$ par_fold : (b -> b -> b) -> b -> (a -> b) -> @Vec a -> b = \combine zero f v =>
     let n = @vec_len v in
     if n == 0 =>
         zero

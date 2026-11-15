@@ -4,10 +4,10 @@ $ @mod TYPE_SPLICE_LIB
 # \info A module exporting a type with generated members (see `TYPE_SPLICE`): an
 #       importer may use its fields while the `&` entry has yet to run.
 
-$ @import DERIVE
+$ @import ARESxDERIVE
 
 $ Size : @struct = w: @Int, h: @Int
-$ Box : @struct = &DERIVE.fields_of "Size", depth: @Int
+$ Box : @struct = &ARES.fields_of "Size", depth: @Int
 
 $ test : @Int = 0
 

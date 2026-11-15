@@ -9,11 +9,12 @@ $ @mod MAIN
 
 #- Imports -#
 
+$ @import ARESxALGO
 $ @import EXCEPTIONS
-$ @import IO
-$ @import PATH
-$ @import STR
-$ @import VEC
+$ @import ARESxIO
+$ @import ARESxPATH
+$ @import ARESxSTR
+$ @import ARESxVEC
 
 #- Utils -#
 
@@ -32,10 +33,10 @@ $ excluded_tests : @Vec @Str = ["STDLIB_IO", "STDLIB_ASYNC_IO", "STDLIB_CHANNELS
 # Every example, less the ones tests/EXCEPTIONS.ares says this platform cannot run.
 $ modules : {} -> <@Meta, @IO> @Vec @Str =
     filter (\m => !(EXCEPTIONS.skipped TARGET.os m))
-        (VEC.map PATH.strip_ext (filter (\f => ends_with f ".ares") (read_dir "examples")))
+        (fmap ARES.strip_ext (filter (\f => ends_with ".ares" f) (read_dir "examples")))
 
 $ check_call : @Str -> @Str = \m =>
-    if VEC.contains STR.eq m excluded_tests
+    if ARES.contains_by ARES.eq m excluded_tests
     # check "whatever" whatever.test
     =>
         "check \"?(m)\" (?(m).test {})"
@@ -44,14 +45,12 @@ $ check_call : @Str -> @Str = \m =>
 
 $ skip_call : EXCEPTIONS.Exception -> @Str = \e => "skip \"?(e.module)\" \"?(e.reason)\""
 
-$ concat : @Vec @Str -> @Str = STR.concat
-
 #- Build -#
 
 $ @build : {} -> <@Meta, @IO> @Code =
     let ms = modules {} in
-    let includes = concat (map (\m => "$ @import ?(m)\n") ms) in
+    let includes = concat (fmap (\m => "$ @import ?(m)\n") ms) in
     let main = "$ @main : @Vec @Str -> <@IO> @Int = \\args => 0"
-        ++ concat (map (\m => " + \n\t" ++ check_call m) ms)
-        ++ concat (map (\e => " + \n\t" ++ skip_call e) (EXCEPTIONS.on TARGET.os)) in
+        ++ concat (fmap (\m => " + \n\t" ++ check_call m) ms)
+        ++ concat (fmap (\e => " + \n\t" ++ skip_call e) (EXCEPTIONS.on TARGET.os)) in
     @code <| includes ++ "\n" ++ main

@@ -46,7 +46,7 @@ Platform conditionals live in a few files, not throughout the code:
   program: the assembler name of a C symbol (Mach-O's leading `_`), thread
   headers and TLS, `dllexport`, binary stdout on Windows.
 - `crates/ccg/src/aresstd.c`: the native helpers both engines share,
-  including `arx_read_dir`, which `IO.read_dir` uses instead of a shell.
+  including `arx_read_dir`, which `ARES.read_dir` uses instead of a shell.
 - `crates/interpreter/src/host.c` + `host.rs`: loading a library and finding
   a symbol (`dlopen`/`dlsym`, or `LoadLibrary`/`GetProcAddress`, with the
   Universal CRT's `_`-prefixed names).
