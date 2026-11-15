@@ -1,0 +1,15 @@
+$ @mod ROW_SUBSUMPTION
+
+# A function argument may perform fewer effects than its parameter allows,
+# never more, and a parameter of the argument relates the other way round.
+$ Log : @effect = log : @Str -> {},
+
+$ apply : (@Int -> @Int) -> @Int = \f => f 1
+$ noisy : @Int -> <Log> @Int = \n => log "n"; n
+
+$ more : @Int = apply noisy  #~ error[TYPE_MISMATCH]: `noisy` performs effect `Log`, which this position does not allow
+
+$ feed : ((@Int -> <Log> @Int) -> @Int) -> <Log> @Int = \g => g noisy
+$ pure_only : (@Int -> @Int) -> @Int = \f => f 2
+
+$ wider : {} -> <Log> @Int = feed pure_only  #~ error[TYPE_MISMATCH]: `pure_only` does not fit this position: effect `Log` would not be handled

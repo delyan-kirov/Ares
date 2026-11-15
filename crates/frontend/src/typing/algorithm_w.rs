@@ -607,8 +607,45 @@ impl<'a> Checker<'a> {
                             .map_err(|d| d.with_help(help));
                     }
                 }
-                self.unifier.unify_expected(got, expected, "against the expected type")
+                self.unifier
+                    .subsume_expected(got, expected, "against the expected type")
+                    .map_err(|d| self.explain_function_effect(e, got, expected, d))
             }
+        }
+    }
+
+    /// A function used where a function type is expected, failing because an
+    /// effect would escape: name the function and the effect rather than the
+    /// bare row mismatch.
+    fn explain_function_effect(&self, e: Aol<Expr>, got: Type, expected: Type, d: Diagnostic) -> Diagnostic {
+        let (TypeNode::Arrow(_, _, got_eff), TypeNode::Arrow(..)) = (self.unifier.head(got), self.unifier.head(expected))
+        else {
+            return d;
+        };
+        let Some(label) = unhandled_effect(&d.root().msg) else {
+            return d;
+        };
+        let what = match self.node(e) {
+            Expr::Var { name, .. } => format!("`{name}`"),
+            _ => "this function".to_string(),
+        };
+        let msg = if self.row_has(got_eff, &label) {
+            format!("{what} performs effect `{label}`, which this position does not allow")
+        } else {
+            format!("{what} does not fit this position: effect `{label}` would not be handled")
+        };
+        let note = format!(
+            "expected type `{}`\n         found type `{}`",
+            self.show(expected),
+            self.show(got)
+        );
+        d.retitle(msg).with_note(note)
+    }
+
+    fn row_has(&self, row: Type, label: &str) -> bool {
+        match self.unifier.head(row) {
+            TypeNode::RowExtend(l, _, rest) => l == label || self.row_has(rest, label),
+            _ => false,
         }
     }
 
@@ -961,7 +998,9 @@ impl<'a> Checker<'a> {
                 // Constructing the closure performs nothing under the current
                 // ambient; the body runs under its own fresh ambient, which becomes
                 // the innermost arrow's latent effect. Outer (curried, partial-
-                // application) arrows stay pure.
+                // application) arrows get a fresh row each, so `\x y => e` types
+                // like `\x => \y => e`: a closed `<>` there clashes with a
+                // handler result whose arrows are applied before it is known.
                 let e_body = self.unifier.fresh();
                 let saved = std::mem::replace(&mut self.ambient, e_body);
                 let body_ty = self.infer(body);
@@ -975,7 +1014,8 @@ impl<'a> Checker<'a> {
                         if i == last {
                             self.unifier.types.arrow_eff(p, acc, e_body)
                         } else {
-                            self.unifier.types.arrow(p, acc)
+                            let eff = self.unifier.fresh();
+                            self.unifier.types.arrow_eff(p, acc, eff)
                         }
                     },
                 );
@@ -1480,13 +1520,7 @@ impl<'a> Checker<'a> {
     /// `@Future`, is a parallel task performing an effect that cannot cross to
     /// the worker thread: say so, rather than the bare row mismatch.
     pub(super) fn explain_task_effect(&mut self, d: Diagnostic, result: Type) -> Diagnostic {
-        let msg = &d.root().msg;
-        let Some(label) = msg
-            .strip_prefix("effect `")
-            .and_then(|m| m.split_once('`'))
-            .filter(|(_, rest)| rest.contains("is performed but not handled"))
-            .map(|(l, _)| l.to_string())
-        else {
+        let Some(label) = unhandled_effect(&d.root().msg) else {
             return d;
         };
         let is_future = match self.unifier.head(result) {
@@ -2593,4 +2627,15 @@ pub(super) enum Refuted {
 /// refutable-parameter fix turns into the first arm (see `check_irrefutable`).
 fn sole_param(params: &[LamParam], body: Aol<Expr>) -> Option<Aol<Expr>> {
     matches!(params, [LamParam { sig: None, .. }]).then_some(body)
+}
+
+/// The effect an unhandled-effect diagnostic names, in the unifier's wording or
+/// the reworded one of [`Checker::explain_function_effect`].
+fn unhandled_effect(msg: &str) -> Option<String> {
+    if let Some((label, rest)) = msg.strip_prefix("effect `").and_then(|m| m.split_once('`')) {
+        return rest.contains("is performed but not handled").then(|| label.to_string());
+    }
+    let (_, after) = msg.split_once("effect `")?;
+    let (label, rest) = after.split_once('`')?;
+    (rest.contains("does not allow") || rest.contains("would not be handled")).then(|| label.to_string())
 }

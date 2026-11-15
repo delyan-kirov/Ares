@@ -1,0 +1,29 @@
+$ @mod EFFECT_SUBSUMPTION
+
+# A function passed as an argument may perform fewer effects than its parameter
+# allows. `compose` shares one row `<e>` between its two functions, yet a pure
+# step composes with an effectful one, and a function with a closed row is a
+# `formap` body although `formap` also allows `Loop`.
+
+$ @import ARESxALGO
+$ @import ARESxVEC
+
+$ Tally : @effect = tick : @Int -> {},
+
+$ double : @Int -> @Int = \n => n * 2
+$ count : @Int -> <Tally> @Int = \n => tick n; n
+
+$ total : ({} -> <Tally> a) -> @Int = \body =>
+    let h =
+        do body {}; {}
+        ctl k | tick n => \s => (k {}) (s + n) | _ => \s => s
+    in
+    h 0
+
+# Pure `double` first, then `count`: `<e>` is `<Tally>`, `double` fits in it.
+$ composed : @Int = total <| \_ => compose count double 5
+$ mapped : @Int = total <| \_ => formap [1, 2, 3] count
+
+$ test : @Int = if composed == 10 && mapped == 6 => 0 else 1
+
+$ &assert (test == 0) "EFFECT_SUBSUMPTION: a check failed"

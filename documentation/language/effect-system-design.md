@@ -676,9 +676,15 @@ Status legend: [X] done, [~] in progress, [ ] planned.
     - [X] **Effect subsumption (2026-06-27).** A call site requires the callee's
       latent row to be a SUBROW of the ambient (`subrow` in TC), not equal to it,
       so a pure (or smaller-effect) function is callable in any larger effect
-      context. Function-TYPE unification (argument positions) still uses
-      equality, so an effectful function cannot be passed where a pure one is
-      expected. Closes the M3.1 ergonomic gap.
+      context. Closes the M3.1 ergonomic gap.
+    - [X] **Subsumption at argument positions (2026-11-15, #200).** A function
+      checked against a function type relates by `Unifier::subsume`: its row
+      must be a subrow of the expected one, covariant in results and
+      contravariant in parameters, so a pure step composes with an effectful
+      one under one row variable (`compose`), and a closed-row function is a
+      `formap` body although `formap` also allows `Loop`. Row union `<e1, e2>`
+      stays out of the type language. `examples/EFFECT_SUBSUMPTION.ares`,
+      `tests/diagnostics/ROW_SUBSUMPTION.ares`.
     - [ ] Evidence passing (O(1) dispatch), the tail-resumptive optimization;
       exhaustiveness policy; parametric effects (effects with type arguments).
 
