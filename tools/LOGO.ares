@@ -1262,10 +1262,17 @@ $ assets : @Vec { @Str, @Str, @Vec { @Str, @Int } } = [
     { "icon", "documentation/assets/icon.svg", [] },
     { "lockup-light", "documentation/assets/lockup-light.svg", [] },
     { "lockup-dark", "documentation/assets/lockup-dark.svg", [] },
-    { "social", "", [{ "documentation/assets/social.png", 1280 }] },
+    { "social", "tools/assets/social.svg", [{ "documentation/assets/social.png", 1280 }] },
     { "icon-light", "tools/editors/vscode/icons/ares-light.svg", [] },
     { "icon-dark", "tools/editors/vscode/icons/ares-dark.svg", [] },
-    { "badge", "", [{ "tools/editors/vscode/icons/ares.png", 128 }] },
+    {
+        "badge",
+        "tools/assets/badge.svg",
+        [
+            { "tools/assets/badge.png", 512 },
+            { "tools/editors/vscode/icons/ares.png", 128 },
+        ]
+    },
 ]
 
 $ usage : @Str =
