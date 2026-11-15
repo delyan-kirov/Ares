@@ -20,7 +20,6 @@ $ Command : @union =
     Clean,
     Test,
     Install,
-    Readme,
     Logo,
     HelixUpdate,
     EditorsUpdate,
@@ -38,7 +37,6 @@ $ Command : @union =
     Issue,
     SdkPath,
     Stats,
-    All,
     Help,
 
 # What the command line spells a command as, its arguments, and its help. Each
@@ -71,11 +69,6 @@ $ spec : Command -> Spec = \c =>
             .name = "install",
             .usage = "",
             .info = "install this checkout into the nix profile, replacing the old one",
-        }
-        | .Readme        => Spec.{
-            .name = "readme",
-            .usage = "",
-            .info = "regenerate README.md from tools/README_GEN.ares"
         }
         | .Logo          => Spec.{
             .name = "logo",
@@ -171,8 +164,6 @@ $ spec : Command -> Spec = \c =>
             .usage = "",
             .info = "line counts (zalmoxis, excluding external/ and applications/)",
         }
-        | .All           =>
-            Spec.{ .name = "all", .usage = "", .info = "build, then regenerate README.md" }
         | .Help          => Spec.{ .name = "help", .usage = "", .info = "show this help" }
 
 # `$ commands : @Vec Command = [Command.Build, ...]`, in declaration order.
@@ -202,8 +193,6 @@ $ help_text : @Str =
         ++ "\n"
         ++ "Commands:\n"
         ++ concat (fmap help_entry commands)
-
-$ readme_cmd : @Str = "${ARES_BIN:-ares} run tools/README_GEN.ares"
 
 # Built, since the preview card's raster is too slow to interpret.
 $ logo_cmd : @Str =
@@ -597,10 +586,6 @@ $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
             C.system "nix profile remove Ares"; step "nix profile add" "nix profile add"
         | .Issue         => new_issue (ARES.join " " (drop 2 args))
         | .Hook          => with_forge (\u => HOOKS.hook args)
-        | .Readme =>
-            println "thrax: regenerating README.md ...";
-            step "readme" readme_cmd;
-            println "thrax: README.md updated"
         | .Logo          => step "logo" logo_cmd
         | .Corpus =>
             println "thrax: running tests/MAIN.ares on both engines ...";
@@ -643,11 +628,6 @@ $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
             {}
         | .SdkPath       => println (env "ARES_ROOT")
         | .Stats         => stats_task {}
-        | .All =>
-            step "cargo clean" "cargo clean";
-            step "cargo build" "cargo build";
-            println "thrax: regenerating README.md ...";
-            step "readme" readme_cmd
         | .Help          => print help_text
 
 $ run : @Vec @Str -> <@IO, Fail> {} = \args =>
