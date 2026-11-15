@@ -906,7 +906,11 @@ impl<'a> Checker<'a> {
         let code = self.unifier.types.con("@Code");
         self.check(e, code)?;
         self.solve_pending()?;
-        self.resolve_pending_ctx()
+        self.resolve_pending_ctx()?;
+        match self.unifier.unsolved_size() {
+            Some(d) => Err(d.fill_span(self.ast.expr_span(e).unwrap_or(Span::at(0)))),
+            None => Ok(()),
+        }
     }
 
     /// The ambient a top-level body starts under: the pure closed row normally, or
@@ -960,6 +964,11 @@ impl<'a> Checker<'a> {
         }
         self.solve_pending()?;
         self.resolve_pending_ctx()?;
+        if let Some(d) = self.unifier.unsolved_size() {
+            let first = &defs[component[0]];
+            let span = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
+            return Err(d.fill_span(span));
+        }
         for vars in &sig_vars {
             self.check_sig_vars_rigid(vars)?;
         }
@@ -1013,6 +1022,7 @@ impl<'a> Checker<'a> {
         types: &mut HashMap<StrId, Type>,
     ) {
         self.unifier.unwind_level(level);
+        let _ = self.unifier.unsolved_size();
         self.scopes.truncate(1);
         self.local_sites.truncate(1);
         self.pending.clear();

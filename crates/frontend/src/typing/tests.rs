@@ -150,6 +150,14 @@ fn polymorphic_id_used_at_two_types() {
 }
 
 #[test]
+fn a_local_let_is_not_generalized() {
+    // See Note [Local lets are monomorphic].
+    let src = "$ @mod M\n\
+               $ pair : {@Int, @Str} = let id = \\x => x in {id 1, id \"s\"}";
+    assert!(errors(src).contains("expected @Int, found @Str"), "{}", errors(src));
+}
+
+#[test]
 fn function_application_and_arrows() {
     let src = "$ @mod M\n$ apply : (a -> b) -> a -> b = \\f x => f x";
     // `(A -> B) -> A -> B`.
@@ -1526,4 +1534,28 @@ fn sizes_are_normalised_before_a_variable_binds() {
     assert_eq!(errors(src), "");
     let src = "$ @mod M\n$ succ : @Tensor n @Int -> @Tensor (n + 1) @Int = \\x => x\n";
     assert!(errors(src).contains("size mismatch"), "{}", errors(src));
+}
+
+#[test]
+fn a_size_equation_solves_once_equal_terms_cancel() {
+    // `n + 1 = 5` is `n = 4`; `2 * n = 6` waits until the result fixes `n`.
+    let src = "$ @mod M\n\
+               $ head1 : @Tensor (n + 1) @Int -> @Int = \\t => head1 t\n\
+               $ a : @Tensor 5 @Int -> @Int = \\x => head1 x\n\
+               $ half : @Tensor (2 * n) @Int -> @Tensor n @Int = \\x => half x\n\
+               $ c : @Tensor 6 @Int -> @Tensor 3 @Int = \\x => half x\n";
+    assert_eq!(errors(src), "");
+}
+
+#[test]
+fn a_postponed_size_equation_wakes_when_a_variable_is_solved() {
+    // `n + m = 5` has no unique solution until `n` is known.
+    let drop = "$ @mod M\n\
+                $ drop : @Tensor (n + m) @Int -> @Tensor n @Int -> @Tensor m @Int = \\x y => drop x y\n";
+    let ok = format!("{drop}$ b : @Tensor 5 @Int -> @Tensor 2 @Int -> @Tensor 3 @Int = \\x y => drop x y\n");
+    assert_eq!(errors(&ok), "");
+    let bad = format!("{drop}$ b : @Tensor 5 @Int -> @Tensor 7 @Int -> @Tensor 3 @Int = \\x y => drop x y\n");
+    assert!(errors(&bad).contains("size mismatch"), "{}", errors(&bad));
+    let open = format!("{drop}$ e : @Tensor 5 @Int -> @Int = \\x => let r = drop x in 0\n");
+    assert!(errors(&open).contains("cannot solve the size equation `5 = a + b`"), "{}", errors(&open));
 }
