@@ -1,14 +1,14 @@
 $ @mod STDLIB_CHANNELS
 
 # \file STDLIB_CHANNELS.ares
-# \info Channels between `spawn` tasks (`PAR.channel`, `send`, `recv`): a
+# \info Channels between `spawn` tasks (`ARES.channel`, `send`, `recv`): a
 #       worker pool that takes jobs from one channel and puts results on
 #       another, stopped by one sentinel per worker. Natively the workers run on
 #       the thread pool and take jobs in any order; the interpreter runs a task
 #       when another waits on it. The sum is the same either way. The checks
 #       perform `@IO`, so they run when the corpus runs, not at compile time.
 
-$ @import PAR
+$ @import ARESxPAR
 
 $ fib : @Int -> @Int = \n => if n < 2 => n else fib (n - 1) + fib (n - 2)
 
@@ -27,7 +27,7 @@ $ sum_n : Channel @Int -> @Int -> @Int -> <@IO> @Int = \c n acc =>
     if n == 0 => acc else sum_n c (n - 1) (acc + recv c)
 
 $ join_all : @Vec (Future {}) -> @Int -> {} = \ws i =>
-    if i >= @vec_len ws => {} else (get (@vec_get ws i); join_all ws (i + 1))
+    if i >= @vec_len ws => {} else (wait (@vec_get ws i); join_all ws (i + 1))
 
 $ seq_sum : @Int -> @Int -> @Int = \i acc => if i > 24 => acc else seq_sum (i + 1) (acc + fib i)
 
@@ -46,7 +46,7 @@ $ ck_order : {} -> <@IO> @Int =
     let c = channel {} in
     let t = spawn (\u => send c "a"; send c "b"; send c "c") in
     let s = recv c ++ recv c ++ recv c in
-    get t; if s == "abc" => 0 else 1
+    wait t; if s == "abc" => 0 else 1
 
 $ test : {} -> <@IO> @Int = ck_pool {} + ck_order {}
 

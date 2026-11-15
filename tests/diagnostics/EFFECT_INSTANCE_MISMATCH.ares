@@ -2,6 +2,8 @@ $ @mod EFFECT_INSTANCE_MISMATCH
 
 # A parameterized effect is used at one instance per handler: the parameter is
 # fixed for every operation the handler serves.
+$ @import ARESxALGO
+
 $ Box : @effect a = take : @Int -> a,
 
 $ use : {} -> <Box> @Int =

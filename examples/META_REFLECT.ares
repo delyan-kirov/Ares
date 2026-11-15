@@ -11,8 +11,9 @@ $ @mod META_REFLECT
 #       (a message with `note:` and `help:` lines) at the `&`: `@fail` fails
 #       the build, `@warn` lets it go on.
 
-$ @import STR
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxSTR
+$ @import ARESxVEC
 
 $ Rgb : @struct = r: @Int, g: @Int, b: @Int
 $ Shape : @union = Dot: {}, Square: @Int, Rect: { @Int, @Int }
@@ -25,8 +26,8 @@ $ area : Shape -> @Int = \
 $ describe : @Str -> <@Meta> @Str = \name =>
     @lookup name |> \
         | Decl.Struct.{ _, fields } =>
-            "struct of " ++ STR.join ", " (VEC.map (\f => f.0 ++ ": " ++ f.1) fields)
-        | Decl.Union.{ _, vs }      => "union of " ++ STR.join ", " (VEC.map (\v => v.0) vs)
+            "struct of " ++ ARES.join ", " (fmap (\f => f.0 ++ ": " ++ f.1) fields)
+        | Decl.Union.{ _, vs }      => "union of " ++ ARES.join ", " (fmap (\v => v.0) vs)
         | Decl.Value.{ ty }         => ty
         | Decl.Missing              => "nothing"
 
@@ -56,7 +57,7 @@ $ ck1 : @Int = if rgb_text == "struct of r: @Int, g: @Int, b: @Int" => 0 else 1
 $ ck2 : @Int = if shape_text == "union of Dot, Square, Rect" => 0 else 2
 $ ck3 : @Int = if area_text == "Shape -> @Int" => 0 else 4
 $ ck4 : @Int = if nothing_text == "nothing" => 0 else 8
-$ ck5 : @Int = if here_line == 52 => 0 else 16
+$ ck5 : @Int = if here_line == 53 => 0 else 16
 $ ck6 : @Int = if area_type == "@Int" => 0 else 32
 
 $ test : @Int = ck1 + ck2 + ck3 + ck4 + ck5 + ck6

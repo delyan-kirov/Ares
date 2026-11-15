@@ -4,6 +4,8 @@ $ @mod AGTxPRO
 
 # A struct type declaration. Fields are `name : Type`, comma-separated; a
 # trailing comma is allowed but not required.
+$ @import ARESxALGO
+
 $ Person : @struct =
     name: @Str,
     age: @Int,

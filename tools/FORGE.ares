@@ -8,11 +8,12 @@ $ @mod FORGE
  -       Another host is another handler, picked in `with_forge`.
  -#
 
-$ @import IO
-$ @import OPT
-$ @import STR
-$ @import VEC
-$ @import RESULT
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxOPT
+$ @import ARESxSTR
+$ @import ARESxVEC
+$ @import ARESxRESULT
 $ @import SH
 
 $ Issue : @struct =
@@ -40,9 +41,9 @@ $ PrSpec : @struct =
 
 $ Forge : @effect =
     issue : @Int -> Lookup,
-    create_issue : @Str -> Option @Int,
+    create_issue : @Str -> Opt @Int,
     pr : @Str -> Pr,
-    open_pr : PrSpec -> Option @Str,
+    open_pr : PrSpec -> Opt @Str,
 
 # Runs `body` against the host `origin` lives on, or the one `git config
 # thrax.forge` names. A host it cannot tell is `offline`: the hooks that need
@@ -51,12 +52,7 @@ $ with_forge : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     let named = output "git config --get thrax.forge" in
     let remote = output "git remote get-url origin 2>/dev/null" in
     let host =
-        if !(STR.is_empty named) =>
-            named
-        else if STR.contains remote "github.com" =>
-            "github"
-        else
-            ""
+        if !(is_empty named) => named else if ARES.contains "github.com" remote => "github" else ""
     in
     host |> \
         | "github"  => github body
@@ -80,16 +76,15 @@ $ offline : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     | Forge.issue n            => k Lookup.Unreachable
     | Forge.create_issue title => Fail.fail "no forge to open an issue on (thrax.forge is offline)"
     | Forge.pr branch          => k Pr.Absent
-    | Forge.open_pr spec       => k Option.None
+    | Forge.open_pr spec       => k Opt.None
     | x                        => x
 
 $ @private
 
 # `s` split at its first space; all of `s` and "" when it has none.
 $ split_word : @Str -> { @Str, @Str } = \s =>
-    STR.find s " " |> \
-        | Option.Some.{ i } => { STR.substr s 0 i, STR.substr s (i + 1) (STR.len s) }
-        | _                 => { s, "" }
+    ARES.index_of " " s |>
+        \ | Opt.Some.{ i } => { ARES.substr 0 i s, ARES.substr (i + 1) (len s) s } | _ => { s, "" }
 
 $ gh_issue : @Int -> <@IO> Lookup = \n =>
     let r = capture
@@ -99,17 +94,17 @@ $ gh_issue : @Int -> <@IO> Lookup = \n =>
                 ++ " --json state,title --jq '.state + \" \" + .title' 2>&1"
         ) in
     if r.ok =>
-        let parts = split_word (STR.trim_right r.out) in
+        let parts = split_word (ARES.trim_right r.out) in
         Lookup.Found.{ Issue.{ .title = parts.1, .open = parts.0 == "OPEN" } }
-    else if STR.contains r.out "Could not resolve" =>
+    else if ARES.contains "Could not resolve" r.out =>
         Lookup.Missing
     else
         Lookup.Unreachable
 
 # `gh issue create` prints the new issue's URL, which ends in its number.
-$ gh_create_issue : @Str -> <@IO> Option @Int = \title =>
+$ gh_create_issue : @Str -> <@IO> Opt @Int = \title =>
     let url = output ("gh issue create --title " ++ quote title ++ " --body '' 2>/dev/null") in
-    VEC.last (STR.split url "/") |> \ | Option.Some.{ n } => STR.to_int n | _ => Option.None
+    last (ARES.split "/" url) |> \ | Opt.Some.{ n } => from_str n | _ => Opt.None
 
 $ gh_pr : @Str -> <@IO> Pr = \branch =>
     let parts = split_word
@@ -127,7 +122,7 @@ $ gh_pr : @Str -> <@IO> Pr = \branch =>
         | "CLOSED" => Pr.Closed
         | _        => Pr.Absent
 
-$ gh_open_pr : PrSpec -> <@IO> Option @Str = \s =>
+$ gh_open_pr : PrSpec -> <@IO> Opt @Str = \s =>
     let r = capture
         (
             "gh pr create --head "
@@ -140,4 +135,4 @@ $ gh_open_pr : PrSpec -> <@IO> Option @Str = \s =>
                 ++ quote s.body
                 ++ " 2>&1"
         ) in
-    if r.ok => VEC.last (STR.lines r.out) else eprint r.out; Option.None
+    if r.ok => last (ARES.lines r.out) else eprint r.out; Opt.None

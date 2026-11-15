@@ -14,6 +14,8 @@ $ @mod META_TYPE
 #       checks it parses as a type (or as row entries in `<&X>`).
 
 # A compile-time generator: choose a type by name.
+$ @import ARESxALGO
+
 $ number_type : @Str -> @Code = \which => if which == "wide" => "@Int64" else "@Int"
 
 # The element type of a vector, computed at build time.

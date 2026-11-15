@@ -7,10 +7,11 @@ $ @mod STDLIB_IO
 #       working directory, which every platform has (unlike /tmp), and clean
 #       up after themselves.
 
-$ @import IO
-$ @import OPT
-$ @import STR
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxOPT
+$ @import ARESxSTR
+$ @import ARESxVEC
 
 $ path : @Str = "ares_stdlib_io_test.txt"
 
@@ -26,7 +27,7 @@ $ ck_roundtrip : {} -> <@IO> @Int =
         if !a =>
             1
         else
-            let body = unwrap_or (read_file path) "<unreadable>" in
+            let body = unwrap_or "<unreadable>" (read_file path) in
             let rm = remove_file path in
             if body == "line one\nline two\nline three\n" => (if rm => 0 else 1) else 1
 
@@ -42,18 +43,18 @@ $ ck_missing : {} -> <@IO> @Int =
 # of the corpus.
 $ ck_dir : {} -> <@IO> @Int =
     let names = read_dir "examples" in
-    if !(VEC.contains STR.eq "STDLIB_IO.ares" names) =>
+    if !(ARES.contains_by ARES.eq "STDLIB_IO.ares" names) =>
         1
-    else if VEC.contains STR.eq "." names =>
+    else if ARES.contains_by ARES.eq "." names =>
         1
-    else if VEC.is_empty names =>
+    else if is_empty names =>
         1
     else
         sorted_from names 1
 
 # An unreadable directory is empty, not a fault.
 $ ck_dir_missing : {} -> <@IO> @Int =
-    if VEC.is_empty (read_dir "/tmp/ares_stdlib/definitely/not/here") => 0 else 1
+    if is_empty (read_dir "/tmp/ares_stdlib/definitely/not/here") => 0 else 1
 
 # The environment: PATH is set on every platform (HOME is POSIX-only, absent on
 # Windows), and unset variables come back "".
@@ -62,7 +63,7 @@ $ ck_env_none : {} -> <@IO> @Int = if (env "ARES_SURELY_UNSET_VAR_42") == "" => 
 
 # Number formatting composes with printing (evaluated for effect-freeness
 # here; the string is checked, the console write is the runner's).
-$ ck_fmt : @Int = if (from_int 42) == "42" => 0 else 1
+$ ck_fmt : @Int = if (to_string 42) == "42" => 0 else 1
 
 # Aggregate check for the combined test runner: 0 = all pass. It performs `@IO`,
 # so it too is a unit-taking function; the runner calls it as `test {}`.
@@ -72,9 +73,9 @@ $ test : {} -> <@IO> @Int =
 
 # Every adjacent pair in order, from index `i`; 0 when the whole vector is.
 $ sorted_from : @Vec @Str -> @Int -> @Int = \names i =>
-    if i >= VEC.len names =>
+    if i >= len names =>
         0
-    else if STR.cmp_str (VEC.get_or names (i - 1) "") (VEC.get_or names i "") > 0 =>
+    else if ARES.cmp_str (get_or (i - 1) "" names) (get_or i "" names) > 0 =>
         1
     else
         sorted_from names (i + 1)

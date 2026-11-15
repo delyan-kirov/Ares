@@ -5,8 +5,8 @@ $ @mod SH
  - \info Running shell commands and reading what they print
  -#
 
-$ @import IO
-$ @import STR
+$ @import ARESxIO
+$ @import ARESxSTR
 
 # `ok` is a zero exit status. `pclose` hands back the wait status, which is
 # zero exactly when the command exited with 0.
@@ -24,11 +24,11 @@ $ capture : @Str -> <@IO> Out = \cmd =>
 
 # Standard output without its trailing newline, "" when the command failed.
 $ output : @Str -> <@IO> @Str = \cmd =>
-    let r = capture cmd in if r.ok => STR.trim_right r.out else ""
+    let r = capture cmd in if r.ok => ARES.trim_right r.out else ""
 
 $ succeeds : @Str -> <@IO> @Bool = \cmd => C.system cmd == 0
 
-$ quote : @Str -> @Str = \s => "'" ++ STR.replace s "'" "'\\''" ++ "'"
+$ quote : @Str -> @Str = \s => "'" ++ ARES.replace "'" "'\\''" s ++ "'"
 
 $ @private
 

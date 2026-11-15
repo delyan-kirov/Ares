@@ -17,7 +17,7 @@
 //! The shell has no commands of its own. It runs its items at compile time, so
 //! the `<@Meta>` operations a `$ &` can call (`@scope`, `@type_of`, `@check`,
 //! ...) work at the prompt, and a `$ &` item expands as it would in a file.
-//! Every session imports `ARES_SHELL`: short commands over that reflection
+//! Every session imports `ARESxSHELL` (and `ARESxALGO`): short commands over that reflection
 //! (`type "1 + 2"`, `scope "vec"`, `help {}`) and session control (`quit {}`,
 //! `reset {}`, `list {}`), which perform the built-in `<@Shell>` effect: the
 //! shell is its host.
@@ -719,9 +719,9 @@ fn clear_overlay_line() {
     let _ = io::stdout().flush();
 }
 
-/// The import every session opens with: `library/ARES_SHELL.ares`, whose
+/// The import every session opens with: `library/ARESxSHELL.ares`, whose
 /// `<@Shell>` builtins the shell performs (see [`Repl::evaluate`]).
-const SHELL_IMPORT: &str = "$ @import ARES_SHELL";
+const SHELL_IMPORT: &str = "$ @import ARESxSHELL\n$ @import ARESxALGO";
 
 /// What a `Shell` operation asks the shell to do once the evaluation ends.
 #[derive(Default)]

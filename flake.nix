@@ -24,7 +24,7 @@
         root="''${ARES_ROOT:-$PWD}"
         cd "$root"
         export ARES_BIN="$root/target/debug/ares"
-        bin="$root/tools/ares-out/THRAX"
+        bin="$root/tools/ares-artifacts/THRAX"
         src="$root/tools/THRAX.ares"
         # A compiler recompile alone does not force a rebuild, so the common path
         # stays a bare exec. THRAX.ares imports the modules beside it.
@@ -44,7 +44,7 @@
         root="''${ARES_ROOT:-$PWD}"
         ares="$root/target/debug/ares"
         dir="$root/applications/zalmoxis"
-        bin="$dir/ares-out/MAIN"
+        bin="$dir/ares-artifacts/MAIN"
         if [ ! -f "$dir/MAIN.ares" ]; then
           echo "zalmoxis: $dir is missing (git submodule update --init applications)" 1>&2
           exit 1

@@ -1,0 +1,33 @@
+$ @mod LAZY_LISTS
+
+# \file LAZY_LISTS.ares
+# \info Unbounded structures from ordinary recursive types. A field whose type
+#       leads back to the type declaring it holds its value lazily, so a `List`
+#       tail is built only when something looks at it: building a cell does not
+#       build the rest, and scrutinising one forces exactly the cell looked at.
+#       The forced value replaces the thunk, so a cell costs its work once. An
+#       infinite list is therefore an ordinary `List`.
+
+$ @import ARESxALGO
+$ @import ARESxLIST
+$ @import ARESxOPT
+
+# `count_from` (CORE) is the ascending Ints from `lo` with no end.
+$ dbl : @Int -> @Int = \x => x + x
+
+$ at : @Int -> List @Int -> @Int = \i l => unwrap_or (0 - 1) (nth i l)
+
+$ ck_head : @Int = if at 0 (count_from 10) == 10 => 0 else 1
+$ ck_nth : @Int = if at 5 (count_from 10) == 15 => 0 else 2
+# `fmap` over an infinite list stays infinite and lazy.
+$ ck_map : @Int = if at 4 (fmap dbl (count_from 1)) == 10 => 0 else 4
+
+# The open range `[lo ...]` is `count_from lo`.
+$ ck_range : @Int = if at 3 [7 ...] == 10 => 0 else 8
+
+# `take` cuts a finite prefix off an infinite list.
+$ ck_take : @Int = if foldl (\a x => a + x) 0 (take 4 [1 ...]) == 10 => 0 else 16
+
+$ test : @Int = ck_head + ck_nth + ck_map + ck_range + ck_take
+
+$ &assert (test == 0) "LAZY_LISTS: a check failed"

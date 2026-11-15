@@ -1,11 +1,13 @@
-$ @mod BITS
+$ @mod ARES
 
-# \file BITS.ares
+# \file ARESxBITS.ares
 # \info Bitwise operations on the 64-bit two's complement `@Int`, and the IEEE 754
 #       encodings of the float types, as named functions over CORE's bitwise
 #       intrinsics (`@iand`, `@ishl`, `@f64_bits`, ...). The operators `&&&`
 #       `|||` `^^^` `<<<` `>>>` `~~~` reach the same intrinsics for every integer
 #       type; these names are the `@Int`-only spelling.
+
+$ @import ARESxALGO
 
 $ min_int : @Int = 0 - 9223372036854775807 - 1
 $ max_int : @Int = 9223372036854775807

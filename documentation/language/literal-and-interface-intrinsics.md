@@ -139,15 +139,15 @@ Each stage is independently buildable and testable.
 - Add `Expr::Ascribe(e, T)`: parse in `parse_group`, check as `check(e, T)`, lower
   transparently.
 - Repoint `.[..]` desugar from plain `index` to `@compiler_interface_indexing`.
-  - Move `LA.index` to a `@compiler_interface_indexing` overload for tensors.
-  - Add `@compiler_interface_indexing : Map k v -> k -> Option v` in MAP.
+  - Move `ARES.index` to a `@compiler_interface_indexing` overload for tensors.
+  - Add `@compiler_interface_indexing : Map k v -> k -> Opt v` in MAP.
 - Enforce the `@compiler_interface_` prefix rule for user `@`-definitions.
 
 Delivers `m.["key"]` and general `(e : T)` ascription.
 
 Touchpoints: `parser.rs` (`parse_group`, `parse_postfix`), `parser/data.rs`
-(new node), `typing.rs` (ascribe check, prefix-rule error), `library/LA.ares`,
-`library/MAP.ares`.
+(new node), `typing.rs` (ascribe check, prefix-rule error), `library/ARESxLA.ares`,
+`library/ARESxMAP.ares`.
 
 ## Stage 1 - literal-hook mechanism, current defaults preserved  [LANDED (hook mechanism); @default defaulting deferred as its own milestone]
 
@@ -252,18 +252,18 @@ interop was considered and deferred (the FFI already NUL-terminates a `Str` on m
 guaranteed NUL-terminated, and the append-a-NUL-on-marshal trick hides that from the
 type system, as does the return direction (C hands back a `char*` treated as a `Str`).
 A `CStr` would need a conversion primitive that does not exist and a rewrite of
-`library/IO.ares`, which is why it was deferred.
+`library/ARESxIO.ares`, which is why it was deferred.
 
 ### Original plan text
 
 - Delete the `@list` builtin; define `List` as a core `@union`; `@compiler_interface_sequence_literal`
-  default builds it; rewrite `library/LIST.ares`.
+  default builds it; rewrite `library/ARESxLIST.ares`.
 - Fold `@Str` into `@Array`; string literals lower to a byte payload; migrate the
-  `@array_*` byte-poking in `CORE.ares`/`STR.ares`.
+  `@array_*` byte-poking in `CORE.ares`/`ARESxSTR.ares`.
 - Keep `@Array`, `@Vec`, `@Tensor n T` as the three aggregate primitives.
 
 Touchpoints: `typing.rs` (drop `@list`/`@Str` builtins), `library/CORE.ares`,
-`library/LIST.ares`, `library/STR.ares`, both backends.
+`library/ARESxLIST.ares`, `library/ARESxSTR.ares`, both backends.
 
 ## Stage 4 - type-name cleanup  [LANDED, done before Stage 1]
 
@@ -352,5 +352,5 @@ What changed:
   `[lo ... hi]` is a `@Vec` and a bare `[lo ...]` is a `Stream`.
 
 `LA`'s tensor indexing is `$ impl_IIndex_for_tensor : @IIndex (@Tensor n a) @Int a`,
-`MAP`'s is `@IIndex (Map k v) k (Option v)`, and `examples/TENSORS.ares` shows a user type
+`MAP`'s is `@IIndex (Map k v) k (Opt v)`, and `examples/TENSORS.ares` shows a user type
 joining with `@IIndex Grid @Int @Int`.

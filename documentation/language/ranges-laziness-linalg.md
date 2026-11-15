@@ -48,7 +48,7 @@ future work, not part of the LA capstone. Timeline of increment 1 (2026-08-09):
   (`@tensor_index`/`@tensor_length`/`@tensor_create`/`@tensor_concat`/`@tensor_slice`/
   `@tensor_transpose`, plus `@tensor_index_axis`/`@tensor_slice_axis` for the
   multi-axis form); `transpose`/`matmul`/`dot`/`concat`/`slice`/`row`/`col` all live
-  in `library/LA.ares` as ordinary Ares. Element arithmetic arrives as `@use` fields
+  in `library/ARESxLA.ares` as ordinary Ares. Element arithmetic arrives as `@use` fields
   naming the interfaces it needs
   (`@use {p: IAdd a, m: IMul a, z: IZero a}`), not a Num class, so `matmul`/`dot` are
   element-generic over @Int and Real by supplying the dictionary.

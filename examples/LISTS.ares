@@ -11,6 +11,9 @@ $ @mod LISTS
 #       type of your
 #       own would write.
 
+$ @import ARESxALGO
+$ @import ARESxLIST
+
 $ sum : @Vec @Int -> @Int = \xs => xs |> \ | [] => 0 | h :: t => h + sum t
 
 $ length : @Vec @Int -> @Int = \xs => xs |> \ | [] => 0 | _ :: t => 1 + length t

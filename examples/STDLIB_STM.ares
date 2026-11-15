@@ -8,8 +8,8 @@ $ @mod STDLIB_STM
 #       choice's writes. The checks perform `@IO`, so they run when the corpus
 #       runs, not at compile time.
 
-$ @import PAR
-$ @import STM
+$ @import ARESxPAR
+$ @import ARESxSTM
 
 $ transfer : TVar @Int -> TVar @Int -> @Int -> <Stm> {} = \from to n =>
     let balance = read from in
@@ -26,7 +26,7 @@ $ spawn_n : @Int -> ({} -> <@IO> {}) -> @Vec (Future {}) -> <@IO> @Vec (Future {
     if n == 0 => acc else spawn_n (n - 1) f (@vec_push acc (spawn f))
 
 $ join_all : @Vec (Future {}) -> @Int -> {} = \ws i =>
-    if i >= @vec_len ws => {} else (get (@vec_get ws i); join_all ws (i + 1))
+    if i >= @vec_len ws => {} else (wait (@vec_get ws i); join_all ws (i + 1))
 
 $ ck_total : {} -> <@IO> @Int =
     let a = new_tvar 3 in
@@ -44,7 +44,7 @@ $ ck_retry : {} -> <@IO> @Int =
     let wallet = new_tvar 0 in
     let w = spawn (\u => atomically (\v => transfer acct wallet 50)) in
     let d = spawn (deposit acct 5) in
-    get w; get d; if read_tvar wallet == 50 && read_tvar acct == 0 => 0 else 1
+    wait w; wait d; if read_tvar wallet == 50 && read_tvar acct == 0 => 0 else 1
 
 # The first choice writes, then would wait: its write is undone.
 $ ck_or_else : {} -> <@IO> @Int =

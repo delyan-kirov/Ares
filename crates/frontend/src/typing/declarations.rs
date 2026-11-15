@@ -426,6 +426,12 @@ impl<'a> Checker<'a> {
             self.own_effects.push(effect);
         }
         for (op_name, mut schemes) in per_op {
+            // A bare operation of this module's own effect shadows an imported
+            // global of its name, as this module's own definition would (CORE's
+            // `get` does not capture a `get` operation).
+            self.global_ctx.remove(&op_name);
+            self.value_module.remove(&op_name);
+            self.ambiguous_imports.remove(&op_name);
             if schemes.len() == 1 {
                 self.bind(op_name, schemes.pop().expect("one scheme"));
             } else {

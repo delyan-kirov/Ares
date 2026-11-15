@@ -1,0 +1,253 @@
+$ @mod ARES
+
+# \file ARESxVEC.ares
+# \info Operations on the default sequence, the growable vector `@Vec `T`. A `[...]`
+#       literal builds one, and `[a, b] ++ r` / `h :: t` / `[]` patterns match one
+#       (via its `@ISeqView` instance in CORE). Everything here is
+#       INDEX-BASED (`@vec_len`/`@vec_get`/`@vec_push`/`@vec_slice`), so it is O(n):
+#       building goes through `@vec_push` (append), never `::` (prepend is O(n)).
+#       The operations every container shares (`len`, `map`, `filter`, `get`,
+#       `foldl`, ...) are ARESxALGO's interfaces; this part gives the vector's
+#       instances of them.
+
+$ @import ARESxALGO
+$ @import ARESxOPT
+
+# ---- primitives / access ----
+
+# `n` copies of `x`.
+$ fill : @Int -> t -> @Vec t = \n x => @vec_fill n x
+
+$ push : t -> @Vec t -> @Vec t = \x v => @vec_push v x
+
+# A copy with element `i` replaced; out-of-range leaves it unchanged.
+$ set : @Int -> t -> @Vec t -> @Vec t = \i x v =>
+    if i < 0 => v else if i >= @vec_len v => v else @vec_set v i x
+
+$ set_nth : @Int -> t -> @Vec t -> @Vec t = \i x v => set i x v
+
+$ first : @Vec t -> Opt t = \v => get 0 v
+
+# ---- transforms (build via push, so O(n)) ----
+
+$ flat_map : (a -> @Vec b) -> @Vec a -> @Vec b = \f v => concat (fmap f v)
+
+# All but the last element.
+$ init : @Vec t -> @Vec t = \v => let n = @vec_len v in @vec_slice v 0 (if n == 0 => 0 else n - 1)
+
+$ replicate : @Int -> t -> @Vec t = \n x => fill n x
+
+$ intersperse : t -> @Vec t -> @Vec t = \sep v =>
+    if @vec_len v == 0 =>
+        @vec_new {}
+    else
+        foldl (\acc x => @vec_push (@vec_push acc sep) x) (@vec_push (@vec_new {}) (@vec_get v 0))
+            (@vec_slice v 1 (@vec_len v))
+
+# ---- predicates / search ----
+
+$ find_index : (t -> @Bool) -> @Vec t -> Opt @Int = \p v => find_index_from p v 0
+
+$ contains_by : (t -> t -> @Bool) -> t -> @Vec t -> @Bool = \eqf x v => any_from (\y => eqf x y) v 0
+
+$ lookup_by : (k -> k -> @Bool) -> k -> @Vec { k, v } -> Opt v = \eqf k ps =>
+    find_at (\p => eqf k p.0) ps 0 |> \ | Opt.Some.{ p } => Opt.Some.{ p.1 } | _ => Opt.None
+
+$ span : (t -> @Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
+    let n = prefix_len p v 0 in { @vec_slice v 0 n, @vec_slice v n (@vec_len v) }
+
+$ split_at : @Int -> @Vec t -> { @Vec t, @Vec t } = \n v => { take n v, drop n v }
+
+$ partition : (t -> @Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
+    { filter p v, filter (\x => !(p x)) v }
+
+$ remove_first : (t -> @Bool) -> @Vec t -> @Vec t = \p v =>
+    find_index p v |>
+        \ | Opt.Some.{ i } => append (@vec_slice v (i + 1) (@vec_len v)) (@vec_slice v 0 i) | _ => v
+
+# ---- pairs / numeric ----
+
+$ zip_with : (a -> b -> c) -> @Vec a -> @Vec b -> @Vec c = \f xs ys =>
+    zip_with_from f xs ys 0 (@vec_new {})
+
+$ unzip : @Vec { a, b } -> { @Vec a, @Vec b } = \ps =>
+    foldl (\acc p => { @vec_push acc.0 p.0, @vec_push acc.1 p.1 }) { @vec_new {}, @vec_new {} } ps
+
+$ sum : @Vec @Int -> @Int = \v => foldl (\a x => a + x) 0 v
+
+$ product : @Vec @Int -> @Int = \v => foldl (\a x => a * x) 1 v
+
+$ minimum : @Int -> @Vec @Int -> @Int = \d v =>
+    if @vec_len v == 0 =>
+        d
+    else
+        foldl (\a x => if x < a => x else a) (@vec_get v 0) (@vec_slice v 1 (@vec_len v))
+
+$ maximum : @Int -> @Vec @Int -> @Int = \d v =>
+    if @vec_len v == 0 =>
+        d
+    else
+        foldl (\a x => if x > a => x else a) (@vec_get v 0) (@vec_slice v 1 (@vec_len v))
+
+# ---- sorting (stable merge sort) ----
+
+# `c a b` is a three-way comparison: negative / 0 / positive. Equal elements keep
+# their original order.
+$ sort_by : (t -> t -> @Int) -> @Vec t -> @Vec t = \c v =>
+    let n = @vec_len v in
+    if n <= 1 =>
+        v
+    else
+        let mid = n / 2 in
+        merge_by c (sort_by c (@vec_slice v 0 mid)) (sort_by c (@vec_slice v mid n))
+
+$ merge_by : (t -> t -> @Int) -> @Vec t -> @Vec t -> @Vec t = \c xs ys =>
+    merge_from c xs ys 0 0 (@vec_new {})
+
+# ---- internal index loops (the recursion workers the API above drives) ----
+
+# The first `n` elements of the C array at `p`, read by a `load` binding (see
+# library/C.ares): `from_c point_at p n`.
+$ from_c : ({ p: @Ptr, i: @Int } -> <e> t) -> @Ptr -> @Int -> <e> @Vec t = \at p n =>
+    from_c_onto at p n 0 (@vec_new {})
+
+# ---- the collection interfaces ----
+
+$ impl_IFor_for_vec : IFor (@Vec a) a e = .{ .each = \xs body => for_go xs body 0 }
+$ impl_IFormap_for_vec : IFormap (@Vec a) a (@Vec b) b e = .{
+    .mapping = \xs f => formap_vec xs f 0 (@vec_new {}),
+}
+$ impl_INew_for_vec : INew (@Vec t) = .{ .new = \u => @vec_new {} }
+$ impl_ILen_for_vec : ILen (@Vec t) = .{ .len = \v => @vec_len v }
+$ impl_IEmpty_for_vec : IEmpty (@Vec t) = .{ .is_empty = \v => (@vec_len v) == 0 }
+$ impl_ISlice_for_vec : ISlice (@Vec t) (@Vec t) = .{ .slice = \v lo hi => @vec_slice v lo hi }
+# Bounds-checked element access.
+$ impl_IGet_for_vec : IGet (@Vec t) @Int t = .{ .get = vec_get_opt }
+$ impl_INth_for_vec : INth (@Vec t) t = .{ .nth = vec_get_opt }
+$ impl_ILast_for_vec : ILast (@Vec t) t = .{ .last = \v => vec_get_opt v ((@vec_len v) - 1) }
+$ impl_IFoldl_for_vec : IFoldl (@Vec t) a t = .{ .foldl = \f acc v => foldl_from f acc v 0 }
+$ impl_IFold_for_vec : IFold (@Vec t) a (a -> t -> a) =
+    .{ .fold = \f acc v => foldl_from f acc v 0 }
+$ impl_IFoldr_for_vec : IFoldr (@Vec t) a t = .{ .foldr = \f z v => foldr_from f z v (@vec_len v) }
+$ impl_IFmap_for_vec : IFmap (@Vec a) a (@Vec b) b = .{ .fmap = vec_map }
+$ impl_IFilter_for_vec : IFilter (@Vec t) (t -> @Bool) = .{ .filter = vec_filter }
+$ impl_IFilterMap_for_vec : IFilterMap (@Vec a) a (@Vec b) b = .{
+    .filter_map = \f v =>
+        foldl_from (\acc x => f x |> \ | Opt.Some.{ y } => @vec_push acc y | _ => acc) (@vec_new {})
+            v 0,
+}
+$ impl_IReverse_for_vec : IReverse (@Vec t) =
+    .{ .reverse = \v => foldr_from (\x acc => @vec_push acc x) (@vec_new {}) v (@vec_len v) }
+$ impl_IAppend_for_vec : IAppend (@Vec t) = .{ .append = vec_append }
+$ impl_IConcat_for_vec : IConcat (@Vec (@Vec t)) (@Vec t) = .{ .concat = vec_concat }
+$ impl_ITake_for_vec : ITake (@Vec t) = .{ .take = vec_take }
+$ impl_IDrop_for_vec : IDrop (@Vec t) = .{ .drop = vec_drop }
+$ impl_IAny_for_vec : IAny (@Vec t) t = .{ .any = \p v => any_from p v 0 }
+$ impl_IAll_for_vec : IAll (@Vec t) t = .{ .all = \p v => all_from p v 0 }
+$ impl_IFind_for_vec : IFind (@Vec t) t = .{ .find = \p v => find_at p v 0 }
+$ impl_ITakeWhile_for_vec : ITakeWhile (@Vec t) t =
+    .{ .take_while = \p v => @vec_slice v 0 (prefix_len p v 0) }
+$ impl_IDropWhile_for_vec : IDropWhile (@Vec t) t =
+    .{ .drop_while = \p v => @vec_slice v (prefix_len p v 0) (@vec_len v) }
+$ impl_IZip_for_vec : IZip (@Vec a) (@Vec b) (@Vec { a, b }) =
+    .{ .zip = \xs ys => zip_with (\x y => { x, y }) xs ys }
+# A cons `List`'s elements, in order.
+$ impl_IFromList_for_vec : IFromList (@Vec t) (List t) =
+    .{ .from_list = \xs => from_list_onto (@vec_new {}) xs }
+$ impl_IToList_for_vec : IToList (@Vec t) (List t) =
+    .{ .to_list = \v => foldr_from (\x acc => List.Cons.{ x, acc }) List.Nil v (@vec_len v) }
+
+$ @private
+
+$ for_go : @Vec a -> (a -> <Loop | e> {}) -> @Int -> <e> {} = \xs body i =>
+    if i >= @vec_len xs =>
+        {}
+    else if loop_body (@vec_get xs i) body =>
+        for_go xs body (i + 1)
+    else
+        {}
+
+$ formap_vec : @Vec a -> (a -> <Loop | e> b) -> @Int -> @Vec b -> <e> @Vec b = \xs f i acc =>
+    if i >= @vec_len xs =>
+        acc
+    else
+        loop_step (@vec_get xs i) f |> \
+            | LoopStep.Keep.{ y } => formap_vec xs f (i + 1) (@vec_push acc y)
+            | LoopStep.Skip       => formap_vec xs f (i + 1) acc
+            | _                   => acc
+
+$ vec_get_opt : @Vec t -> @Int -> Opt t = \v i =>
+    if i < 0 => Opt.None else if i >= @vec_len v => Opt.None else Opt.Some.{ @vec_get v i }
+
+$ vec_map : (a -> b) -> @Vec a -> @Vec b = \f v =>
+    foldl_from (\acc x => @vec_push acc (f x)) (@vec_new {}) v 0
+
+$ vec_filter : (t -> @Bool) -> @Vec t -> @Vec t = \p v =>
+    foldl_from (\acc x => if p x => @vec_push acc x else acc) (@vec_new {}) v 0
+
+$ vec_append : @Vec t -> @Vec t -> @Vec t = \xs ys => foldl_from (\acc x => @vec_push acc x) xs ys 0
+
+$ vec_concat : @Vec (@Vec t) -> @Vec t = \vss =>
+    foldl_from (\acc v => vec_append acc v) (@vec_new {}) vss 0
+
+$ vec_take : @Int -> @Vec t -> @Vec t = \n v => @vec_slice v 0 (if n < 0 => 0 else n)
+
+$ vec_drop : @Int -> @Vec t -> @Vec t = \n v => @vec_slice v (if n < 0 => 0 else n) (@vec_len v)
+
+$ from_c_onto : ({ p: @Ptr, i: @Int } -> <e> t) -> @Ptr -> @Int -> @Int -> @Vec t
+    -> <e> @Vec t = \at p n i acc =>
+    if i >= n => acc else from_c_onto at p n (i + 1) (@vec_push acc (at { p, i }))
+
+$ foldl_from : (a -> t -> a) -> a -> @Vec t -> @Int -> a = \f acc v i =>
+    if i >= @vec_len v => acc else foldl_from f (f acc (@vec_get v i)) v (i + 1)
+
+$ foldr_from : (t -> a -> a) -> a -> @Vec t -> @Int -> a = \f z v i =>
+    if i <= 0 => z else foldr_from f (f (@vec_get v (i - 1)) z) v (i - 1)
+
+$ any_from : (t -> @Bool) -> @Vec t -> @Int -> @Bool = \p v i =>
+    if i >= @vec_len v => @false else if p (@vec_get v i) => @true else any_from p v (i + 1)
+
+$ all_from : (t -> @Bool) -> @Vec t -> @Int -> @Bool = \p v i =>
+    if i >= @vec_len v => @true else if p (@vec_get v i) => all_from p v (i + 1) else @false
+
+$ find_at : (t -> @Bool) -> @Vec t -> @Int -> Opt t = \p v i =>
+    if i >= @vec_len v =>
+        Opt.None
+    else
+        let x = @vec_get v i in if p x => Opt.Some.{ x } else find_at p v (i + 1)
+
+$ find_index_from : (t -> @Bool) -> @Vec t -> @Int -> Opt @Int = \p v i =>
+    if i >= @vec_len v =>
+        Opt.None
+    else if p (@vec_get v i) =>
+        Opt.Some.{ i }
+    else
+        find_index_from p v (i + 1)
+
+$ prefix_len : (t -> @Bool) -> @Vec t -> @Int -> @Int = \p v i =>
+    if i >= @vec_len v => i else if p (@vec_get v i) => prefix_len p v (i + 1) else i
+
+$ zip_with_from : (a -> b -> c) -> @Vec a -> @Vec b -> @Int -> @Vec c -> @Vec c = \f xs ys i acc =>
+    if i >= @vec_len xs =>
+        acc
+    else if i >= @vec_len ys =>
+        acc
+    else
+        zip_with_from f xs ys (i + 1) (@vec_push acc (f (@vec_get xs i) (@vec_get ys i)))
+
+$ merge_from : (t -> t -> @Int) -> @Vec t -> @Vec t -> @Int -> @Int -> @Vec t
+    -> @Vec t = \c xs ys i j acc =>
+    if i >= @vec_len xs =>
+        append (@vec_slice ys j (@vec_len ys)) acc
+    else if j >= @vec_len ys =>
+        append (@vec_slice xs i (@vec_len xs)) acc
+    else
+        let x = @vec_get xs i in
+        let y = @vec_get ys j in
+        if (c x y) <= 0 =>
+            merge_from c xs ys (i + 1) j (@vec_push acc x)
+        else
+            merge_from c xs ys i (j + 1) (@vec_push acc y)
+
+$ from_list_onto : @Vec t -> List t -> @Vec t = \acc xs =>
+    xs |> \ | List.Cons.{ h, t } => from_list_onto (@vec_push acc h) t | _ => acc

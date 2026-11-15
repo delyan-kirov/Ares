@@ -1,25 +1,26 @@
 $ @mod STDLIB_CORE
 
 # \file STDLIB_CORE.ares
-# \info The standard library's small core: `Option` (OPT), tuples and
+# \info The standard library's small core: `Opt` (OPT), tuples and
 #       the integer helpers (MATH). A `$ @import MOD` import makes the module's
 #       public names (and types) usable unqualified; everything stays
-#       reachable qualified (`OPT.is_some`, ...).
+#       reachable qualified (`ARES.is_some`, ...).
 
-$ @import OPT
-$ @import MATH
+$ @import ARESxALGO
+$ @import ARESxOPT
+$ @import ARESxMATH
 
-# ---- Option ----
-$ o : Option @Int = Option.Some.{ 41 }
-$ n : Option @Int = Option.None
+# ---- Opt ----
+$ o : Opt @Int = Opt.Some.{ 41 }
+$ n : Opt @Int = Opt.None
 $ ck_some : @Int = if is_some o => 0 else 1
 $ ck_none : @Int = if is_none n => 0 else 1
-$ ck_unwrap : @Int = if (unwrap_or o 0) == 41 => 0 else 1
-$ ck_default: @Int = if (unwrap_or n 7) == 7 => 0 else 1
-$ ck_map : @Int = if (unwrap_or (opt_map (\x => x + 1) o) 0) == 42 => 0 else 1
+$ ck_unwrap : @Int = if (unwrap_or 0 o) == 41 => 0 else 1
+$ ck_default: @Int = if (unwrap_or 7 n) == 7 => 0 else 1
+$ ck_map : @Int = if (unwrap_or 0 (fmap (\x => x + 1) o)) == 42 => 0 else 1
 $ ck_then : @Int =
-    let half = \x => if x % 2 == 0 => Option.Some.{ x / 2 } else Option.None in
-    if (unwrap_or (opt_then half o) 99) == 99 => 0 else 1
+    let half = \x => if x % 2 == 0 => Opt.Some.{ x / 2 } else Opt.None in
+    if (unwrap_or 99 (opt_then half o)) == 99 => 0 else 1
 
 # ---- tuples (the language's anonymous products) ----
 $ p : { @Int, @Str } = { 1, "one" }

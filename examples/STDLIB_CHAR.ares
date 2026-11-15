@@ -1,0 +1,33 @@
+$ @mod STDLIB_CHAR
+
+# \file STDLIB_CHAR.ares
+# \info Characters. A `Char` is a Unicode code point; a string literal where a
+#       `Char` is expected builds one through ARESxSTR's `@IStrLit` instance.
+#       A `@Str` maps, iterates and folds over its characters, decoding UTF-8.
+
+$ @import ARESxALGO
+$ @import ARESxSTR
+$ @import ARESxVEC
+
+$ c : Char = "C"
+$ e : Char = "é"
+
+$ ck_code : @Int = if char_code c == 67 && char_code e == 233 => 0 else 1
+$ ck_eq : @Int = if c == "C" && c != e && c < e => 0 else 2
+$ ck_bad : @Int = let x : Char = "ab" in if char_code x == 65533 => 0 else 4
+
+# Characters, not bytes: "héllo" is 6 bytes and 5 characters.
+$ ck_chars : @Int = if len (chars "héllo") == 5 && len "héllo" == 6 => 0 else 8
+
+$ upper : Char -> Char = \ch =>
+    if char_code ch >= 97 && char_code ch <= 122 => char_of_code (char_code ch - 32) else ch
+$ ck_fmap : @Int = if fmap upper "héllo" == "HéLLO" => 0 else 16
+
+$ ck_fold : @Int =
+    if foldl (\n (ch: Char) => if ch == "l" => n + 1 else n) 0 "héllo" == 2 => 0 else 32
+
+$ ck_show : @Int = if to_string e ++ to_string c == "éC" => 0 else 64
+
+$ test : @Int = ck_code + ck_eq + ck_bad + ck_chars + ck_fmap + ck_fold + ck_show
+
+$ &assert (test == 0) "STDLIB_CHAR: a check failed"

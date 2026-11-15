@@ -62,9 +62,13 @@ impl<'a> Checker<'a> {
         }
         let mut seen: HashMap<StrId, StrId> = HashMap::new();
         for (alias, module, span) in aliased {
+            let parts_of = |unit: &StrId| self.unit_modules.get(unit).copied();
             let clash = if let Some(first) = seen.get(&alias) {
-                Some(format!("`{alias}` is already an alias of `{first}`"))
-            } else if alias != module && plain.contains(&alias) {
+                // Two parts of one module may share an alias (`$ @import A = ARESxMAP`
+                // and `$ @import A = ARESxSET`): it still names one module.
+                let one_module = parts_of(first).is_some() && parts_of(first) == parts_of(&module);
+                (!one_module).then(|| format!("`{alias}` is already an alias of `{first}`"))
+            } else if alias != module && (plain.contains(&alias) || plain.iter().any(|u| parts_of(u) == Some(alias))) {
                 Some(format!("`{alias}` is already the name of an imported module"))
             } else if alias == self.module_name {
                 Some(format!("`{alias}` is the name of this module"))
@@ -187,6 +191,12 @@ impl<'a> Checker<'a> {
     pub fn import_as(&mut self, other: &Checker<'a>, bare: bool, aliases: &[StrId]) {
         assert!(bare || !aliases.is_empty(), "an import is bare or aliased");
         let module = other.module_name;
+        self.unit_modules.insert(other.unit_name(), module);
+        for name in other.own_values.iter().map(|(n, _)| n).chain(&other.own_type_names) {
+            if !other.private_names.contains(name) {
+                self.name_units.insert(*name, other.unit_name());
+            }
+        }
         let mut scopes: Vec<StrId> = aliases.to_vec();
         if bare {
             scopes.push(module);
@@ -523,6 +533,12 @@ impl<'a> Checker<'a> {
             let d = diag!(Code::UnknownModule, Span::at(0), 0, "no module or effect `{module}` is in scope");
             let mut aliases: Vec<&str> =
                 self.alias_modules.iter().filter(|(_, &m)| m == module).map(|(a, _)| a.as_str()).collect();
+            // A module in parts may be imported under several aliases: the one whose
+            // part has the name is the fix.
+            let has = |a: &&str| self.qualified.get(&StrId::intern(a)).is_some_and(|m| m.contains_key(&name));
+            if aliases.iter().any(has) {
+                aliases.retain(has);
+            }
             aliases.sort_unstable();
             if let Some(alias) = aliases.first() {
                 return d
@@ -533,9 +549,15 @@ impl<'a> Checker<'a> {
                         Applicability::MachineApplicable,
                     );
             }
-            return match utilities::error::closest(module.as_str(), self.qualified.keys().map(|k| k.as_str())) {
-                Some(m) => d.with_help(format!("did you mean `{m}.{name}`?")),
-                None => d.with_help(format!("import it with `$ @import {module}`")),
+            // A module in parts is imported by the part that defines the name.
+            let part = self
+                .import_hints
+                .get(&name)
+                .and_then(|homes| homes.iter().find(|h| h.as_str().split_once('x').is_some_and(|(m, _)| m == module.as_str())));
+            return match (part, utilities::error::closest(module.as_str(), self.qualified.keys().map(|k| k.as_str()))) {
+                (Some(part), _) => d.with_help(format!("import it with `$ @import {part}`")),
+                (None, Some(m)) => d.with_help(format!("did you mean `{m}.{name}`?")),
+                (None, None) => d.with_help(format!("import it with `$ @import {module}`")),
             };
         };
         let d = diag!(Code::TypeUnbound, Span::at(0), 0, "`{module}` has no value named `{name}`");

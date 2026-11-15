@@ -1,14 +1,14 @@
 $ @mod DERIVE_SHOW
 
 # \file DERIVE_SHOW.ares
-# \info Deriving `to_string` at compile time. `DERIVE.derive_show "T"` reflects on
+# \info Deriving `to_string` at compile time. `ARES.derive_show "T"` reflects on
 #       a declared type's shape (`@type_fields` / `@type_variants`) and generates
 #       the source for `$ to_string : T -> @Str`, injected here by `$ &`. The
 #       hand-written `test` below then calls `to_string` on values of those types,
 #       even though the definitions did not exist until the generator ran (a
 #       forward-referenced injection). One macro, any struct or union.
 
-$ @import DERIVE
+$ @import ARESxDERIVE
 $ @import DERIVE_LIB
 
 $ Rgb : @struct =
@@ -35,10 +35,10 @@ $ Pair : @struct a b =
     snd: b,
 
 # Generate `to_string` for each type from its declaration alone.
-$ &DERIVE.derive_show "Rgb"
-$ &DERIVE.derive_show "Shape"
-$ &DERIVE.derive_show "Box"
-$ &DERIVE.derive_show "Pair"
+$ &ARES.derive_show "Rgb"
+$ &ARES.derive_show "Shape"
+$ &ARES.derive_show "Box"
+$ &ARES.derive_show "Pair"
 
 $ ck_struct : @Int =
     if to_string (Rgb.{ .r = 1, .g = 2, .b = 3 }) == "Rgb { r = 1 g = 2 b = 3 }" => 0 else 1

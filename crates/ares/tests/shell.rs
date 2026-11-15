@@ -1,5 +1,5 @@
 //! The shell (`ares shell`), fed items on a pipe: it runs them at compile time,
-//! so reflection and `&` work at the prompt, and `ARES_SHELL` gives it short
+//! so reflection and `&` work at the prompt, and `ARESxSHELL` gives it short
 //! commands.
 
 use std::io::Write;
@@ -28,8 +28,8 @@ fn reflection_runs_at_the_prompt() {
         "x : @Int = 1",
         "_= @type_of \"x\"",
         "_= @check <| @parse_str \"x + 1\"",
-        "@import VEC",
-        "_= @scope {} |> VEC.filter (\\{name, _} => name == \"x\") |> VEC.length",
+        "@import ARESxVEC",
+        "_= @scope {} |> filter (\\{name, _} => name == \"x\") |> len",
     ]);
     assert_eq!(out.matches("# \"@Int\" : @Str").count(), 2, "{out}");
     assert!(out.contains("# 1 : @Int"), "{out}");

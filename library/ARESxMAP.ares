@@ -1,0 +1,195 @@
+$ @mod ARES
+
+# \file ARESxMAP.ares
+# \info An immutable ordered map, `Map `K `V`, backed by an AVL tree, the same
+#       design as Haskell's Data.Map and Koka's std/data/map. The key ordering is
+#       the `IOrd k` interface, resolved by type at each operation that compares
+#       keys (`@use { o: IOrd k }`), so any ordered key works with no comparator
+#       to pass or store: base types, tuples, and anything `DERIVE.derive_ord`
+#       reaches. The map is a VALUE: `insert` / `remove` return an updated copy
+#       and never disturb the original. Lookup, insert and remove are O(log n);
+#       `to_list` / `keys` / `fold` visit entries in ascending key order.
+
+$ @import ARESxALGO
+$ @import ARESxOPT
+$ @import ARESxVEC
+$ @import ARESxMATH
+$ @import ARESxSTR
+
+$ Map : @struct k v =
+    count: @Int,
+    root: Tree k v,
+
+# ---- operations ----
+# Besides these, a map answers ARESxALGO's interfaces: `new {}`, `len`,
+# `is_empty`, `get`, `get_or`, `has`, `remove`, `from_list` (of `{k, v}` pairs),
+# `to_list` (pairs, ascending), `fold` (`f acc k v`, ascending), `filter` (`p k
+# v`) and `merge` (left-biased).
+
+$ insert : @use { o: IOrd k } -> k -> v -> Map k v -> Map k v = \k v m =>
+    let fresh = if map_has m k => 0 else 1 in
+    Map.{ .count = m.count + fresh, .root = tinsert k v m.root }
+
+# Insert, combining with the existing value: `f old new` decides what an
+# already-present key maps to.
+$ insert_with : @use { o: IOrd k } -> k -> v -> (v -> v -> v) -> Map k v -> Map k v = \k v f m =>
+    tget k m.root |> \ | Opt.Some.{ old } => insert k (f old v) m | _ => insert k v m
+
+# `m.[k]` joins the `.[..]` surface: an indexing hook overload for maps, returning
+# `Opt v` (a missing key is `None`).
+$ impl_IIndex_for_Map : @use { o: IOrd k } -> @IIndex (Map k v) k (Opt v) =
+    .{ .index = \m k => tget k m.root }
+
+# Apply `f` to the value at `k`, if present; absent keys leave the map as is.
+$ update : @use { o: IOrd k } -> k -> (v -> v) -> Map k v -> Map k v = \k f m =>
+    tget k m.root |> \ | Opt.Some.{ old } => insert k (f old) m | _ => m
+
+$ keys : Map k v -> @Vec k = \m => fmap (\p => p.0) (tlist m.root [])
+
+$ values : Map k v -> @Vec v = \m => fmap (\p => p.1) (tlist m.root [])
+
+$ map_values : (v -> w) -> Map k v -> Map k w = \f m =>
+    Map.{ .count = m.count, .root = tmapv f m.root }
+
+$ min_entry : Map k v -> Opt { k, v } = \m => tmin m.root
+
+$ max_entry : Map k v -> Opt { k, v } = \m => tmax m.root
+
+# ---- the collection interfaces ----
+
+$ impl_INew_for_Map : INew (Map k v) = .{ .new = \u => empty_map }
+$ impl_ILen_for_Map : ILen (Map k v) = .{ .len = \m => m.count }
+$ impl_IEmpty_for_Map : IEmpty (Map k v) = .{ .is_empty = \m => m.count == 0 }
+$ impl_IGet_for_Map : @use { o: IOrd k } -> IGet (Map k v) k v = .{ .get = \m k => tget k m.root }
+$ impl_IHas_for_Map : @use { o: IOrd k } -> IHas (Map k v) k = .{ .has = map_has }
+$ impl_IRemove_for_Map : @use { o: IOrd k } -> IRemove (Map k v) k = .{
+    .remove = \m k =>
+        if map_has m k => Map.{ .count = m.count - 1, .root = tremove k m.root } else m,
+}
+$ impl_IFromList_for_Map : @use { o: IOrd k } -> IFromList (Map k v) (@Vec { k, v }) =
+    .{ .from_list = \ps => foldl (\m p => insert p.0 p.1 m) empty_map ps }
+$ impl_IToList_for_Map : IToList (Map k v) (@Vec { k, v }) = .{ .to_list = \m => tlist m.root [] }
+$ impl_IFold_for_Map : IFold (Map k v) a (a -> k -> v -> a) =
+    .{ .fold = \f acc m => tfold f acc m.root }
+$ impl_IFilter_for_Map : @use { o: IOrd k } -> IFilter (Map k v) (k -> v -> @Bool) = .{
+    .filter = \p m => tfold (\acc k v => if p k v => insert k v acc else acc) empty_map m.root,
+}
+$ impl_IMerge_for_Map : @use { o: IOrd k } -> IMerge (Map k v) = .{
+    .merge = \a b => tfold (\acc k v => if map_has acc k => acc else insert k v acc) a b.root,
+}
+
+# ---- AVL internals ----
+# Everything below is the balanced-tree implementation: hidden, so importers see
+# only the `Map` API above and never the `Tree` representation.
+
+$ @private
+
+$ empty_map : Map k v = Map.{ .count = 0, .root = Tree.Leaf }
+
+$ map_has : @use { o: IOrd k } -> Map k v -> k -> @Bool = \m k => is_some (tget k m.root)
+
+$ Tree : @union k v =
+    Leaf: {},
+    Node: { k, v, Tree k v, Tree k v, @Int }, # key, value, left, right, height
+
+$ height : Tree k v -> @Int = \t => t |> \ | Tree.Node.{ _, _, _, _, h } => h | _ => 0
+
+$ mknode : k -> v -> Tree k v -> Tree k v -> Tree k v = \k v l r =>
+    Tree.Node.{ k, v, l, r, 1 + max (height l) (height r) }
+
+# Rebuild a node from parts whose subtrees may be off by one extra level
+# (a single insert or remove), restoring the AVL invariant with the usual
+# single / double rotations. The impossible Leaf arms fall back to a plain
+# node.
+$ balance : k -> v -> Tree k v -> Tree k v -> Tree k v = \k v l r =>
+    if (height l) > ((height r) + 1) =>
+        (
+            l |> \
+                | Tree.Node.{ lk, lv, ll, lr, _ } => (
+                    if (height ll) >= (height lr) =>
+                        mknode lk lv ll (mknode k v lr r)
+                    else
+                        lr |> \
+                            | Tree.Node.{ ck, cv, cl, cr, _ } =>
+                                mknode ck cv (mknode lk lv ll cl) (mknode k v cr r)
+                            | _                               => mknode k v l r
+                )
+                | _                               => mknode k v l r
+        )
+    else if (height r) > ((height l) + 1) =>
+        (
+            r |> \
+                | Tree.Node.{ rk, rv, rl, rr, _ } => (
+                    if (height rr) >= (height rl) =>
+                        mknode rk rv (mknode k v l rl) rr
+                    else
+                        rl |> \
+                            | Tree.Node.{ ck, cv, cl, cr, _ } =>
+                                mknode ck cv (mknode k v l cl) (mknode rk rv cr rr)
+                            | _                               => mknode k v l r
+                )
+                | _                               => mknode k v l r
+        )
+    else
+        mknode k v l r
+
+$ tinsert : @use { o: IOrd k } -> k -> v -> Tree k v -> Tree k v = \k v t =>
+    t |> \
+        | Tree.Node.{ tk, tv, l, r, _ } => (
+            if k < tk =>
+                balance tk tv (tinsert k v l) r
+            else if tk < k =>
+                balance tk tv l (tinsert k v r)
+            else
+                mknode k v l r
+        )
+        | _                             => mknode k v Tree.Leaf Tree.Leaf
+
+$ tget : @use { o: IOrd k } -> k -> Tree k v -> Opt v = \k t =>
+    t |> \
+        | Tree.Node.{ tk, tv, l, r, _ } =>
+            if k < tk => tget k l else if tk < k => tget k r else Opt.Some.{ tv }
+        | _ => Opt.None
+
+$ tremove : @use { o: IOrd k } -> k -> Tree k v -> Tree k v = \k t =>
+    t |> \
+        | Tree.Node.{ tk, tv, l, r, _ } => (
+            if k < tk =>
+                balance tk tv (tremove k l) r
+            else if tk < k =>
+                balance tk tv l (tremove k r)
+            else
+                tjoin l r
+        )
+        | _                             => Tree.Leaf
+
+# Join two subtrees already ordered left < right: the right side's minimum
+# becomes the new root.
+$ tjoin : Tree k v -> Tree k v -> Tree k v = \l r =>
+    tmin r |> \ | Opt.Some.{ p } => balance p.0 p.1 l (drop_min r) | _ => l
+
+$ tmin : Tree k v -> Opt { k, v } = \t =>
+    t |> \
+        | Tree.Node.{ k, v, l, _, _ } => (l |> \ | Tree.Leaf => Opt.Some.{ { k, v } } | _ => tmin l)
+        | _                           => Opt.None
+
+$ tmax : Tree k v -> Opt { k, v } = \t =>
+    t |> \
+        | Tree.Node.{ k, v, _, r, _ } => (r |> \ | Tree.Leaf => Opt.Some.{ { k, v } } | _ => tmax r)
+        | _                           => Opt.None
+
+$ drop_min : Tree k v -> Tree k v = \t =>
+    t |> \
+        | Tree.Node.{ k, v, l, r, _ } => (l |> \ | Tree.Leaf => r | _ => balance k v (drop_min l) r)
+        | _                           => Tree.Leaf
+
+$ tlist : Tree k v -> @Vec { k, v } -> @Vec { k, v } = \t acc =>
+    t |> \ | Tree.Node.{ k, v, l, r, _ } => tlist l ({ k, v } :: tlist r acc) | _ => acc
+
+$ tfold : (a -> k -> v -> a) -> a -> Tree k v -> a = \f acc t =>
+    t |> \ | Tree.Node.{ k, v, l, r, _ } => tfold f (f (tfold f acc l) k v) r | _ => acc
+
+$ tmapv : (v -> w) -> Tree k v -> Tree k w = \f t =>
+    t |> \
+        | Tree.Node.{ k, v, l, r, h } => Tree.Node.{ k, f v, tmapv f l, tmapv f r, h }
+        | _                           => Tree.Leaf

@@ -75,15 +75,15 @@ instance builds the `Cpx` struct (see 15). The `i` counts as a suffix only when 
 identifier character follows, so `3if` is still `3` then `if`.
 
 ```ares
-$ @import CPX
+$ @import ARESxCPX
 $ unit : Cpx = 1.0i
 $ whole: Cpx = 3i                    # the magnitude is a Real either way
 $ tiny : Cpx = 2.5e-2i               # scientific notation suffixes too
-$ z    : Cpx = CPX.of_real 3.4 + 1.2i  # real plus imaginary
+$ z    : Cpx = ARES.of_real 3.4 + 1.2i  # real plus imaginary
 ```
 
 An operator takes ONE type for both operands, so a real joins a complex only by
-being made one: `CPX.of_real 3.4 + 1.2i`. Nothing is promoted silently, in either
+being made one: `ARES.of_real 3.4 + 1.2i`. Nothing is promoted silently, in either
 direction. There is no imaginary PATTERN; match the fields (`z |> \ | Cpx.{re, im}`)
 or compare with `==` in a guard.
 
@@ -196,27 +196,37 @@ $ odd  : @Int -> @Bool = \n => if n == 0 => @false else even (n - 1)
 A qualified `MOD.symbol` needs the import too. An import brings in the whole
 module, not one symbol.
 
+A module may span several files, its PARTS. A part is the file `MODxPART.ares`
+(the `x` is lowercase), which declares `$ @mod MOD`. Each part is imported on its
+own, `$ @import MODxPART`, and brings in that part's names only, reached bare or
+as `MOD.symbol`. The parts share one namespace: a name, private or not, and a
+variant tag are defined in one part only, and a part may use what another
+defines once it imports it. The standard library is the module `ARES` in parts
+(`ARESxVEC`, `ARESxMAP`, `ARESxSTR`, ...).
+
 ```ares
-$ @import MATH                 # MATH.sqrt, or bare sqrt
-$ @import STR
+$ @import ARESxMATH            # pi, or ARES.pi
+$ @import ARESxSTR             # index_of, or ARES.index_of
 ```
 
 When two imports export the same name, the bare name is ambiguous and the
-qualified form picks one (`VEC.len`, `LIST.len`).
+qualified form picks one (`A.f`, `B.f`).
 
-`$ @import ALIAS = MOD` imports `MOD` qualified only, under the name `ALIAS`. None
-of its names come into scope bare, so several modules with overlapping names
-import side by side without ambiguity. Its values, types and constructors are
-all reached through the alias (`V.len`, `O.Option @Int`, `O.Option.Some.{ 1 }`).
-Writing the module's own name as the alias makes a plain qualified-only import.
+`$ @import ALIAS = MOD` imports `MOD` (or a part, `ALIAS = MODxPART`) qualified
+only, under the name `ALIAS`. None of its names come into scope bare, so several
+modules with overlapping names import side by side without ambiguity. Its values,
+types and constructors are all reached through the alias (`V.push`,
+`M.Map @Str @Int`). Writing the module's own name as the alias makes a plain
+qualified-only import. Several parts of one module may share an alias.
 
 ```ares
-$ @import V = VEC              # V.len, never bare len or VEC.len
-$ @import LIST = LIST          # LIST.len, never bare len
+$ @import V = ARESxVEC         # V.push, never bare push
+$ @import M = ARESxMAP         # M.insert, never bare insert
+$ @import M = ARESxSET         # M.add: both parts of ARES
 ```
 
-An alias is one capitalized name. It may not repeat, nor reuse the name of
-another imported module, of this module, or of the built-in `C` namespace.
+An alias is one capitalized name. It may not name two modules, nor reuse the name
+of another imported module, of this module, or of the built-in `C` namespace.
 
 A name means one thing in a scope: an alias, or a module imported bare, may not
 share its name with a type in scope. That keeps `A.B.{ .. }` unambiguous: it is
@@ -450,7 +460,7 @@ are checked, so an argument sees the parameter type that result implies. With
 `id : t -> t`, `$ x : Big = id 3` checks `3` against `Big` and builds it through
 `Big`'s `@IIntLit` instance. Pipes are calls, so `3 |> id` and `id <| 3` do the
 same. Tuples and qualified variants pass their expected type to their parts too:
-`{1, 2} : {Big, Big}`, `Option.Some.{ 1 } : Option Big`.
+`{1, 2} : {Big, Big}`, `Opt.Some.{ 1 } : Opt Big`.
 
 ## 4.3 Arithmetic and unary operators
 `+ - * / %`, unary `-` (negation) and `!` (boolean not). Standard precedence,
@@ -499,7 +509,7 @@ $ cheaper : @Bool = Money.{ .cents = 150 } < Money.{ .cents = 900 }
 
 There is NO structural fallback: a type with no `IEq` instance cannot be compared
 with `==`, which is an error at the comparison rather than a surprise at run time.
-`DERIVE.derive_eq` / `derive_ord` generate the instances for a declared type.
+`ARES.derive_eq` / `derive_ord` generate the instances for a declared type.
 
 `<` and `>` are also the effect-row brackets (§3.5), but a row only ever appears
 in type position, so the two never collide.
@@ -515,7 +525,7 @@ $ xs : @Vec @Int = 1 :: 2 :: 3 :: []
 ```
 
 `::` builds a fresh vector, so it is O(n) and a `::`-recursion is quadratic;
-`VEC.push` is the idiomatic way to build one up.
+`ARES.push` is the idiomatic way to build one up.
 
 ## 4.6 Short-circuit `&&` / `||`
 Desugar to a lazy `if`, so the right operand runs only when needed.
@@ -584,7 +594,7 @@ the way short-circuiting is a property of infix `&&` (§4.10). A single row that
 the union of two variables is not expressible today (issue #200).
 
 ```ares
-$ @import IO
+$ @import ARESxIO
 $ inc : @Int -> @Int = \x => x + 1
 $ double : @Int -> @Int = \x => x * 2
 $ step1 : {} -> @Int = 0
@@ -594,7 +604,7 @@ $ y   : @Int = 5 |> inc |> double          # double (inc 5)
 $ z   : @Int = double <| inc <| 5          # same
 $ f   : @Int -> @Int = double <|> inc      # \x = double (inc x)
 $ w   : @Int = (double <|> inc) 5          # 12
-$ shout : @Str -> <@IO> {} = \s => IO.println s
+$ shout : @Str -> <@IO> {} = \s => ARES.println s
 $ show  : @Int -> <@IO> {} = shout <|> to_string   # the row is the union
 $ h2    : @Int -> @Int = (<|>) double inc          # = compose double inc
 ```
@@ -606,11 +616,12 @@ it takes a context parameter, the type it is used at decides which instance is
 injected, so a bare `(+)` with nothing to pin its type is an error that says so.
 
 ```ares
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxVEC
 $ two   : @Int = (+) 1 1                   # 1 + 1
 $ add1  : @Int -> @Int = (+) 1             # curried
 $ plus  : @Int -> @Int -> @Int = (+)       # the instance comes from the type
-$ total : @Int = VEC.foldl (+) 0 [1, 2, 3] # as an argument
+$ total : @Int = foldl (+) 0 [1, 2, 3] # as an argument
 ```
 
 The parens must hold exactly one operator, so `(a + b)` and `(-1)` still group.
@@ -913,11 +924,11 @@ generic one is applied to the new type's parameters (`fields_of "Pair b"`). A
 duplicate member is an error.
 
 ```ares
-$ @import DERIVE
+$ @import ARESxDERIVE
 $ Point  : @struct = x: @Int, y: @Int
-$ Point3 : @struct = &DERIVE.fields_of "Point", z: @Int   # x, y, then z
+$ Point3 : @struct = &ARES.fields_of "Point", z: @Int   # x, y, then z
 $ Base   : @union  = Red: {}, Green: {}
-$ Color  : @union  = &DERIVE.variants_of "Base", Blue: {} # Red, Green, then Blue
+$ Color  : @union  = &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 ```
 
 ## 6.5 Recursive types are lazy
@@ -931,25 +942,20 @@ Laziness belongs to the slot, so it does not depend on how the value is written.
 It stops at an arrow: a slot typed `{} -> T` is already a suspension and stays a
 plain function.
 
-Simple (the prelude `Stream`, a recursive `@struct`):
+Simple (an unbounded sequence, a recursive `@struct`):
 ```ares
-$ Stream : @struct t = head : t, tail : Stream t
-$ first : Stream @Int -> @Int = \s => s.head
-$ next  : Stream @Int -> Stream @Int = \s => s.tail
-```
-
-Involved (map over an unbounded stream; `tail` is only built when read):
-```ares
-$ smap : (a -> b) -> Stream a -> Stream b = \f s =>
-	{ .head = f s.head, .tail = smap f s.tail }
-$ tenth : @Int = (smap (\x => x + x) (count_from 1)).tail.tail.head
+$ Seq : @struct t = first : t, rest : Seq t
+$ from : @Int -> Seq @Int = \n => { .first = n, .rest = from (n + 1) }
+$ third : @Int = (from 1).rest.rest.first
 ```
 
 A recursive `@union` works the same way, which is how a `List` is consumed one
-cons at a time:
+cons at a time, and why an infinite `List` is an ordinary one (`count_from` and
+the open range `[lo ...]` build them):
 ```ares
-$ from : @Int -> List @Int = \n => List.Cons.{ n, from (n + 1) }
+$ nat : @Int -> List @Int = \n => List.Cons.{ n, nat (n + 1) }
 $ head : List @Int -> @Int = \l => l |> \ | List.Cons.{h, t} => h | _ => 0
+$ seven : @Int = head (nat 7)
 ```
 
 Evaluation is otherwise call by value, so a slot filled through a function
@@ -1247,7 +1253,7 @@ size, so it is total, `t.[n]` wraps to `t.[0]`). Indexing an empty `@Tensor 0 T`
 is the sole fault.
 
 ```ares
-$ @import LA
+$ @import ARESxLA
 $ v : @Tensor 3 @Int = [10, 20, 30]
 $ a : @Int = v.[1]        # 20
 $ b : @Int = v.[3]        # wraps to v.[0] = 10
@@ -1258,7 +1264,7 @@ A matrix is a tensor of tensors, `Matrix m n T` = `@Tensor m (@Tensor n T)`.
 `t.[i, j]` reads one element (`t.[i].[j]`).
 
 ```ares
-$ @import LA
+$ @import ARESxLA
 $ g : Matrix 2 2 @Int = [ [1,2], [3,4] ]
 $ z : @Int = g.[1, 0]     # 3
 ```
@@ -1269,10 +1275,10 @@ compared by a canonical form (`n + m` equals `m + n`; `n + n` is `2 * n`). This
 drives size-changing operations, whose result size is computed at compile time.
 
 ```ares
-$ @import LA
-# LA provides `concat`, its result size computed at compile time:
-#   concat : @Tensor n a -> @Tensor m a -> @Tensor (n + m) a
-$ joined : @Tensor 5 @Int = concat [1, 2] [3, 4, 5]      # 2 + 3 = 5
+$ @import ARESxLA
+# ARESxLA provides `concat_tensors`, its result size computed at compile time:
+#   concat_tensors : @Tensor n a -> @Tensor m a -> @Tensor (n + m) a
+$ joined : @Tensor 5 @Int = concat_tensors [1, 2] [3, 4, 5]      # 2 + 3 = 5
 ```
 
 ## 9.4 Slicing
@@ -1280,7 +1286,7 @@ Multi-axis slicing `t.[s0, s1, ...]`: `i` indexes an axis, `p ... q` narrows it
 to an inclusive range, `..` keeps it whole. Every result is an O(1) strided view.
 
 ```ares
-$ @import LA
+$ @import ARESxLA
 $ row : Matrix m n a -> @Int -> @Tensor n a = \m i => m.[i]
 $ col : Matrix m n a -> @Int -> @Tensor m a = \m j => m.[.., j]
 $ sub : @Tensor 8 @Int -> @Tensor 4 @Int = \m => m.[2 ... 5]      # inclusive 2..5, four elements
@@ -1294,7 +1300,7 @@ by defining an instance. A multi-axis slice stays tensor-only: its result shape 
 computed from the slots.
 
 ```ares
-$ @import LA
+$ @import ARESxLA
 $ transpose : Matrix m n a -> Matrix n m a = \t =>
 	@tensor_create (@tensor_index t 0)
 		(\j => @tensor_create t (\i => @tensor_index (@tensor_index t i) j))
@@ -1302,28 +1308,30 @@ $ transpose : Matrix m n a -> Matrix n m a = \t =>
 
 ## 9.6 Expression-form ranges
 `[lo ... hi]` builds whatever the resolved `@IRange` instance returns, and the open
-`[lo ...]` whatever `@IRangeFrom` returns; `CORE` has instances for `@Vec`/`List`
-and `Stream`/`List`. The expected type picks one, so a range of your own type needs
-only its own instance. When nothing constrains it, the **first instance declared**
-wins, which is how `CORE`'s order (not the compiler) sets what a bare range builds.
+`[lo ...]` whatever `@IRangeFrom` returns; `CORE` has instances for `List` and
+`@Vec`, and for `List`. The expected type picks one, so a range of your own type
+needs only its own instance. When nothing constrains it, the **first instance
+declared** wins, which is how `CORE`'s order (not the compiler) makes a bare range
+a `List`.
 A sized tensor is the exception: literal bounds fix `n`, and the compiler builds it
 directly.
 
 ```ares
 $ tv : @Tensor 4 @Int = [1 ... 4]     # tensor, n = 4
-$ ns : @Vec @Int      = [1 ... 5]     # vector (the bare closed range)
-$ s  : Stream @Int    = [1 ...]       # unbounded (the bare open range)
+$ ls : List @Int      = [1 ... 5]     # list (the bare closed range)
+$ ns : @Vec @Int      = [1 ... 5]     # vector, where one is expected
+$ s  : List @Int      = [1 ...]       # unbounded (the bare open range)
 ```
 
-A `@Vec` range materializes every element, so a large bound costs that much work
-up front. The `List` instances are lazy in the tail, which is what makes a range
-you only walk part of cheap:
+A `List` is lazy in the tail, which is what makes a range you only walk part of
+cheap; a `@Vec` range materializes every element up front:
 
 ```ares
-$ @import IO
+$ @import ARESxALGO
+$ @import ARESxLIST
+$ @import ARESxIO
 $ first5 : {} -> <@IO> {} =
-	for ([1 ... 100000000000000] : List @Int)
-		(\i => if i > 5 => break {} else IO.print "?(i), ")
+	for [1 ... 100000000000000] (\i => if i > 5 => break {} else ARES.print "?(i), ")
 ```
 
 ---
@@ -1398,22 +1406,22 @@ C memory reaches Ares two ways, both copies:
 
 - **Bytes**: `@ptr_bytes p n` (CORE) is a fresh `@Str` of the `n` bytes at `p`,
   NUL bytes and all. (A `@Str` *result* of a C function is a `char*` and ends at
-  its first NUL.) This is how `IO.read_file` reads: `C.read` into `C.malloc`
+  its first NUL.) This is how `ARES.read_file` reads: `C.read` into `C.malloc`
   memory, then `@ptr_bytes`.
 - **Typed elements**: a binding with `@extern "load"` (no symbol, no library)
   reads element `i` of a C array of `T` at `p`. Its type must be
   `{ p: @Ptr, i: @Int } -> T`, where `T` is a sized number, `@Int`/`@Nat`, `@Ptr`,
   `@Str` (a `char*`, copied up to its NUL; NULL reads as `""`), or a
-  `@struct @extern "C"` type. A C `bool` loads as `@Nat8`. `VEC.from_c at p n`
+  `@struct @extern "C"` type. A C `bool` loads as `@Nat8`. `ARES.from_c at p n`
   collects the first `n` elements as a vector.
 
 ```ares
-$ @import VEC
+$ @import ARESxVEC
 $ Point : @struct @extern "C" = x: @Int32, y: @Int32,
 $ point_at : { p: @Ptr, i: @Int } -> Point = @extern "load"
 $ arg_at : { p: @Ptr, i: @Int } -> @Str = @extern "load"      # a `char**`
 
-$ points : @Ptr -> @Int -> @Vec Point = \p n => VEC.from_c point_at p n
+$ points : @Ptr -> @Int -> @Vec Point = \p n => ARES.from_c point_at p n
 ```
 
 Like a C dereference, a load trusts the program: the memory must hold `n`
@@ -1558,11 +1566,11 @@ captures the caller's `tmp`. Code the site hands in keeps the site's meaning: a
 quotation written in the `&` operand itself, and `@code` text.
 
 ```ares
-$ @import OPT
+$ @import ARESxOPT
 $ plus_one : @Code -> @Code = \c => "let tmp = 1 in tmp + ?(c)"
 $ add_one  : @Int -> @Int = \tmp => &plus_one "tmp"      # tmp + 1, the caller's tmp
-$ some_of  : @Code -> @Code = \v => "Option.Some.{?(v)}"
-$ or_zero  : Option @Int -> @Int = \ | &some_of "x" => x | _ => 0
+$ some_of  : @Code -> @Code = \v => "Opt.Some.{?(v)}"
+$ or_zero  : Opt @Int -> @Int = \ | &some_of "x" => x | _ => 0
 ```
 
 So a generated pattern binds a name for the arm body only when the site names
@@ -1633,10 +1641,10 @@ $ @main : @Vec @Str -> <@IO> @Int = \args => answer      # 42
 
 The `<@IO>` in that row is its whole privilege: `@build` is the one context where
 a generator may read the world. The IO itself is not special, and there is no
-compile-time IO primitive: it is `library/IO.ares` over the `C` namespace, the
+compile-time IO primitive: it is `library/ARESxIO.ares` over the `C` namespace, the
 same code a program runs, performed by the compile-time interpreter. So a
 compile-time path is relative to the **working directory**, exactly like a path a
-running program opens. `IO.read_dir` (a directory's entry names, sorted) is the
+running program opens. `ARES.read_dir` (a directory's entry names, sorted) is the
 listing a `@build` usually wants.
 
 Rules: every module may have one (not just the root, unlike `@main`), it runs
@@ -1676,7 +1684,7 @@ $ @build : {} -> <@Meta, @IO> @Code =
 kind; an unknown option or a value it does not accept is a `BUILD_SCRIPT` error.
 An option not set keeps its default:
 
-| Option | Default | Accepts | Meaning |
+| Opt | Default | Accepts | Meaning |
 |---|---|---|---|
 | `format.width` | `100` | 40 to 400 | the line width `ares fmt` fits code into |
 | `format.indent` | `4` | 1 to 16 | spaces per indentation level |
@@ -1746,8 +1754,9 @@ A growable typed vector, wrapped by the `VEC` library over `@vec_new`,
 `@vec_push`, `@vec_get`, `@vec_set`, `@vec_len`, `@vec_fill`.
 
 ```ares
-$ @import VEC
-$ v : @Vec @Int = push (push (new {}) 1) 2   # VEC over @vec_* primitives
+$ @import ARESxALGO
+$ @import ARESxVEC
+$ v : @Vec @Int = push 2 (push 1 (new {}))   # VEC over @vec_* primitives
 ```
 
 ## 12.4 `to_string` (CORE) and interpolation

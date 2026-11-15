@@ -1,6 +1,6 @@
-$ @mod LA
+$ @mod ARES
 
-# \file LA.ares
+# \file ARESxLA.ares
 # \info Linear algebra over sized tensors `@Tensor n T`. The compiler provides only the
 #       `@`-sigil PRIMITIVES over the tensor buffer -- `@tensor_index` (modular read),
 #       `@tensor_length` (size), `@tensor_create` (build one the size of a template from an
@@ -12,6 +12,9 @@ $ @mod LA
 #       as a `@ctx` context parameter (CORE's `IAdd`/`IMul`/`IZero`) rather than as
 #       a built-in numeric class.
 
+$ @import ARESxALGO
+$ @import ARESxPAR
+
 # `t.[i]` desugars to the `@IIndex` interface. The
 # tensor candidate forwards to the `@tensor_index` primitive; a custom container adds
 # its own hook overload (the two coexist by the import merge), so any type can join
@@ -21,18 +24,19 @@ $ impl_IIndex_for_tensor : @IIndex (@Tensor n a) @Int a = .{ .index = \t i => @t
 # A matrix: `m` rows of `n` elements, one tensor of tensors.
 $ Matrix : @alias m n a = @Tensor m (@Tensor n a)
 
-# Thin names over the remaining primitives.
-$ length : @Tensor n a -> @Int = \t => @tensor_length t
-$ create : @Tensor n x -> (@Int -> a) -> @Tensor n a = \t f => @tensor_create t f
-$ concat : @Tensor n a -> @Tensor m a -> @Tensor (n + m) a = \x y => @tensor_concat x y
+# Thin names over the remaining primitives. `len t` is the length (ARESxALGO's `ILen`).
+$ impl_ILen_for_tensor : ILen (@Tensor n a) = .{ .len = \t => @tensor_length t }
+$ create : (@Int -> a) -> @Tensor n x -> @Tensor n a = \f t => @tensor_create t f
+$ concat_tensors : @Tensor n a -> @Tensor m a -> @Tensor (n + m) a = \x y => @tensor_concat x y
 
-# O(1) VIEWS (share the buffer, copy nothing). `slice` takes `[lo, hi)` of the
-# leading axis; `row i` is a row; `col j` is a column (a strided view, via the O(1)
+# O(1) VIEWS (share the buffer, copy nothing). `slice t lo hi` (ARESxALGO's `ISlice`)
+# takes `[lo, hi)` of the leading axis; `row i` is a row; `col j` is a column (a strided view, via the O(1)
 # transpose). The sliced size is a runtime value, so it is not tracked statically
 # (indexing stays modular/total).
-$ slice : @Tensor n a -> @Int -> @Int -> @Tensor k a = \t lo hi => @tensor_slice t lo hi
-$ row : Matrix m n a -> @Int -> @Tensor n a = \t i => t.[i]
-$ col : Matrix m n a -> @Int -> @Tensor m a = \t j => (transpose t).[j]
+$ impl_ISlice_for_tensor : ISlice (@Tensor n a) (@Tensor k a) =
+    .{ .slice = \t lo hi => @tensor_slice t lo hi }
+$ row : @Int -> Matrix m n a -> @Tensor n a = \i t => t.[i]
+$ col : @Int -> Matrix m n a -> @Tensor m a = \j t => (transpose t).[j]
 
 # Transpose swaps the two axes. This is O(1): `@tensor_transpose` returns a VIEW
 # that shares the buffer and only swaps the shape/strides, copying nothing.
@@ -55,31 +59,33 @@ $ matmul : @use { p: IAdd t, m: IMul t, z: IZero t } -> Matrix m k t -> Matrix k
 
 # ---- maps ----
 
-# `map f t` applies `f` along the leading axis: to each element of a vector, to
+# `fmap f t` applies `f` along the leading axis: to each element of a vector, to
 # each row of a matrix.
-$ map : (a -> b) -> @Tensor n a -> @Tensor n b = \f t => create t (\i => f t.[i])
+$ impl_IFmap_for_tensor : IFmap (@Tensor n a) a (@Tensor n b) b = .{ .fmap = tensor_map }
+$ tensor_map : (a -> b) -> @Tensor n a -> @Tensor n b = \f t => create (\i => f t.[i]) t
 
-# `map f t` with the leading axis split into `chunks` slices (O(1) views), each
-# mapped by a pure parallel task. The result equals `map f t`, element for
+# `fmap f t` with the leading axis split into `chunks` slices (O(1) views), each
+# mapped by a pure parallel task. The result equals `fmap f t`, element for
 # element; `f` is pure, so the order the tasks run in cannot show.
 $ par_map_chunks : @Int -> (a -> b) -> @Tensor n a -> @Tensor n b = \chunks f t =>
-    let n = length t in
+    let n = len t in
     let c = if chunks < 1 => 1 else chunks in
     let size = if n < c => 1 else (n + c - 1) / c in
     let parts = await_parts (spawn_parts f t size 0 (@vec_new {})) 0 (@vec_new {}) in
-    create t (\i => (@vec_get parts (i / size)).[i % size])
+    create (\i => (@vec_get parts (i / size)).[i % size]) t
 
-$ par_map : (a -> b) -> @Tensor n a -> @Tensor n b = \f t => par_map_chunks 64 f t
+$ impl_IParMap_for_tensor : IParMap (@Tensor n a) a (@Tensor n b) b =
+    .{ .par_map = \f t => par_map_chunks 64 f t }
 
 $ spawn_parts : (a -> b) -> @Tensor n a -> @Int -> @Int -> @Vec (@Future (@Tensor k b))
     -> @Vec (@Future (@Tensor k b)) = \f t size lo acc =>
-    let n = length t in
+    let n = len t in
     if lo >= n =>
         acc
     else
         let hi = if lo + size > n => n else lo + size in
-        let part = slice t lo hi in
-        let fut = @par (\u => map f part) in
+        let part : @Tensor k a = slice lo hi t in
+        let fut = @par (\u => tensor_map f part) in
         spawn_parts f t size hi (@vec_push acc fut)
 
 $ await_parts : @Vec (@Future (@Tensor k b)) -> @Int -> @Vec (@Tensor k b)

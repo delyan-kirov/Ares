@@ -959,14 +959,15 @@ fn range_via_hook_on_a_user_type() {
 
 #[test]
 fn open_range_via_hook_on_a_user_type() {
-    // The open `[lo ...]` goes through `@IRangeFrom`; CORE's instance builds the
-    // infinite `Stream`.
+    // The open `[lo ...]` goes through `@IRangeFrom`; CORE's instance builds an
+    // infinite, lazy `List`.
     let src = "$ @mod M\n\
         $ From : @struct = start: @Int\n\
         $ rf : @IRangeFrom @Int From = .{ .range_from = \\lo => From.{ lo } }\n\
         $ f : From = [5 ...]\n\
-        $ s : Stream @Int = [2 ...]\n\
-        $ r : @Int = f.start + s.tail.head";
+        $ s : List @Int = [2 ...]\n\
+        $ second : List @Int -> @Int = \\l => l |> \\ | List.Cons.{ h, t } => (t |> \\ | List.Cons.{ x, _ } => x | _ => 0) | _ => 0\n\
+        $ r : @Int = f.start + second s";
     assert_eq!(run(src, "r"), "8");
 }
 
@@ -1460,38 +1461,38 @@ fn float32_arithmetic_is_single_precision() {
 
 #[test]
 fn scalar_serialization_round_trips() {
-    // `to_string` / `from_string` are inverse over the integer, `@Nat`, sized
+    // `to_string` / `from_str` are inverse over the integer, `@Nat`, sized
     // int/nat, and boolean scalars. They are defined entirely in CORE (byte-level
     // `@array_*` plus arithmetic), not as compiler primitives, so a round trip
     // through text recovers the original value.
     let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
 
     // @Int, including the negative branch.
-    assert_eq!(ok("(from_string (to_string 1234)) == 1234"), "true");
-    assert_eq!(ok("(from_string (to_string (0 - 99))) == (0 - 99)"), "true");
+    assert_eq!(ok("(from_str (to_string 1234)) == Opt.Some.{ 1234 }"), "true");
+    assert_eq!(ok("(from_str (to_string (0 - 99))) == Opt.Some.{ 0 - 99 }"), "true");
     // @Nat prints unsigned; round-trip at the same type.
     assert_eq!(
-        ok("let n : @Nat = from_string (to_string (let m : @Nat = 250 in m)) in n == 250"),
+        ok("let n : @Nat = (from_str (to_string (let m : @Nat = 250 in m)) |> \\ | Opt.Some.{ v } => v | _ => 0) in n == 250"),
         "true"
     );
     // A sized width (`@Int32`), checked by comparing the rendered text.
     assert_eq!(
-        ok("let n : @Int32 = from_string \"77\" in (to_string n) == \"77\""),
+        ok("let n : @Int32 = (from_str \"77\" |> \\ | Opt.Some.{ v } => v | _ => 0) in (to_string n) == \"77\""),
         "true"
     );
     // Booleans render as `true`/`false` and parse back.
-    assert_eq!(ok("(from_string \"true\") == (1 == 1)"), "true");
-    assert_eq!(ok("(from_string \"false\") == (1 == 0)"), "true");
+    assert_eq!(ok("(from_str \"true\") == Opt.Some.{ 1 == 1 }"), "true");
+    assert_eq!(ok("(from_str \"false\") == Opt.Some.{ 1 == 0 }"), "true");
     // A `@Str` serializes as itself.
-    assert_eq!(ok("(from_string (to_string \"hi\")) == \"hi\""), "true");
+    assert_eq!(ok("(from_str (to_string \"hi\")) == Opt.Some.{ \"hi\" }"), "true");
     // Floats round-trip through their shortest decimal (via the C runtime seam:
     // `arx_real_to_str`/`arx_f32_to_str` + libc `atof`), at both widths.
     assert_eq!(
-        ok("let x : @Float64 = 3.5 in (from_string (to_string x)) == x"),
+        ok("let x : @Float64 = 3.5 in (from_str (to_string x)) == Opt.Some.{ x }"),
         "true"
     );
     assert_eq!(
-        ok("let x : @Float32 = from_string \"0.5\" in (to_string x) == \"0.5\""),
+        ok("let x : @Float32 = (from_str \"0.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in (to_string x) == \"0.5\""),
         "true"
     );
 }
@@ -1503,15 +1504,15 @@ fn float_widths_mix_only_by_explicit_conversion() {
     // conversion happens.
     let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
     assert_eq!(
-        ok("let x : @Float32 = from_string \"1.5\" in \
-            let y : @Float64 = from_string \"2.25\" in \
+        ok("let x : @Float32 = (from_str \"1.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
+            let y : @Float64 = (from_str \"2.25\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
             let e : @Float64 = 3.75 in (f32_to_f64 x + y) == e"),
         "true"
     );
     let err = errors(
         "$ @mod M\n$ a : @Bool = \
-         let x : @Float32 = from_string \"1.5\" in \
-         let y : @Float64 = from_string \"2.25\" in (x + y) == y",
+         let x : @Float32 = (from_str \"1.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
+         let y : @Float64 = (from_str \"2.25\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in (x + y) == y",
     );
     assert!(err.contains("type mismatch"), "{err}");
 }
@@ -1523,29 +1524,29 @@ fn sized_arithmetic_takes_literals_but_not_word_variables() {
     // does not: one operator, one type, so `@cast` says where the conversion is.
     let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
     assert_eq!(
-        ok("let p : @Int32 = from_string \"3\" in \
+        ok("let p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
             let x : @Int = 5 in \
             let y : @Int32 = @cast x in \
-            let r : @Int32 = y * p in r == from_string \"15\""),
+            let r : @Int32 = y * p in r == (from_str \"15\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
     );
     let err = errors(
         "$ @mod M\n$ a : @Bool = \
-         let p : @Int32 = from_string \"3\" in \
+         let p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
          let x : @Int = 5 in (x * p) == p",
     );
     assert!(err.contains("type mismatch"), "{err}");
     // The reported real-world case: a bare literal times a sized value.
     assert_eq!(
-        ok("let p : @Int32 = from_string \"3\" in \
-            let r : @Int32 = 2 * p in r == from_string \"6\""),
+        ok("let p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
+            let r : @Int32 = 2 * p in r == (from_str \"6\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
     );
     assert_eq!(
-        ok("let n : @Nat16 = from_string \"7\" in \
+        ok("let n : @Nat16 = (from_str \"7\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
             let two : @Nat = 2 in \
             let t : @Nat16 = @cast two in \
-            let r : @Nat16 = t * n in r == from_string \"14\""),
+            let r : @Nat16 = t * n in r == (from_str \"14\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
     );
 }
@@ -1557,11 +1558,11 @@ fn sized_literal_arithmetic_evaluates() {
     // not defaulted to `@Int`).
     let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
     assert_eq!(
-        ok("let r : @Int32 = 2 + 3 * 4 in r == from_string \"14\""),
+        ok("let r : @Int32 = 2 + 3 * 4 in r == (from_str \"14\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
     );
     assert_eq!(
-        ok("let r : @Int64 = 100 - 1 in r == from_string \"99\""),
+        ok("let r : @Int64 = 100 - 1 in r == (from_str \"99\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
     );
 }

@@ -10,7 +10,7 @@ $ @mod INTERPOLATION
 #       builder AND the hole's type, so `@Int` and `@Str` holes mix with no
 #       overloading. No macro is involved: these are ordinary values.
 
-$ @import STR
+$ @import ARESxSTR
 
 # --- a prepared statement ----------------------------------------------------
 # The text carries `$1`, `$2`, ... where the holes were, and the values travel
@@ -44,7 +44,7 @@ $ two : @Int = placeholders "UPDATE t SET a = ?(1), b = ?("x")"
 $ Html : @struct = src: @Str
 
 $ escape : @Str -> @Str = \s =>
-    STR.replace (STR.replace (STR.replace s "&" "&amp;") "<" "&lt;") ">" "&gt;"
+    ARES.replace ">" "&gt;" (ARES.replace "<" "&lt;" (ARES.replace "&" "&amp;" s))
 
 $ impl_IInterp_for_Html : @IInterp Html Html = .{ .interp = \build => build Html.{ .src = "" } }
 $ impl_IInterpText_for_Html : @IInterpText Html = .{ .text = \h s => Html.{ .src = h.src ++ s } }

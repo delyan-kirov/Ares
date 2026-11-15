@@ -57,11 +57,14 @@ pub fn desugar_program(
     let mut aliases = HashMap::new();
     for item in ast.slice(program.items) {
         if let Item::Import { module, alias, .. } = item {
-            let module = dotted(*module);
+            let unit = dotted(*module);
+            let module = resolved.units.get(&unit).copied().unwrap_or(unit);
             if let Some(alias) = alias {
                 aliases.insert(*alias, module);
             }
-            imports.push(module);
+            if !imports.contains(&module) {
+                imports.push(module);
+            }
         }
     }
     // Every module sees the prelude, after what it imports by name, so a CORE

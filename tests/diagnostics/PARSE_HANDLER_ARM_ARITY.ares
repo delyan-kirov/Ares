@@ -1,5 +1,7 @@
 $ @mod PARSE_HANDLER_ARM_ARITY
 
+$ @import ARESxALGO
+
 $ Ask : @effect = ask: {} -> @Int
 
 # A handler's value arm matches the one value the body returns.

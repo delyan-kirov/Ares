@@ -141,6 +141,9 @@ pub struct Resolved {
     pub lazy_slots: LazySlots,
     /// Every module's declared types, as the checker resolved them.
     pub declarations: Declarations,
+    /// The module each file belongs to, by the name importers write for it
+    /// (`ARESxMAP` -> `ARES`). A file that is a whole module maps to itself.
+    pub units: HashMap<StrId, StrId>,
 }
 
 /// Gather every checker resolution lowering needs into one [`Resolved`]: `[..]`
@@ -155,6 +158,7 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
     let mut resolved = Resolved::default();
     for checker in checkers {
         resolved.declarations.add_module(checker);
+        resolved.units.insert(checker.unit_name(), checker.module_name());
         resolved.tensor_exprs.extend(checker.tensor_nodes().iter().copied());
         resolved.interp_targets.extend(checker.interp_nodes().iter().copied());
         resolved.interp_quoted.extend(checker.interp_quoted_nodes().iter().copied());

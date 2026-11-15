@@ -1,4 +1,5 @@
 $ @mod BUILD
+$ @import ARESxALGO
 $ @import GREET  #~ error[UNKNOWN_MODULE]: cannot find module `GREET`
 
 # `BUILD.ares` cannot import from the directories it adds.

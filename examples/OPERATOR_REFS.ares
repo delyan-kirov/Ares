@@ -6,7 +6,8 @@ $ @mod OPERATOR_REFS
 #       curries, passes as an argument, and dispatches across the overload set
 #       like any other function reference.
 
-$ @import VEC
+$ @import ARESxALGO
+$ @import ARESxVEC
 
 $ apply2 : (@Int -> @Int -> @Int) -> @Int -> @Int -> @Int = \f a b => f a b
 

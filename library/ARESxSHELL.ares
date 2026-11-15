@@ -1,6 +1,6 @@
-$ @mod ARES_SHELL
+$ @mod ARES
 
-# \file ARES_SHELL.ares
+# \file ARESxSHELL.ares
 # \info The shell's library, imported bare by every `ares shell` session.
 #       The `@shell_*` builtins are the operations of the built-in `<@Shell>`
 #       effect: the shell performs them, so they work only there, and a
@@ -8,8 +8,10 @@ $ @mod ARES_SHELL
 #       what the `<@Meta>` reflection finds, which the shell can run because
 #       it runs at compile time.
 
-$ @import IO
-$ @import STR
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxVEC
+$ @import ARESxSTR
 
 # Leave the shell, forget the session, print the session.
 $ @shell_quit : {} -> <@Shell> {} = @extern "ares"
@@ -38,10 +40,10 @@ $ help_text : @Vec @Str = [
     "",
     "  $ _= <expr>       evaluate an expression and print its value and type",
     "  $ name : T = <e>  add (or redefine) a binding (silent, like a file)",
-    "  $ @import MOD        import a standard-library module (e.g. VEC, STR, MATH)",
+    "  $ @import ARESxVEC   import a part of the standard library (ARESxSTR, ARESxMATH, ...)",
     "  $ &<code>         run compile-time code, and add the items it returns",
     "",
-    "Every session imports ARES_SHELL:",
+    "Every session imports ARESxSHELL:",
     "  $ _= type \"1 + 2\"    print an expression's type (or a name's declared type)",
     "  $ _= scope \"vec\"     print the names in scope containing `vec`, with types",
     "  $ _= list {}         print the imports and definitions",
@@ -78,4 +80,4 @@ $ type : @Str -> <@Meta, @IO> {} = \src =>
 $ scope : @Str -> <@Meta, @IO> {} = \part =>
     for
         (@scope {}) <| \{ name, ty } =>
-            when (STR.contains name part) <| \_ => println <| name ++ " : " ++ ty
+            when (contains part name) <| \_ => println <| name ++ " : " ++ ty

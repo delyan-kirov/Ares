@@ -1,5 +1,7 @@
 $ @mod EFFECT_ARG_COUNT
 
+$ @import ARESxALGO
+
 $ Box : @effect a = take : @Int -> a,
 $ Log : @effect = log : @Str -> {},
 

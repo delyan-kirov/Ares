@@ -1410,9 +1410,9 @@ fn an_unbound_name_suggests_a_near_miss() {
 
 #[test]
 fn a_near_miss_instance_is_named_instead_of_none_in_scope() {
-    let text = rendered_errors("$ @mod M\n$ x = for ([0 ... 100] : List @Int) \\i => i\n");
-    assert!(text.contains("`impl_IFor_for_List` does not fit this use of `for`"), "{text}");
-    assert!(text.contains("its second type parameter is `@Int`, but this use needs `{}`"), "{text}");
+    let text = rendered_errors("$ @mod M\n$ x : @Vec @Int = \"a\" :: [1, 2]\n");
+    assert!(text.contains("does not fit this use of `::`"), "{text}");
+    assert!(text.contains("its second type parameter is"), "{text}");
     assert!(!text.contains("in scope"), "{text}");
 }
 

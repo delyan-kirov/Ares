@@ -9,8 +9,9 @@ $ @mod STDLIB_ASYNC
 #       task may perform effects of its own, served by a handler outside the
 #       group.
 
-$ @import ASYNC
-$ @import OPT
+$ @import ARESxALGO
+$ @import ARESxASYNC
+$ @import ARESxOPT
 
 # ---- producer / consumer ----
 
@@ -27,7 +28,7 @@ $ pipeline : @Int -> {} -> <Async> @Int = \n u =>
     let out = Async.chan 1 in
     Async.spawn (\w => produce c 1 n); Async.spawn (\w => consume c out 0); Async.recv out
 
-$ ck_pipeline : @Int = if unwrap_or (run_async (pipeline 100)) 0 == 5050 => 0 else 1
+$ ck_pipeline : @Int = if unwrap_or 0 (run_async (pipeline 100)) == 5050 => 0 else 1
 
 # Several producers into one channel: every value arrives exactly once.
 $ fan_in : {} -> <Async> @Int =
@@ -46,7 +47,7 @@ $ collect : Chan @Int -> @Int -> @Int -> <Async> @Int = \c ends acc =>
     else
         let v = Async.recv c in if v == 0 => collect c (ends - 1) acc else collect c ends (acc + v)
 
-$ ck_fan_in : @Int = if unwrap_or (run_async fan_in) 0 == 465 => 0 else 1
+$ ck_fan_in : @Int = if unwrap_or 0 (run_async fan_in) == 465 => 0 else 1
 
 # ---- interleaving ----
 
@@ -68,7 +69,7 @@ $ interleaved : {} -> <Async> @Int =
     Async.yield {};
     read_n log 6 0
 
-$ ck_interleaved : @Int = if unwrap_or (run_async interleaved) 0 == 112112221323 => 0 else 1
+$ ck_interleaved : @Int = if unwrap_or 0 (run_async interleaved) == 112112221323 => 0 else 1
 
 # ---- structure ----
 
@@ -76,7 +77,7 @@ $ ck_interleaved : @Int = if unwrap_or (run_async interleaved) 0 == 112112221323
 $ child_runs : {} -> <Async> @Int =
     let c = Async.chan 1 in Async.spawn (\w => Async.send { c, 7 }); Async.recv c
 
-$ ck_child : @Int = if unwrap_or (run_async child_runs) 0 == 7 => 0 else 1
+$ ck_child : @Int = if unwrap_or 0 (run_async child_runs) == 7 => 0 else 1
 
 # Waiting on a channel nobody sends to is a deadlock: `main` never finishes.
 $ stuck : {} -> <Async> @Int = let c = Async.chan 1 in Async.recv c
@@ -95,7 +96,7 @@ $ words : {} -> <Async> @Str =
     Async.spawn (\w => shout c "ho");
     let a = Async.recv c in a ++ " " ++ Async.recv c
 
-$ ck_words : @Int = if unwrap_or (run_async words) "" == "hey! ho!" => 0 else 1
+$ ck_words : @Int = if unwrap_or "" (run_async words) == "hey! ho!" => 0 else 1
 
 # ---- effectful tasks ----
 
@@ -121,10 +122,10 @@ $ count : ({} -> <Tally> a) -> { a, @Int } = \body =>
     run 0
 
 $ ck_tally : @Int =
-    let r = count (\u => unwrap_or (run_async tallied) 0) in if r.0 == 11 && r.1 == 22 => 0 else 1
+    let r = count (\u => unwrap_or 0 (run_async tallied)) in if r.0 == 11 && r.1 == 22 => 0 else 1
 
 # `run_async` polls no descriptors, so a task waiting on one stays blocked
-# (`ASYNC.run_io` would sleep in poll(2) instead).
+# (`ARES.run_io` would sleep in poll(2) instead).
 $ ck_wait_blocked : @Int = if is_none (run_async (\u => Async.wait_fd { 0, pollin }; 1)) => 0 else 1
 
 # Aggregate check for the combined test runner: 0 = all pass.

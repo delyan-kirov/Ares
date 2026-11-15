@@ -1,3 +1,5 @@
 $ @mod INT_LITERAL_RANGE
 
+$ @import ARESxALGO
+
 $ f : @Int8 = 300  #~ error[INT_LITERAL_RANGE]: integer literal 300 is out of range for `@Int8` (-128 to 127)

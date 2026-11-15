@@ -2,10 +2,13 @@ $ @mod WHEN
 
 # `when c <| \_ => body` is an `if` without an `else`: the body runs for its
 # effects, and any effects pass through to the caller. The condition goes through
-# the `IToResult` interface, so a `@Bool` gives the body `{}`, and an `Option` or a
+# the `IToResult` interface, so a `@Bool` gives the body `{}`, and an `Opt` or a
 # `Result` gives it the payload.
 
-$ @import OPT
+$ @import ARESxALGO
+$ @import ARESxVEC
+$ @import ARESxLIST
+$ @import ARESxOPT
 
 $ Yield : @effect = yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
@@ -20,8 +23,8 @@ $ ck_bool : @Int =
 $ ck_option : @Int =
     let found =
         sumY <| \u =>
-            when (Option.Some.{ 40 }) (\x => yield x);
-            when (Option.None : Option @Int) (\x => yield 1000);
+            when (Opt.Some.{ 40 }) (\x => yield x);
+            when (Opt.None : Opt @Int) (\x => yield 1000);
             yield 2
     in
     if found == 42 => 0 else 1

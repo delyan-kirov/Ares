@@ -5,11 +5,12 @@ $ @mod THRAX
  - \info Ares task runner
  -#
 
-$ @import IO
-$ @import OPT
-$ @import STR
-$ @import VEC
-$ @import RESULT
+$ @import ARESxALGO
+$ @import ARESxIO
+$ @import ARESxOPT
+$ @import ARESxSTR
+$ @import ARESxVEC
+$ @import ARESxRESULT
 $ @import FORGE
 $ @import HOOKS
 
@@ -175,21 +176,21 @@ $ spec : Command -> Spec = \c =>
 
 # `$ commands : @Vec Command = [Command.Build, ...]`, in declaration order.
 $ command_names : {} -> <@Meta> @Code =
-    @code <| STR.join ", " <| VEC.map (\v => "Command." ++ v.0) <| @type_variants "Command"
+    @code <| ARES.join ", " <| fmap (\v => "Command." ++ v.0) <| @type_variants "Command"
 $ &"$ commands : @Vec Command = [?(command_names {})]"
 
-$ parse_command : @Str -> Option Command = \s => VEC.find (\c => (spec c).name == s) commands
+$ parse_command : @Str -> Opt Command = \s => find (\c => (spec c).name == s) commands
 
 $ help_column : @Int = 12
 
 # A command's help entry: the description beside a short head, or under a long one.
 $ help_entry : Command -> @Str = \c =>
     let s = spec c in
-    let head = "  " ++ s.name ++ (if STR.is_empty s.usage => "" else " " ++ s.usage) in
-    let indent = STR.repeat " " help_column in
-    let info = STR.join ("\n" ++ indent) (STR.split s.info "\n") in
-    if STR.len head < help_column - 1 =>
-        STR.pad_right head help_column ++ info ++ "\n"
+    let head = "  " ++ s.name ++ (if is_empty s.usage => "" else " " ++ s.usage) in
+    let indent = ARES.repeat help_column " " in
+    let info = ARES.join ("\n" ++ indent) (ARES.split "\n" s.info) in
+    if len head < help_column - 1 =>
+        ARES.pad_right help_column head ++ info ++ "\n"
     else
         head ++ "\n" ++ indent ++ info ++ "\n"
 
@@ -199,14 +200,14 @@ $ help_text : @Str =
         ++ "Usage: thrax <command>\n"
         ++ "\n"
         ++ "Commands:\n"
-        ++ STR.concat (VEC.map help_entry commands)
+        ++ concat (fmap help_entry commands)
 
 $ readme_cmd : @Str = "${ARES_BIN:-ares} run tools/README_GEN.ares"
 
 $ logo_cmd : @Str = "${ARES_BIN:-ares} run tools/LOGO.ares"
 
 # A command path in the platform's shell: `cmd.exe` reads `/` as a switch.
-$ native_path : @Str -> @Str = \p => if TARGET.os == "windows" => STR.replace p "/" "\\" else p
+$ native_path : @Str -> @Str = \p => if TARGET.os == "windows" => ARES.replace "/" "\\" p else p
 
 # The combined corpus. `cargo test` does not cover it, so this is the only thing
 # that catches a break in the examples or the standard library. Both engines, and
@@ -221,18 +222,20 @@ $ corpus_task : @Bool -> <@IO, Fail> {} = \wasm =>
     let build =
         if wasm => " build --target=wasm32-wasi tests/MAIN.ares" else " build tests/MAIN.ares"
     in
-    let exe = if wasm => "node tests/ares-out/MAIN.js" else native_path "tests/ares-out/MAIN" in
+    let exe =
+        if wasm => "node tests/ares-artifacts/MAIN.js" else native_path "tests/ares-artifacts/MAIN"
+    in
     step "interpreter run" (bin ++ " run tests/MAIN.ares > " ++ interp);
     step "native build" (bin ++ build);
     step "native run" (exe ++ " > " ++ native);
     { read_file interp, read_file native }
         |> \
-            | { Option.Some.{ a }, Option.Some.{ b } } =>
+            | { Opt.Some.{ a }, Opt.Some.{ b } } =>
                 print b;
-                let la = STR.lines a in
-                let lb = STR.lines b in
-                let skip = VEC.append (skips la) (skips lb) in
-                if STR.join "\n" (comparable skip la) == STR.join "\n" (comparable skip lb) =>
+                let la = ARES.lines a in
+                let lb = ARES.lines b in
+                let skip = append (skips lb) (skips la) in
+                if ARES.join "\n" (comparable skip la) == ARES.join "\n" (comparable skip lb) =>
                     {}
                 else
                     Fail.fail "the engines disagree (target/corpus-*.txt)"
@@ -241,7 +244,7 @@ $ corpus_task : @Bool -> <@IO, Fail> {} = \wasm =>
 # The compiler the tasks run: $ARES_BIN (thrax's dev-shell wrapper points it
 # at the workspace build), else `ares` on the PATH.
 $ ares_bin : {} -> <@IO> @Str =
-    native_path (if STR.is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN")
+    native_path (if is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN")
 
 # ---- stats ----
 
@@ -253,16 +256,16 @@ $ zalmoxis_dir : @Str = "applications/zalmoxis"
 # built when it has no binary or a source is newer than it.
 $ stats_task : {} -> <@IO, Fail> {} =
     let main = zalmoxis_dir ++ "/MAIN.ares" in
-    let exe = native_path (zalmoxis_dir ++ "/ares-out/MAIN") in
+    let exe = native_path (zalmoxis_dir ++ "/ares-artifacts/MAIN") in
     (
         when
-            (VEC.is_empty (read_dir "applications")) <| \_ =>
+            (is_empty (read_dir "applications")) <| \_ =>
                 println "thrax: checking out the applications submodule ...";
                 step "submodule checkout" "git submodule update --init applications"
     );
     (
         when
-            (OPT.is_none (mtime main)) <| \_ =>
+            (ARES.is_none (mtime main)) <| \_ =>
                 Fail.fail
                     (
                         main
@@ -279,29 +282,29 @@ $ stats_task : {} -> <@IO, Fail> {} =
 
 # Whether `exe` is missing or older than one of the .ares sources in `dir`.
 $ stale : @Str -> @Str -> <@IO> @Bool = \exe dir =>
-    mtime exe |> \ | Option.Some.{ built } => newer_than built dir (read_dir dir) 0 | _ => @true
+    mtime exe |> \ | Opt.Some.{ built } => newer_than built dir (read_dir dir) 0 | _ => @true
 
 $ newer_than : @Int -> @Str -> @Vec @Str -> @Int -> <@IO> @Bool = \built dir names i =>
     if i >= @vec_len names =>
         @false
-    else if !(STR.ends_with (@vec_get names i) ".ares") =>
+    else if !(ARES.ends_with ".ares" (@vec_get names i)) =>
         newer_than built dir names (i + 1)
     else
         mtime (dir ++ "/" ++ @vec_get names i) |>
-            \ | Option.Some.{ t } if t > built => @true | _ => newer_than built dir names (i + 1)
+            \ | Opt.Some.{ t } if t > built => @true | _ => newer_than built dir names (i + 1)
 
 # The module named on a corpus line (`OK NAME`, `ERR NAME`, `SKIP NAME (why)`).
 $ line_module : @Str -> @Str = \l =>
-    let ws = STR.split l " " in if @vec_len ws > 1 => @vec_get ws 1 else ""
+    let ws = ARES.split " " l in if @vec_len ws > 1 => @vec_get ws 1 else ""
 
-$ is_skip : @Str -> @Bool = \l => STR.contains l "SKIP"
+$ is_skip : @Str -> @Bool = \l => ARES.contains "SKIP" l
 
 # The modules a corpus run skipped (tests/EXCEPTIONS.ares) on its platform.
-$ skips : @Vec @Str -> @Vec @Str = \ls => VEC.map line_module (VEC.filter is_skip ls)
+$ skips : @Vec @Str -> @Vec @Str = \ls => fmap line_module (filter is_skip ls)
 
 # A corpus output without what either run skipped: the part both must agree on.
 $ comparable : @Vec @Str -> @Vec @Str -> @Vec @Str = \skip ls =>
-    VEC.filter (\l => !(is_skip l) && !(VEC.contains STR.eq (line_module l) skip)) ls
+    filter (\l => !(is_skip l) && !(ARES.contains_by ARES.eq (line_module l) skip)) ls
 
 # `%expect` in the grammar is a tripwire: bison fails when the conflict count
 # moves, so a syntax change has to be accounted for in the spec.
@@ -328,7 +331,7 @@ $ edit_cmd : @Vec @Str -> <Fail> @Str = \args =>
 # The tags generator runs natively: interpreted, it takes seconds per file.
 # Built on first use and again when its source changes, as thrax itself is.
 $ tags_cmd : @Vec @Str -> @Str = \args =>
-    "bin=tools/editors/ares-out/TAGS; src=tools/editors/TAGS.ares;"
+    "bin=tools/editors/ares-artifacts/TAGS; src=tools/editors/TAGS.ares;"
         ++ " { [ -x \"$bin\" ] && [ ! \"$src\" -nt \"$bin\" ]; }"
         ++ " || ${ARES_BIN:-ares} build \"$src\" >/dev/null"
         ++ " && \"$bin\""
@@ -491,12 +494,12 @@ $ hooks_cmd : @Str =
         ++ " && { [ ! -e tools/editors/.git ] || git -C tools/editors config core.hooksPath hooks; }"
 
 $ new_issue : @Str -> <@IO, Fail> {} = \title =>
-    if STR.is_empty (STR.trim title) =>
+    if is_empty (ARES.trim title) =>
         Fail.fail "usage: thrax issue <title>"
     else
         with_forge (\u => Forge.create_issue title) |> \
-            | Option.Some.{ n } => println ("#" ++ int_to_str n)
-            | _                 => Fail.fail "could not open the issue"
+            | Opt.Some.{ n } => println ("#" ++ int_to_str n)
+            | _              => Fail.fail "could not open the issue"
 
 $ step : @Str -> @Str -> <@IO, Fail> {} = \what cmd =>
     if C.system cmd == 0 => {} else Fail.fail (what ++ " FAILED")
@@ -573,7 +576,7 @@ $ clean_task : @Vec @Str -> <@IO, Fail> {} = \args =>
         | "all" => step "cargo clean" "cargo clean"; step "clean" "rm -rf external/artifacts"
         | other => Fail.fail ("unknown clean mode `" ++ other ++ "` (try `all`)")
 
-$ sh_quote : @Str -> @Str = \s => "'" ++ STR.replace s "'" "'\\''" ++ "'"
+$ sh_quote : @Str -> @Str = \s => "'" ++ ARES.replace "'" "'\\''" s ++ "'"
 
 $ quoted_from : @Vec @Str -> @Int -> @Str = \args i =>
     if @vec_len args <= i => "" else " " ++ sh_quote (@vec_get args i) ++ quoted_from args (i + 1)
@@ -589,7 +592,7 @@ $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
         | .Test          => step "cargo clean" "cargo clean"; step "cargo test" "cargo test"
         | .Install       =>
             C.system "nix profile remove Ares"; step "nix profile add" "nix profile add"
-        | .Issue         => new_issue (STR.join " " (VEC.drop 2 args))
+        | .Issue         => new_issue (ARES.join " " (drop 2 args))
         | .Hook          => with_forge (\u => HOOKS.hook args)
         | .Readme =>
             println "thrax: regenerating README.md ...";
@@ -647,8 +650,8 @@ $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
 $ run : @Vec @Str -> <@IO, Fail> {} = \args =>
     let name = arg_or args 1 "help" in
     parse_command name |> \
-        | Option.Some.{ c } => run_command c args
-        | _                 => print help_text; Fail.fail ("unknown command `" ++ name ++ "`")
+        | Opt.Some.{ c } => run_command c args
+        | _              => print help_text; Fail.fail ("unknown command `" ++ name ++ "`")
 
 #-
  - \args(1) : command
