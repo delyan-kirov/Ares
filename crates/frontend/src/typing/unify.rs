@@ -10,9 +10,11 @@
 //! safe to quantify. The occurs check lowers levels as it walks, which is what
 //! keeps that sound. See Note [Rémy levels].
 //!
-//! Two theories ride on top of plain structural unification, each in its own
-//! module: [`rows`] (scoped-label rows for records and effects) and [`sizes`]
-//! (the `Nat` kind of tensor sizes, compared as polynomials).
+//! Unification compares weak head normal forms ([`Unifier::whnf`]): variable
+//! links followed, glued aliases unfolded, and a size evaluated to its
+//! polynomial. Two theories ride on top of plain structural unification, each in
+//! its own module: [`rows`] (scoped-label rows for records and effects) and
+//! [`sizes`] (the `Nat` kind of tensor sizes, compared as polynomials).
 //!
 //! Input: pairs of [`Type`]s to make equal. Output: the variable bindings, or a
 //! mismatch diagnostic. Every mutation is logged, so [`Unifier::save`] and
@@ -70,6 +72,15 @@ pub struct Unifier {
     /// the other variable is bound to one of these, never this one to it (see
     /// [`Unifier::keeping`]).
     keep: HashSet<VarId>,
+}
+
+/// A type in weak head normal form, as conversion compares it. See
+/// [`Unifier::whnf`].
+enum Whnf {
+    /// A size, evaluated: the `Nat` case of normalisation.
+    Size(sizes::Poly),
+    /// Any other type: its head node.
+    Node(TypeNode),
 }
 
 /// One reversible mutation, recorded so [`Unifier::restore`] can rewind a trial.
@@ -301,6 +312,20 @@ impl Unifier {
         self.types.node(self.resolve(ty))
     }
 
+    /// The weak head normal form unification compares: [`Unifier::resolve`],
+    /// then a size (a `Nat` literal, a `+`/`*`, or a `Nat`-kinded variable)
+    /// evaluated to its polynomial, so `n * 1` and `n` are the same size before
+    /// either is taken for a variable to bind.
+    fn whnf(&self, ty: Type) -> Whnf {
+        match self.head(ty) {
+            TypeNode::Nat(_) | TypeNode::NatAdd(..) | TypeNode::NatMul(..) => {
+                Whnf::Size(self.normalize_size(ty))
+            }
+            TypeNode::Var(id) if self.is_nat_var(id) => Whnf::Size(self.normalize_size(ty)),
+            node => Whnf::Node(node),
+        }
+    }
+
     /// Fully resolve a type, replacing every linked variable throughout ("zonk").
     pub fn zonk(&self, ty: Type) -> Type {
         if let Some((name, args, body)) = self.glued(ty) {
@@ -399,7 +424,15 @@ impl Unifier {
         if a == self.types.error() || b == self.types.error() {
             return Ok(());
         }
-        match (self.types.node(a), self.types.node(b)) {
+        let (na, nb) = match (self.whnf(a), self.whnf(b)) {
+            (Whnf::Size(pa), Whnf::Size(pb)) => return self.unify_size(pa, pb, a, b, where_),
+            (Whnf::Size(_), Whnf::Node(TypeNode::Var(j))) => return self.bind(j, a),
+            (Whnf::Node(TypeNode::Var(i)), Whnf::Size(_)) => return self.bind(i, b),
+            (Whnf::Size(_), Whnf::Node(_)) => return Err(self.kind_mismatch(self.found_first)),
+            (Whnf::Node(_), Whnf::Size(_)) => return Err(self.kind_mismatch(!self.found_first)),
+            (Whnf::Node(na), Whnf::Node(nb)) => (na, nb),
+        };
+        match (na, nb) {
             (TypeNode::Var(i), TypeNode::Var(j)) if i == j => Ok(()),
             (TypeNode::Var(i), TypeNode::Var(j)) if self.keep.contains(&i) && !self.keep.contains(&j) => {
                 self.bind(j, a)
@@ -407,9 +440,6 @@ impl Unifier {
             (TypeNode::Var(i), _) => self.bind(i, b),
             (_, TypeNode::Var(j)) => self.bind(j, a),
             (TypeNode::Con(x), TypeNode::Con(y)) if x == y => Ok(()),
-            // Sizes (Nat literals and `+`/`*` expressions) unify by their canonical
-            // polynomial (a bare Nat variable was already handled by the Var arms).
-            _ if self.is_size(a) || self.is_size(b) => self.unify_size(a, b, where_),
             (TypeNode::Arrow(a1, a2, ae), TypeNode::Arrow(b1, b2, be)) => {
                 self.unify(a1, b1, where_)?;
                 self.unify(a2, b2, where_)?;

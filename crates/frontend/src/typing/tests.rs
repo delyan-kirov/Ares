@@ -1515,3 +1515,15 @@ fn reflection_reports_member_sources_and_pending_types() {
     let q = &reflect.structs.iter().find(|(_, n, _)| n == "Q").expect("Q reflected").2;
     assert!(q.pending);
 }
+
+#[test]
+fn sizes_are_normalised_before_a_variable_binds() {
+    // `n * 1` is the size `n`, not a binding of `n` to `n * 1` (a cycle).
+    let src = "$ @mod M\n\
+               $ one : @Tensor (n * 1) @Int -> @Tensor n @Int = \\x => x\n\
+               $ zero : @Tensor n @Int -> @Tensor (n + 0) @Int = \\x => x\n\
+               $ comm : @Tensor (n + m) @Int -> @Tensor (m + n) @Int = \\x => x\n";
+    assert_eq!(errors(src), "");
+    let src = "$ @mod M\n$ succ : @Tensor n @Int -> @Tensor (n + 1) @Int = \\x => x\n";
+    assert!(errors(src).contains("size mismatch"), "{}", errors(src));
+}
