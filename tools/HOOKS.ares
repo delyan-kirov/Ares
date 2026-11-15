@@ -251,7 +251,7 @@ $ rev_line : @Str -> @Str = \rev => "rev = \"" ++ rev ++ "\""
 # The `rev` an extension.toml pins the grammar at.
 $ pinned_rev : @Str -> @Str = \toml =>
     let line = unwrap_or "" (find (\l => ARES.starts_with "rev = " l) (ARES.lines toml)) in
-    ARES.replace "\"" "" (ARES.replace line "rev = " "")
+    ARES.replace "\"" "" (ARES.replace "rev = " "" line)
 
 # The last commit up to `c` in tools/editors that changed the grammar.
 $ grammar_rev : @Str -> <@IO> @Str = \c =>
