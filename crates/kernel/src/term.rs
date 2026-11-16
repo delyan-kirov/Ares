@@ -11,6 +11,7 @@
 //!
 //! Entry point: [`Term`], printed by [`TermDisplay`].
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::rc::Rc;
 
@@ -41,7 +42,9 @@ pub enum Term {
     /// `@Type l`; `@Type 0` is the universe of propositions.
     Sort(Level),
     Pi(Rc<Binding>),
-    Lam(Name, Rc<Term>),
+    /// `\name => body`, with the domain when the source wrote one: a lambda
+    /// in a position that infers its type needs it to be re-checked.
+    Lam(Name, Option<Rc<Term>>, Rc<Term>),
     App(Rc<Term>, Rc<Term>),
     /// `let name: ty = val in body`, kept so `name` stays transparent.
     Let(Name, Rc<Term>, Rc<Term>, Rc<Term>),
@@ -60,16 +63,26 @@ pub enum Term {
     Eq(Level, Rc<Term>, Rc<Term>, Rc<Term>),
     /// `@cast from to proof value`.
     Cast(Rc<Term>, Rc<Term>, Rc<Term>, Rc<Term>),
-    /// `@Quot carrier relation`, at the carrier's sort; the proofs that the
-    /// relation is an equivalence were checked and are not kept.
-    Quot(Rc<Term>, Rc<Term>, Level),
+    /// `@refl a`.
+    Refl(Rc<Term>),
+    /// `@transp t motive proof t2 e`.
+    Transp(Rc<[Rc<Term>; 5]>),
+    /// `@Quot carrier relation refl sym trans`, at the carrier's sort, with
+    /// the proofs that the relation is an equivalence.
+    Quot(Rc<Term>, Rc<Term>, Level, Rc<[Rc<Term>; 3]>),
     /// `@qin a`, the class of `a`.
     QIn(Rc<Term>),
-    /// `@qelim motive method q`, with the motive's sort; the proof that the
-    /// method respects the relation was checked and is not kept.
-    QElim(Rc<Term>, Rc<Term>, Level, Rc<Term>),
-    /// A proof, whose value is irrelevant.
+    /// `@qelim motive method respect q`, with the motive's sort and the
+    /// proof that the method respects the relation.
+    QElim(Rc<Term>, Rc<Term>, Rc<Term>, Level, Rc<Term>),
+    /// `(e : ty)`, kept so a term that infers its type is re-checked as one.
+    Ann(Rc<Term>, Rc<Term>),
+    /// A term checked against a proposition. It is kept, so the term can be
+    /// re-checked, and never evaluated: its value is the irrelevant witness.
     /// See Note [Proofs evaluate to an irrelevant witness].
+    Proof(Rc<Term>),
+    /// The irrelevant witness itself, where a value is read back to a term or
+    /// a computation rule needs some proof. It cannot be re-checked.
     Irrelevant,
 }
 
@@ -165,9 +178,16 @@ impl Printer<'_> {
             }
             Term::Pi(b) => self.binding(out, prec, b, " -> ", Precedence::Arrow),
             Term::Sigma(b) => self.binding(out, prec, b, " * ", Precedence::Product),
-            Term::Lam(name, body) => {
+            Term::Lam(name, dom, body) => {
                 open(out, Precedence::Arrow);
-                out.push_str(&format!("\\{name} => "));
+                match dom {
+                    Some(dom) => {
+                        out.push_str(&format!("\\({name}: "));
+                        self.print(out, Precedence::Top, dom);
+                        out.push_str(") => ");
+                    }
+                    None => out.push_str(&format!("\\{name} => ")),
+                }
                 self.bind(name, |p| p.print(out, Precedence::Top, body));
                 close(out, Precedence::Arrow);
             }
@@ -215,8 +235,31 @@ impl Printer<'_> {
                 }
                 close(out, Precedence::App);
             }
+            Term::Refl(a) => {
+                open(out, Precedence::App);
+                out.push_str("@refl ");
+                self.print(out, Precedence::Atom, a);
+                close(out, Precedence::App);
+            }
+            Term::Transp(args) => {
+                open(out, Precedence::App);
+                out.push_str("@transp");
+                for t in args.iter() {
+                    out.push(' ');
+                    self.print(out, Precedence::Atom, t);
+                }
+                close(out, Precedence::App);
+            }
+            Term::Ann(e, ty) => {
+                out.push('(');
+                self.print(out, Precedence::Top, e);
+                out.push_str(" : ");
+                self.print(out, Precedence::Top, ty);
+                out.push(')');
+            }
+            Term::Proof(e) => self.print(out, prec, e),
             Term::Irrelevant => out.push_str("@irrelevant"),
-            Term::Quot(a, r, _) => {
+            Term::Quot(a, r, _, _) => {
                 open(out, Precedence::App);
                 out.push_str("@Quot ");
                 self.print(out, Precedence::Atom, a);
@@ -230,7 +273,7 @@ impl Printer<'_> {
                 self.print(out, Precedence::Atom, a);
                 close(out, Precedence::App);
             }
-            Term::QElim(p, f, _, q) => {
+            Term::QElim(p, f, _, _, q) => {
                 open(out, Precedence::App);
                 out.push_str("@qelim");
                 for t in [p, f, q] {
@@ -300,12 +343,16 @@ pub fn rename(t: &Term, cutoff: Index, f: &dyn Fn(Index) -> Index) -> Term {
         Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => t.clone(),
         Term::Eq(l, ty, a, b) => Term::Eq(l.clone(), go(ty, cutoff), go(a, cutoff), go(b, cutoff)),
         Term::Cast(x, y, e, v) => Term::Cast(go(x, cutoff), go(y, cutoff), go(e, cutoff), go(v, cutoff)),
-        Term::Quot(a, r, l) => Term::Quot(go(a, cutoff), go(r, cutoff), l.clone()),
+        Term::Refl(a) => Term::Refl(go(a, cutoff)),
+        Term::Transp(args) => Term::Transp(Rc::new(args.each_ref().map(|t| go(t, cutoff)))),
+        Term::Quot(a, r, l, proofs) => Term::Quot(go(a, cutoff), go(r, cutoff), l.clone(), Rc::new(proofs.each_ref().map(|t| go(t, cutoff)))),
         Term::QIn(a) => Term::QIn(go(a, cutoff)),
-        Term::QElim(p, f, l, q) => Term::QElim(go(p, cutoff), go(f, cutoff), l.clone(), go(q, cutoff)),
+        Term::QElim(p, f, e, l, q) => Term::QElim(go(p, cutoff), go(f, cutoff), go(e, cutoff), l.clone(), go(q, cutoff)),
+        Term::Ann(e, ty) => Term::Ann(go(e, cutoff), go(ty, cutoff)),
+        Term::Proof(e) => Term::Proof(go(e, cutoff)),
         Term::Pi(b) => Term::Pi(binding(b)),
         Term::Sigma(b) => Term::Sigma(binding(b)),
-        Term::Lam(name, body) => Term::Lam(name.clone(), go(body, cutoff + 1)),
+        Term::Lam(name, dom, body) => Term::Lam(name.clone(), dom.as_ref().map(|d| go(d, cutoff)), go(body, cutoff + 1)),
         Term::App(f, a) => Term::App(go(f, cutoff), go(a, cutoff)),
         Term::Let(name, ty, val, body) => Term::Let(name.clone(), go(ty, cutoff), go(val, cutoff), go(body, cutoff + 1)),
         Term::Pair(a, b) => Term::Pair(go(a, cutoff), go(b, cutoff)),
@@ -315,20 +362,42 @@ pub fn rename(t: &Term, cutoff: Index, f: &dyn Fn(Index) -> Index) -> Term {
     }
 }
 
+/// The immediate subterms of `t`, each with the number of binders it is
+/// under relative to `t`.
+pub fn children(t: &Term) -> Vec<(&Term, Index)> {
+    fn here<'a>(ts: &[&'a Rc<Term>]) -> Vec<(&'a Term, Index)> {
+        ts.iter().map(|t| (&***t, 0)).collect()
+    }
+    match t {
+        Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => Vec::new(),
+        Term::Pi(b) | Term::Sigma(b) => vec![(&*b.dom, 0), (&*b.cod, 1)],
+        Term::Lam(_, dom, body) => dom.iter().map(|d| (&**d, 0)).chain([(&**body, 1)]).collect(),
+        Term::Let(_, ty, val, body) => vec![(&**ty, 0), (&**val, 0), (&**body, 1)],
+        Term::App(a, b) | Term::Pair(a, b) | Term::Absurd(a, b) | Term::Ann(a, b) => here(&[a, b]),
+        Term::Fst(e) | Term::Snd(e) | Term::Refl(e) | Term::QIn(e) | Term::Proof(e) => here(&[e]),
+        Term::Eq(_, ty, a, b) => here(&[ty, a, b]),
+        Term::Cast(x, y, e, v) => here(&[x, y, e, v]),
+        Term::Transp(args) => args.iter().map(|t| (&**t, 0)).collect(),
+        Term::Quot(a, r, _, proofs) => [a, r].into_iter().chain(proofs.iter()).map(|t| (&**t, 0)).collect(),
+        Term::QElim(p, f, e, _, q) => here(&[p, f, e, q]),
+    }
+}
+
 /// Whether global `id` occurs in `t`.
 pub fn mentions_global(t: &Term, id: GlobalId) -> bool {
     match t {
         Term::Global(g, _) => *g == id,
-        Term::Var(_) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => false,
-        Term::Eq(_, ty, a, b) => [ty, a, b].iter().any(|t| mentions_global(t, id)),
-        Term::Cast(x, y, e, v) => [x, y, e, v].iter().any(|t| mentions_global(t, id)),
-        Term::Quot(a, r, _) => mentions_global(a, id) || mentions_global(r, id),
-        Term::QIn(a) => mentions_global(a, id),
-        Term::QElim(p, f, _, q) => [p, f, q].iter().any(|t| mentions_global(t, id)),
-        Term::Pi(b) | Term::Sigma(b) => mentions_global(&b.dom, id) || mentions_global(&b.cod, id),
-        Term::Lam(_, e) | Term::Fst(e) | Term::Snd(e) => mentions_global(e, id),
-        Term::App(a, b) | Term::Pair(a, b) | Term::Absurd(a, b) => mentions_global(a, id) || mentions_global(b, id),
-        Term::Let(_, ty, val, body) => mentions_global(ty, id) || mentions_global(val, id) || mentions_global(body, id),
+        _ => children(t).into_iter().any(|(c, _)| mentions_global(c, id)),
+    }
+}
+
+/// Add every global that occurs in `t` to `out`.
+pub fn globals(t: &Term, out: &mut BTreeSet<GlobalId>) {
+    if let Term::Global(g, _) = t {
+        out.insert(*g);
+    }
+    for (c, _) in children(t) {
+        globals(c, out);
     }
 }
 
@@ -336,18 +405,7 @@ pub fn mentions_global(t: &Term, id: GlobalId) -> bool {
 pub fn mentions(t: &Term, ix: Index) -> bool {
     match t {
         Term::Var(i) => *i == ix,
-        Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => false,
-        Term::Eq(_, ty, a, b) => [ty, a, b].iter().any(|t| mentions(t, ix)),
-        Term::Cast(x, y, e, v) => [x, y, e, v].iter().any(|t| mentions(t, ix)),
-        Term::Quot(a, r, _) => mentions(a, ix) || mentions(r, ix),
-        Term::QIn(a) => mentions(a, ix),
-        Term::QElim(p, f, _, q) => [p, f, q].iter().any(|t| mentions(t, ix)),
-        Term::Pi(b) | Term::Sigma(b) => mentions(&b.dom, ix) || mentions(&b.cod, ix + 1),
-        Term::Pair(a, b) | Term::Absurd(a, b) => mentions(a, ix) || mentions(b, ix),
-        Term::Fst(e) | Term::Snd(e) => mentions(e, ix),
-        Term::Lam(_, body) => mentions(body, ix + 1),
-        Term::App(f, a) => mentions(f, ix) || mentions(a, ix),
-        Term::Let(_, ty, val, body) => mentions(ty, ix) || mentions(val, ix) || mentions(body, ix + 1),
+        _ => children(t).into_iter().any(|(c, under)| mentions(c, ix + under)),
     }
 }
 

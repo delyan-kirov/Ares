@@ -179,7 +179,7 @@ pub fn eval(sig: &Signature, env: &Env, t: &Term) -> Val {
         }
         Term::Sort(l) => Val::Sort(env.level(l)),
         Term::Pi(b) => Val::Pi(Rc::new(eval_binding(sig, env, b))),
-        Term::Lam(name, body) => Val::Lam(name.clone(), Closure::Term(env.clone(), body.clone())),
+        Term::Lam(name, _, body) => Val::Lam(name.clone(), Closure::Term(env.clone(), body.clone())),
         Term::App(f, a) => apply(sig, eval(sig, env, f), eval(sig, env, a)),
         // Rule [Let]
         Term::Let(_, _, val, body) => eval(sig, &env.extend(eval(sig, env, val)), body),
@@ -197,14 +197,16 @@ pub fn eval(sig: &Signature, env: &Env, t: &Term) -> Val {
             cast(sig, from, to, eval(sig, env, proof), eval(sig, env, value))
         }
         // Rule [Proof-Witness]
-        Term::Irrelevant => Val::Irrelevant,
-        Term::Quot(a, r, level) => Val::Quot(Rc::new(QuotVal {
+        // See Note [Proofs evaluate to an irrelevant witness].
+        Term::Proof(_) | Term::Refl(_) | Term::Transp(_) | Term::Irrelevant => Val::Irrelevant,
+        Term::Ann(e, _) => eval(sig, env, e),
+        Term::Quot(a, r, level, _) => Val::Quot(Rc::new(QuotVal {
             carrier: eval(sig, env, a),
             relation: eval(sig, env, r),
             level: env.level(level),
         })),
         Term::QIn(a) => Val::QIn(Rc::new(eval(sig, env, a))),
-        Term::QElim(p, f, level, q) => {
+        Term::QElim(p, f, _, level, q) => {
             let (motive, method) = (eval(sig, env, p), eval(sig, env, f));
             qelim(sig, motive, method, env.level(level), eval(sig, env, q))
         }
@@ -287,14 +289,17 @@ pub fn quote(sig: &Signature, depth: Lvl, v: &Val) -> Term {
         Val::Neutral(n) => quote_neutral(sig, depth, n),
         Val::Sort(l) => Term::Sort(l.clone()),
         Val::Pi(p) => Term::Pi(Rc::new(quote_binding(sig, depth, p))),
-        Val::Lam(name, body) => Term::Lam(name.clone(), Rc::new(quote_closure(sig, depth, body))),
+        Val::Lam(name, body) => Term::Lam(name.clone(), None, Rc::new(quote_closure(sig, depth, body))),
         Val::Sigma(p) => Term::Sigma(Rc::new(quote_binding(sig, depth, p))),
         Val::Pair(pair) => Term::Pair(Rc::new(quote(sig, depth, &pair.0)), Rc::new(quote(sig, depth, &pair.1))),
         Val::Top => Term::Top,
         Val::Tt => Term::Tt,
         Val::Bottom => Term::Bottom,
         Val::Irrelevant => Term::Irrelevant,
-        Val::Quot(q) => Term::Quot(Rc::new(quote(sig, depth, &q.carrier)), Rc::new(quote(sig, depth, &q.relation)), q.level.clone()),
+        Val::Quot(q) => {
+            let proofs = Rc::new([(); 3].map(|_| Rc::new(Term::Irrelevant)));
+            Term::Quot(Rc::new(quote(sig, depth, &q.carrier)), Rc::new(quote(sig, depth, &q.relation)), q.level.clone(), proofs)
+        }
         Val::QIn(a) => Term::QIn(Rc::new(quote(sig, depth, a))),
         Val::Data(d) => {
             let head = Term::Global(sig.data(d.data).global, d.levels.clone());
@@ -369,7 +374,7 @@ fn quote_neutral(sig: &Signature, depth: Lvl, n: &Neutral) -> Term {
         }
         Neutral::QElim { motive, method, level, quotient } => {
             let q = |v| Rc::new(quote(sig, depth, v));
-            Term::QElim(q(motive), q(method), level.clone(), Rc::new(quote_neutral(sig, depth, quotient)))
+            Term::QElim(q(motive), q(method), Rc::new(Term::Irrelevant), level.clone(), Rc::new(quote_neutral(sig, depth, quotient)))
         }
     }
 }

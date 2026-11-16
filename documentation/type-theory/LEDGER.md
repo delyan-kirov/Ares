@@ -133,8 +133,9 @@ syntactic check, sound but incomplete. nanoda_lib, an independent Lean kernel
 in Rust, does split (`nanoda/level.rs:158-173`), which is the kernel's
 algorithm; neither has a proof. Its soundness is proved in Lean
 (`consistency-proof/Proofs/Levels.lean`); completeness is open (#479).
-Transitive axioms is graph reachability over what the checker resolved; it is
-a conjecture only in that nothing proves the recorded edges complete.
+Transitive axioms is graph reachability over the globals each global's type
+and body name, proofs included; it is a conjecture only in that nothing proves
+those edges complete.
 
 ## Rules
 
@@ -179,7 +180,7 @@ a conjecture only in that nothing proves the recorded edges complete.
 | Cast-Ctor | PLT25 | Section 4.1, the cast rule for a constructor | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Cast-Quot | PT22 | Section 4.1, cast of π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Cast-Refl | PLT25 | Fig. 3, Cast-Refl, a conversion rule | published | PLT25 Decidability, Puj22 Cast-Refl decidability, Lean Consistency | - | yes |
-| Proof-Witness | PT22, AC20 | PT22 Fig. 2, the proof terms of Refl, Transport-Ω and every other proof, which the kernel drops; AC20 Section 2, the loops that dropping them avoids | deviation | Lean Consistency | #465 | yes |
+| Proof-Witness | PT22, AC20 | PT22 Fig. 2, the proof terms of Refl, Transport-Ω and every other proof, which the kernel keeps but never evaluates; AC20 Section 2, the loops that evaluating them would cause | deviation | Lean Consistency | - | yes |
 | Data-Form | Dyb94, PLT25 | PLT25 Section 4.1, inductive definitions without indices, outside Ω (with indices, see Data-Ford); Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ford | PLT25 | Section 4.2, Fordism: indices as parameters with one equality field per index, and a cast in each branch of a match; index types restricted to depend on the parameters only | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ctor | Dyb94, PLT25 | PLT25 Section 4.1; Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
@@ -201,10 +202,12 @@ How the deviations differ from their sources:
   (#478). (`D a ~ D a'` is
   stuck too, but that is CIC^obs's rule, Eq-Data-Stuck; until 2026-11-11 it
   reduced to `a ~ a'`, which was unsound, #477.)
-- **Proof-Witness.** Every term checked against a proposition elaborates to
-  one irrelevant witness, so an elaborated term cannot be re-checked. Keeping
-  proofs would need another way to stop evaluation from looping on AC20's
-  terms.
+- **Proof-Witness.** Every term checked against a proposition is kept in
+  the elaborated term, so a signature can be re-checked (#465), but evaluates
+  to one irrelevant witness without being evaluated, which is what stops
+  evaluation from looping on AC20's terms. The proof terms the computation
+  rules would build (the components of an equality a cast passes through)
+  are that witness too.
 - **Positivity-Restricted.** A restriction of the schema, not an extension:
   no `A -> D params` fields and no nested occurrences.
 

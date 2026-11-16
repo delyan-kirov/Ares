@@ -2,7 +2,10 @@ use crate::{check_script, normal_form, Signature};
 
 pub(crate) fn accept(src: &str) -> Signature {
     match check_script(src) {
-        Ok(sig) => sig,
+        Ok(sig) => {
+            crate::recheck(&sig).unwrap_or_else(|e| panic!("does not re-check: {e}"));
+            sig
+        }
         Err(e) => panic!("rejected:\n{}", e.render(src, "test.ott")),
     }
 }

@@ -13,12 +13,11 @@
 //! Each global is checked in order and added to the [`Signature`]: its level
 //! parameters first, then its type, then its body against that type.
 //!
-//! Input: a script. Output: the signature of its globals, or the first error.
+//! Input: a script. Output: the signature of its globals, with their proofs
+//! kept so [`crate::recheck()`] can check it again, or the first error.
 //!
 //! Entry point: [`check_script`].
 
-use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use utilities::error::closest;
@@ -28,18 +27,14 @@ use crate::conversion::ConversionChecker;
 use crate::level::Level;
 use crate::nbe::{apply, eval, fst, global_type, quote, BindingVal, Closure, Env, Lvl, Neutral, QuotVal, Val};
 use crate::observational::{cast, eq, native_pi, relation_type};
-use crate::inductive::{constructor_type, projection_type, recursor_type};
+use crate::inductive::{constructor_type, ford, projection_type, recursor_type};
 use crate::signature::{ConstructorDecl, DataDecl, DataId, Global, GlobalId, GlobalKind, Param, Signature};
 use crate::syntax::{error, parse_script, Item, ItemBody, LevelArg, Primitive, Raw, RawConstructor, RawKind, RawLevel};
-use crate::term::{mentions, mentions_global, rename, shift, Binding, Name, Term, TermDisplay};
+use crate::term::{mentions, mentions_global, Binding, Name, Term, TermDisplay};
 
 /// Check every global of a script.
 pub fn check_script(src: &str) -> Result<Signature> {
-    let mut checker = Checker {
-        src,
-        sig: Signature::new(),
-        uses: RefCell::default(),
-    };
+    let mut checker = Checker { src, sig: Signature::new() };
     for item in parse_script(src)? {
         checker.check_item(&item)?;
     }
@@ -49,9 +44,6 @@ pub fn check_script(src: &str) -> Result<Signature> {
 struct Checker<'s> {
     src: &'s str,
     sig: Signature,
-    /// The globals resolved since the last [`Checker::take_uses`].
-    /// See Note [Axioms are collected before proofs are erased].
-    uses: RefCell<BTreeSet<GlobalId>>,
 }
 
 /// The variables in scope, outermost first: their names and types, and the
@@ -99,12 +91,7 @@ impl Checker<'_> {
         error(self.src, code, span, msg)
     }
 
-    fn take_uses(&self) -> Vec<GlobalId> {
-        std::mem::take(&mut *self.uses.borrow_mut()).into_iter().collect()
-    }
-
     fn check_item(&mut self, item: &Item) -> Result<()> {
-        self.take_uses();
         if self.sig.lookup(&item.name).is_some() {
             return Err(self.error(Code::DuplicateSymbol, item.span, format!("`{}` is already defined", item.name)));
         }
@@ -133,7 +120,6 @@ impl Checker<'_> {
             level_params: level_names,
             ty: Rc::new(ty),
             kind,
-            uses: self.take_uses(),
         });
         Ok(())
     }
@@ -227,29 +213,23 @@ impl Checker<'_> {
             constructors: Vec::new(),
             recursor: GlobalId::MAX,
         });
-        let former = self.sig.add(Global {
+        self.sig.add(Global {
             name: item.name.clone(),
             level_params: level_names.clone(),
             ty: Rc::new(ty),
             kind: GlobalKind::Data(data),
-            uses: self.take_uses(),
         });
-        let mut constructors = Vec::new();
         for (index, c) in ctors.iter().enumerate() {
             let mut decl = self.check_constructor(data, &level_names, &level, c)?;
             decl.global = self.sig.next_global();
             self.sig.data_mut(data).constructors.push(decl);
             let ty = constructor_type(self.sig.data(data), level_names.len(), index);
-            let mut uses = self.take_uses();
-            uses.retain(|g| *g != former);
-            uses.push(former);
-            constructors.push(self.sig.add(Global {
+            self.sig.add(Global {
                 name: c.name.clone(),
                 level_params: level_names.clone(),
                 ty: Rc::new(ty),
                 kind: GlobalKind::Constructor(data, index),
-                uses,
-            }));
+            });
         }
         // A type without parameters is equal only to itself, so its
         // projections would say nothing.
@@ -261,7 +241,6 @@ impl Checker<'_> {
                     level_params: level_names.clone(),
                     ty: Rc::new(ty),
                     kind: GlobalKind::Projection(data, index, j),
-                    uses: vec![former],
                 });
             }
         }
@@ -279,7 +258,6 @@ impl Checker<'_> {
             level_params: recursor_levels,
             ty: Rc::new(ty),
             kind: GlobalKind::Recursor(data),
-            uses: constructors.into_iter().chain([former]).collect(),
         });
         Ok(())
     }
@@ -328,7 +306,6 @@ impl Checker<'_> {
             recursive.push(is_self);
             ctx.bind(name, ty_val);
         }
-        let nf = surface.len() as u32;
         let indices: Vec<Rc<Term>> = match &c.result {
             None if u < np => {
                 return Err(self.error(
@@ -341,7 +318,13 @@ impl Checker<'_> {
             Some(raw) => {
                 let (ty, _) = self.check_type(&mut ctx, raw)?;
                 let ty_val = self.eval(&ctx, &ty);
+                // The indices as written when the result is `D` applied
+                // directly, so they keep their proofs; read back otherwise.
+                let written = spine(&ty);
                 let indices: Vec<Rc<Term>> = match &ty_val {
+                    Val::Data(_) if is_data_at_own_params(&ty_val, data, np, u) && written.len() == np && head(&ty) == Some(decl.global) => {
+                        written[u..].iter().map(|y| Rc::new((*y).clone())).collect()
+                    }
                     Val::Data(d) if is_data_at_own_params(&ty_val, data, np, u) => {
                         d.params[u..].iter().map(|y| Rc::new(quote(&self.sig, ctx.depth(), y))).collect()
                     }
@@ -360,30 +343,7 @@ impl Checker<'_> {
             }
         };
 
-        // Rule [Data-Ford]
-        // See Note [Indexed families are forded].
-        // The forded fields: the fields over all the parameters, then one
-        // equality per index, `y_i ~ x_i`.
-        let ni = (np - u) as u32;
-        let mut fields: Vec<Param> = surface
-            .iter()
-            .enumerate()
-            .map(|(f, p)| Param { name: p.name.clone(), ty: Rc::new(shift(&p.ty, f as u32, ni)), level: p.level.clone() })
-            .collect();
-        for (i, y) in indices.iter().enumerate() {
-            let i32_ = i as u32;
-            let index = &decl.params[u + i];
-            let depth = np as u32 + nf + i32_;
-            let y = rename(y, 0, &|v| if v < nf { v + i32_ } else { v + i32_ + ni });
-            let x = Term::Var(depth - 1 - (u as u32 + i32_));
-            let ty = shift(&index.ty, 0, ni + nf);
-            fields.push(Param {
-                name: format!("{}_eq", index.name).into(),
-                ty: Rc::new(Term::Eq(index.level.clone(), Rc::new(ty), Rc::new(y), Rc::new(x))),
-                level: Level::Zero,
-            });
-            recursive.push(false);
-        }
+        let (fields, recursive) = ford(decl, &surface, recursive, &indices);
         Ok(ConstructorDecl {
             name: c.name.clone(),
             global: GlobalId::MAX,
@@ -397,7 +357,7 @@ impl Checker<'_> {
 
 /// `(x y: A) -> R x y -> @cast (P (@qin x)) (P (@qin y)) _ (f x) ~ f y`: the
 /// method `f` sends related representatives to equal results.
-fn respect_type(quot: Rc<QuotVal>, p: Val, f: Val, level: Level) -> Val {
+pub(crate) fn respect_type(quot: Rc<QuotVal>, p: Val, f: Val, level: Level) -> Val {
     let outer = quot.clone();
     native_pi("x", outer.carrier.clone(), outer.level.clone(), Level::Zero, move |_, x| {
         let (quot, p, f, level) = (quot.clone(), p.clone(), f.clone(), level.clone());
@@ -412,17 +372,66 @@ fn respect_type(quot: Rc<QuotVal>, p: Val, f: Val, level: Level) -> Val {
     })
 }
 
+/// The types of the proofs that `r` is an equivalence on `a : @Type level`:
+/// `(x: A) -> R x x`, `(x y: A) -> R x y -> R y x` and
+/// `(x y z: A) -> R x y -> R y z -> R x z`.
+pub(crate) fn equivalence_laws(a: &Val, r: &Val, level: &Level) -> [Val; 3] {
+    let r0 = r.clone();
+    let rel = Rc::new(move |sig: &Signature, x: Val, y: Val| apply(sig, apply(sig, r0.clone(), x), y));
+
+    let r1 = rel.clone();
+    let reflexive = native_pi("x", a.clone(), level.clone(), Level::Zero, move |sig, x| r1(sig, x.clone(), x));
+
+    let (a2, l2, r2) = (a.clone(), level.clone(), rel.clone());
+    let symmetric = native_pi("x", a.clone(), level.clone(), Level::Zero, move |_, x| {
+        let r2 = r2.clone();
+        native_pi("y", a2.clone(), l2.clone(), Level::Zero, move |sig, y| {
+            let forward = r2(sig, x.clone(), y.clone());
+            let back = r2(sig, y, x.clone());
+            native_pi("_", forward, Level::Zero, Level::Zero, move |_, _| back.clone())
+        })
+    });
+
+    let (a3, l3, rel3) = (a.clone(), level.clone(), rel);
+    let transitive = native_pi("x", a.clone(), level.clone(), Level::Zero, move |_, x| {
+        let (a3, l3, rel3) = (a3.clone(), l3.clone(), rel3.clone());
+        native_pi("y", a3.clone(), l3.clone(), Level::Zero, move |_, y| {
+            let (x, rel3) = (x.clone(), rel3.clone());
+            native_pi("z", a3.clone(), l3.clone(), Level::Zero, move |sig, z| {
+                let (xy, yz, xz) = (rel3(sig, x.clone(), y.clone()), rel3(sig, y.clone(), z.clone()), rel3(sig, x.clone(), z));
+                native_pi("_", xy, Level::Zero, Level::Zero, move |_, _| {
+                    let xz = xz.clone();
+                    native_pi("_", yz.clone(), Level::Zero, Level::Zero, move |_, _| xz.clone())
+                })
+            })
+        })
+    });
+    [reflexive, symmetric, transitive]
+}
+
+/// The global at the head of an application spine, if it is one.
+pub(crate) fn head(t: &Term) -> Option<GlobalId> {
+    let mut t = t;
+    while let Term::App(f, _) = t {
+        t = f;
+    }
+    match t {
+        Term::Global(id, _) => Some(*id),
+        _ => None,
+    }
+}
+
 /// `ty` is `D p0 ... pn` with each `pi` the parameter variable at level `i`.
 /// `ty` is `D` applied to its own uniform parameters (the first `uniform`
 /// of `params`), at any indices.
-fn is_data_at_own_params(ty: &Val, data: DataId, params: usize, uniform: usize) -> bool {
+pub(crate) fn is_data_at_own_params(ty: &Val, data: DataId, params: usize, uniform: usize) -> bool {
     let Val::Data(d) = ty else { return false };
     let own = |(i, p): (usize, &Val)| matches!(p, Val::Neutral(n) if matches!(**n, Neutral::Var(l) if l as usize == i));
     d.data == data && d.params.len() == params && d.params[..uniform].iter().enumerate().all(own)
 }
 
 /// The arguments of an application spine.
-fn spine(t: &Term) -> Vec<&Term> {
+pub(crate) fn spine(t: &Term) -> Vec<&Term> {
     let mut args = Vec::new();
     let mut t = t;
     while let Term::App(f, a) = t {
@@ -536,8 +545,8 @@ impl Checker<'_> {
         let term = self.check_relevant(ctx, raw, expected)?;
         // Rule [Proof-Witness]
         // See Note [Proofs evaluate to an irrelevant witness].
-        if self.conversion(ctx).is_proposition(expected) {
-            return Ok(Term::Irrelevant);
+        if self.conversion(ctx).is_proposition(expected) && !matches!(term, Term::Proof(_)) {
+            return Ok(Term::Proof(Rc::new(term)));
         }
         Ok(term)
     }
@@ -546,18 +555,22 @@ impl Checker<'_> {
         match (&raw.kind, expected) {
             // Rule [Fun]
             (RawKind::Lam(name, ann, body), Val::Pi(pi)) => {
-                if let Some(ann) = ann {
-                    let (t, _) = self.check_type(ctx, ann)?;
-                    let given = self.eval(ctx, &t);
-                    if !self.conversion(ctx).conv_type(&given, &pi.dom) {
-                        return Err(self.mismatch(ctx, ann.span, &pi.dom, &given));
+                let dom = match ann {
+                    Some(ann) => {
+                        let (t, _) = self.check_type(ctx, ann)?;
+                        let given = self.eval(ctx, &t);
+                        if !self.conversion(ctx).conv_type(&given, &pi.dom) {
+                            return Err(self.mismatch(ctx, ann.span, &pi.dom, &given));
+                        }
+                        Some(Rc::new(t))
                     }
-                }
+                    None => None,
+                };
                 let body = self.under(ctx, name, pi.dom.clone(), |c, ctx| {
                     let cod = pi.cod.apply(&c.sig, Val::var(ctx.depth() - 1));
                     c.check(ctx, body, &cod)
                 })?;
-                Ok(Term::Lam(name.clone(), Rc::new(body)))
+                Ok(Term::Lam(name.clone(), dom, Rc::new(body)))
             }
             // Rule [Sigma-Pair]
             (RawKind::Pair(a, b), Val::Sigma(sigma)) => {
@@ -654,7 +667,7 @@ impl Checker<'_> {
                     dom_level,
                     cod_level,
                 }));
-                Ok((Term::Lam(name.clone(), Rc::new(body)), ty))
+                Ok((Term::Lam(name.clone(), Some(Rc::new(dom)), Rc::new(body)), ty))
             }
             RawKind::Lam(name, None, _) => Err(self.error(
                 Code::TypeAnnotationRequired,
@@ -690,7 +703,8 @@ impl Checker<'_> {
             RawKind::Ann(e, ty) => {
                 let (ty, _) = self.check_type(ctx, ty)?;
                 let ty_val = self.eval(ctx, &ty);
-                Ok((self.check(ctx, e, &ty_val)?, ty_val))
+                let e = self.check(ctx, e, &ty_val)?;
+                Ok((Term::Ann(Rc::new(e), Rc::new(ty)), ty_val))
             }
             RawKind::Prim(prim, args) => self.infer_primitive(ctx, *prim, args),
             // Rule [Eq-Form]
@@ -773,8 +787,8 @@ impl Checker<'_> {
                 let (a, ty) = self.infer(ctx, &args[0])?;
                 let level = self.sort_of(ctx, &ty, args[0].span)?;
                 self.relevant(ctx, &ty, &level, args[0].span)?;
-                let a = self.eval(ctx, &a);
-                (Term::Irrelevant, eq(&self.sig, level, ty, a.clone(), a))
+                let a_val = self.eval(ctx, &a);
+                (Term::Refl(Rc::new(a)), eq(&self.sig, level, ty, a_val.clone(), a_val))
             }
             // Rule [Transport]
             Primitive::Transp => {
@@ -789,13 +803,14 @@ impl Checker<'_> {
                     cod_level: Level::constant(1),
                 }));
                 let motive = self.check(ctx, &args[1], &motive_ty)?;
-                let motive = self.eval(ctx, &motive);
-                let t = self.eval(ctx, &t);
-                self.check(ctx, &args[2], &apply(&self.sig, motive.clone(), t.clone()))?;
+                let motive_val = self.eval(ctx, &motive);
+                let t_val = self.eval(ctx, &t);
+                let proof = self.check(ctx, &args[2], &apply(&self.sig, motive_val.clone(), t_val.clone()))?;
                 let t2 = self.check(ctx, &args[3], &ty)?;
-                let t2 = self.eval(ctx, &t2);
-                self.check(ctx, &args[4], &eq(&self.sig, level, ty, t, t2.clone()))?;
-                (Term::Irrelevant, apply(&self.sig, motive, t2))
+                let t2_val = self.eval(ctx, &t2);
+                let e = self.check(ctx, &args[4], &eq(&self.sig, level, ty, t_val, t2_val.clone()))?;
+                let term = Term::Transp(Rc::new([t, motive, proof, t2, e].map(Rc::new)));
+                (term, apply(&self.sig, motive_val, t2_val))
             }
             // Rule [Cast]
             Primitive::Cast => {
@@ -830,45 +845,14 @@ impl Checker<'_> {
         let a = self.eval(ctx, &carrier);
         let relation = self.check(ctx, &args[1], &relation_type(a.clone(), level.clone()))?;
         let r = self.eval(ctx, &relation);
-        let r0 = r.clone();
-        let rel = Rc::new(move |sig: &Signature, x: Val, y: Val| apply(sig, apply(sig, r0.clone(), x), y));
+        let [reflexive, symmetric, transitive] = equivalence_laws(&a, &r, &level);
+        let proofs = [
+            self.check(ctx, &args[2], &reflexive)?,
+            self.check(ctx, &args[3], &symmetric)?,
+            self.check(ctx, &args[4], &transitive)?,
+        ];
 
-        // (x: A) -> R x x
-        let (r1, l1) = (r.clone(), level.clone());
-        let reflexive = native_pi("x", a.clone(), l1, Level::Zero, move |sig, x| apply(sig, apply(sig, r1.clone(), x.clone()), x));
-        self.check(ctx, &args[2], &reflexive)?;
-
-        // (x y: A) -> R x y -> R y x
-        let (a2, l2, r2) = (a.clone(), level.clone(), r.clone());
-        let symmetric = native_pi("x", a.clone(), level.clone(), Level::Zero, move |_, x| {
-            let r2 = r2.clone();
-            native_pi("y", a2.clone(), l2.clone(), Level::Zero, move |sig, y| {
-                let forward = apply(sig, apply(sig, r2.clone(), x.clone()), y.clone());
-                let back = apply(sig, apply(sig, r2.clone(), y), x.clone());
-                native_pi("_", forward, Level::Zero, Level::Zero, move |_, _| back.clone())
-            })
-        });
-        self.check(ctx, &args[3], &symmetric)?;
-
-        // (x y z: A) -> R x y -> R y z -> R x z
-        let (a3, l3) = (a.clone(), level.clone());
-        let rel3 = rel.clone();
-        let transitive = native_pi("x", a.clone(), level.clone(), Level::Zero, move |_, x| {
-            let (a3, l3, rel3) = (a3.clone(), l3.clone(), rel3.clone());
-            native_pi("y", a3.clone(), l3.clone(), Level::Zero, move |_, y| {
-                let (x, rel3) = (x.clone(), rel3.clone());
-                native_pi("z", a3.clone(), l3.clone(), Level::Zero, move |sig, z| {
-                    let (xy, yz, xz) = (rel3(sig, x.clone(), y.clone()), rel3(sig, y.clone(), z.clone()), rel3(sig, x.clone(), z));
-                    native_pi("_", xy, Level::Zero, Level::Zero, move |_, _| {
-                        let xz = xz.clone();
-                        native_pi("_", yz.clone(), Level::Zero, Level::Zero, move |_, _| xz.clone())
-                    })
-                })
-            })
-        });
-        self.check(ctx, &args[4], &transitive)?;
-
-        let term = Term::Quot(Rc::new(carrier), Rc::new(relation), level.clone());
+        let term = Term::Quot(Rc::new(carrier), Rc::new(relation), level.clone(), Rc::new(proofs.map(Rc::new)));
         Ok((term, Val::Sort(level)))
     }
 
@@ -895,10 +879,10 @@ impl Checker<'_> {
 
         // (x y: A) -> R x y -> @cast (P (@qin x)) (P (@qin y)) _ (f x) ~ f y
         let respects = respect_type(quot.clone(), p.clone(), f.clone(), level.clone());
-        self.check(ctx, &args[2], &respects)?;
+        let respect = self.check(ctx, &args[2], &respects)?;
 
         let ty = apply(&self.sig, p, self.eval(ctx, &q));
-        Ok((Term::QElim(Rc::new(motive), Rc::new(method), level, Rc::new(q)), ty))
+        Ok((Term::QElim(Rc::new(motive), Rc::new(method), Rc::new(respect), level, Rc::new(q)), ty))
     }
 
     /// A motive `P : dom -> @Type m`, with its sort `m`. A lambda is checked
@@ -906,15 +890,19 @@ impl Checker<'_> {
     /// have a Pi type over `dom`.
     fn infer_motive(&self, ctx: &mut Context, raw: &Raw, dom: &Val, dom_level: &Level) -> Result<(Term, Level)> {
         if let RawKind::Lam(name, ann, body) = &raw.kind {
-            if let Some(ann) = ann {
-                let (t, _) = self.check_type(ctx, ann)?;
-                let given = self.eval(ctx, &t);
-                if !self.conversion(ctx).conv_type(&given, dom) {
-                    return Err(self.mismatch(ctx, ann.span, dom, &given));
+            let written = match ann {
+                Some(ann) => {
+                    let (t, _) = self.check_type(ctx, ann)?;
+                    let given = self.eval(ctx, &t);
+                    if !self.conversion(ctx).conv_type(&given, dom) {
+                        return Err(self.mismatch(ctx, ann.span, dom, &given));
+                    }
+                    Some(Rc::new(t))
                 }
-            }
+                None => None,
+            };
             let (body, level) = self.under(ctx, name, dom.clone(), |c, ctx| c.check_type(ctx, body))?;
-            return Ok((Term::Lam(name.clone(), Rc::new(body)), level));
+            return Ok((Term::Lam(name.clone(), written, Rc::new(body)), level));
         }
         let (t, ty) = self.infer(ctx, raw)?;
         if let Val::Pi(pi) = &ty {
@@ -985,7 +973,6 @@ impl Checker<'_> {
         }
         // Rule [Level-Polymorphism]
         let levels: Rc<[Level]> = levels.into_iter().map(Option::unwrap).collect();
-        self.uses.borrow_mut().insert(id);
         let ty = global_type(&self.sig, id, levels.clone());
         Ok((Term::Global(id, levels), ty))
     }

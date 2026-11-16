@@ -92,6 +92,7 @@ fn terminates(name: &'static str, src: &'static str, names: &'static [&'static s
     let (done, wait) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let outcome = kernel::check_script(src).map(|sig| {
+            kernel::recheck(&sig).unwrap_or_else(|e| panic!("{name} does not re-check: {e}"));
             names.iter().map(|n| kernel::normal_form(&sig, n).expect("a definition")).collect::<Vec<_>>()
         });
         let _ = done.send(outcome.map_err(|e| e.render(src, name)));

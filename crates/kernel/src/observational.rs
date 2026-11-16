@@ -371,20 +371,28 @@ fn stuck_cast(a: Val, b: Val, e: Val, t: Val) -> Val {
 // A proof's value never matters: conversion compares proofs by their type
 // alone, and the computation rules of equality and cast only ever need *some*
 // proof to pass along. So every term the checker checks against a
-// proposition elaborates to `Term::Irrelevant` and evaluates to the one value
-// `Val::Irrelevant`, and the rules above pass it wherever TT^obs builds a
-// proof term (the components of `e : A ~ B` that a cast through a Pi or
-// Sigma type needs, or the congruence proofs a fieldwise cast needs). Those
-// proofs exist in the published system, which is what makes the shortcut
-// sound; the checker still type-checks every proof the user writes.
-// Eliminating the witness gives the witness again: applying or projecting
-// it, and casting it to another proposition.
+// proposition is kept as `Term::Proof` (with `@refl` and `@transp` as
+// `Term::Refl` and `Term::Transp` inside it) and evaluates to the one value
+// `Val::Irrelevant`, without evaluating what it wraps. The rules above pass
+// that value wherever TT^obs builds a proof term (the components of
+// `e : A ~ B` that a cast through a Pi or Sigma type needs, or the congruence
+// proofs a fieldwise cast needs). Those proofs exist in the published system,
+// which is what makes the shortcut sound. Eliminating the witness gives the
+// witness again: applying or projecting it, and casting it to another
+// proposition.
 //
-// Erasing every proof, not only `@refl` and `@transp`, is also what keeps
-// evaluation terminating. Abel and Coquand (LMCS 2020) build a proof of `T`
-// that loops when evaluated, by casting `T -> T` to `T` in the impredicative
-// universe; Cast-Pi would unfold such a cast forever. An erased proof is never
-// evaluated, and `tests/paradoxes.rs` checks that both of their terms finish.
+// The terms keep the proofs the user wrote, so `recheck` can check a
+// signature again from its terms alone. Values do not: a value read back to a
+// term has `Term::Irrelevant` where a proof was, and that cannot be
+// re-checked. Separating erasure from the terms is what lets a later pass
+// erase proofs for code generation without the kernel depending on it.
+//
+// Never evaluating a proof, not only `@refl` and `@transp`, is also what
+// keeps evaluation terminating. Abel and Coquand (LMCS 2020) build a proof of
+// `T` that loops when evaluated, by casting `T -> T` to `T` in the
+// impredicative universe; Cast-Pi would unfold such a cast forever. A kept
+// proof is checked but never evaluated, and `tests/paradoxes.rs` checks that
+// both of their terms finish, re-checked too.
 // See Note [Proof irrelevance is decided by the type].
 
 #[cfg(test)]
