@@ -22,8 +22,9 @@ fn every_script_checks() {
     for path in scripts() {
         let src = std::fs::read_to_string(&path).expect("a readable script");
         let name = path.file_name().unwrap().to_string_lossy().to_string();
-        if let Err(e) = kernel::check_script(&src) {
-            panic!("{name} is rejected:\n{}", e.render(&src, &name));
+        match kernel::check_script(&src) {
+            Ok(sig) => kernel::recheck(&sig).unwrap_or_else(|e| panic!("{name} does not re-check: {e}")),
+            Err(e) => panic!("{name} is rejected:\n{}", e.render(&src, &name)),
         }
     }
 }

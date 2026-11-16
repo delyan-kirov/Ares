@@ -7,8 +7,8 @@
 //! refer to earlier ones only, so the signature is append-only and a
 //! [`GlobalId`] never dangles.
 //!
-//! Each global also records the globals its source referred to, proofs
-//! included, so [`Signature::axioms`] can report the axioms it rests on.
+//! A global's terms keep their proofs, so [`Signature::axioms`] reads the
+//! axioms it rests on off its terms.
 //!
 //! Entry point: [`Signature`].
 
@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::level::Level;
-use crate::term::{Name, Term};
+use crate::term::{globals, Name, Term};
 
 /// A global's position in the signature.
 pub type GlobalId = u32;
@@ -90,9 +90,6 @@ pub struct Global {
     pub level_params: Vec<Name>,
     pub ty: Rc<Term>,
     pub kind: GlobalKind,
-    /// The globals its type and body named, before proofs were erased.
-    /// See Note [Axioms are collected before proofs are erased].
-    pub uses: Vec<GlobalId>,
 }
 
 #[derive(Default)]
@@ -113,6 +110,15 @@ impl Signature {
 
     pub fn lookup(&self, name: &str) -> Option<GlobalId> {
         self.by_name.get(name).copied()
+    }
+
+    /// How many globals there are; their ids are `0..len`.
+    pub fn len(&self) -> usize {
+        self.globals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.globals.is_empty()
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
@@ -137,12 +143,30 @@ impl Signature {
         self.globals.len() as GlobalId
     }
 
+    /// A global to tamper with, for tests that a re-check notices.
+    #[cfg(test)]
+    pub(crate) fn global_mut(&mut self, id: GlobalId) -> &mut Global {
+        &mut self.globals[id as usize]
+    }
+
     pub fn add(&mut self, global: Global) -> GlobalId {
         assert!(!self.by_name.contains_key(&global.name), "global `{}` is declared twice", global.name);
         let id = self.globals.len() as GlobalId;
         self.by_name.insert(global.name.clone(), id);
         self.globals.push(global);
         id
+    }
+
+    /// The globals global `id`'s type and body name.
+    /// See Note [Axioms are read off the terms].
+    fn uses(&self, id: GlobalId) -> BTreeSet<GlobalId> {
+        let global = self.global(id);
+        let mut out = BTreeSet::new();
+        globals(&global.ty, &mut out);
+        if let GlobalKind::Definition(body) = &global.kind {
+            globals(body, &mut out);
+        }
+        out
     }
 
     // Algorithm [Transitive axioms]
@@ -153,20 +177,19 @@ impl Signature {
         let mut stack = vec![id];
         while let Some(g) = stack.pop() {
             if seen.insert(g) {
-                stack.extend(self.global(g).uses.iter().copied());
+                stack.extend(self.uses(g));
             }
         }
         seen.into_iter().filter(|g| matches!(self.global(*g).kind, GlobalKind::Axiom)).collect()
     }
 }
 
-// Note [Axioms are collected before proofs are erased]
+// Note [Axioms are read off the terms]
 //
-// A proof evaluates to one irrelevant witness, and `@refl` and `@transp`
-// elaborate to `Term::Irrelevant`, so the stored terms forget which globals a
-// proof used. The checker therefore records every global it resolves while
-// checking a declaration, in `Global::uses`, and the axiom report follows
-// those edges instead of the terms. A global named only inside an erased
-// proof still counts, which is the point: a theorem proved from a postulate
-// rests on it.
+// A global rests on the globals its type and body name, and on the ones
+// those rest on. Proofs stay in the terms (they are only never evaluated), so
+// a global named only inside a proof still counts, which is the point: a
+// theorem proved from a postulate rests on it. An inductive type's
+// constructors carry its field types in their types, and its recursor names
+// the constructors.
 // See Note [Proofs evaluate to an irrelevant witness].

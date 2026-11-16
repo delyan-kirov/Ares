@@ -29,7 +29,10 @@ $ parity : Parity -> Bool = \q => @qelim (\_ => Bool) even (\x y e => e) q
 fn applies(src: &str) -> Signature {
     let all = format!("{PRELUDE}{src}");
     match check_script(&all) {
-        Ok(sig) => sig,
+        Ok(sig) => {
+            kernel::recheck(&sig).unwrap_or_else(|e| panic!("does not re-check: {e}"));
+            sig
+        }
         Err(e) => panic!("rejected:\n{}", e.render(&all, "rule.ott")),
     }
 }

@@ -17,6 +17,7 @@
 //! * [`conversion`] decides definitional equality.
 //! * [`syntax`] parses scripts and [`check`] elaborates them by bidirectional
 //!   type checking.
+//! * [`mod@recheck`] checks an elaborated signature again from its terms alone.
 //!
 //! Entry point: [`check_script`].
 
@@ -26,11 +27,13 @@ pub mod inductive;
 pub mod level;
 pub mod nbe;
 pub mod observational;
+pub mod recheck;
 pub mod signature;
 pub mod syntax;
 pub mod term;
 
 pub use check::check_script;
+pub use recheck::{recheck, RecheckError};
 pub use signature::Signature;
 
 /// The names of the axioms global `name` depends on, transitively (Lean's

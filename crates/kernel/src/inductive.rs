@@ -89,6 +89,39 @@ fn data_applied_from(decl: &DataDecl, levels: usize, depth: u32, first: u32) -> 
 // Rule [Data-Ctor]
 /// `(params) -> (fields) -> D params indices`, over the uniform parameters
 /// and the fields as written.
+// Rule [Data-Ford]
+// See Note [Indexed families are forded].
+/// A constructor's forded fields, over all of `decl.params`: the `surface`
+/// fields (over the uniform parameters), then one equality `y_i ~ x_i` per
+/// index, where `y_i` is the index the constructor states and `x_i` the
+/// index parameter. `recursive` marks the surface fields that are `D`
+/// itself; the equalities are not.
+pub fn ford(decl: &DataDecl, surface: &[Param], recursive: Vec<bool>, indices: &[Rc<Term>]) -> (Vec<Param>, Vec<bool>) {
+    let (np, u) = (decl.params.len(), decl.uniform);
+    let (ni, nf) = ((np - u) as u32, surface.len() as u32);
+    let mut fields: Vec<Param> = surface
+        .iter()
+        .enumerate()
+        .map(|(f, p)| Param { name: p.name.clone(), ty: Rc::new(shift(&p.ty, f as u32, ni)), level: p.level.clone() })
+        .collect();
+    let mut recursive = recursive;
+    for (i, y) in indices.iter().enumerate() {
+        let i32_ = i as u32;
+        let index = &decl.params[u + i];
+        let depth = np as u32 + nf + i32_;
+        let y = rename(y, 0, &|v| if v < nf { v + i32_ } else { v + i32_ + ni });
+        let x = Term::Var(depth - 1 - (u as u32 + i32_));
+        let ty = shift(&index.ty, 0, ni + nf);
+        fields.push(Param {
+            name: format!("{}_eq", index.name).into(),
+            ty: Rc::new(Term::Eq(index.level.clone(), Rc::new(ty), Rc::new(y), Rc::new(x))),
+            level: Level::Zero,
+        });
+        recursive.push(false);
+    }
+    (fields, recursive)
+}
+
 pub fn constructor_type(decl: &DataDecl, levels: usize, index: usize) -> Term {
     let ctor = &decl.constructors[index];
     let u = decl.uniform as u32;
