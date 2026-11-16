@@ -82,8 +82,8 @@ each rule's implementation with `// Rule [Name]`, and
 `kernel::axioms` lists the postulates a global rests on, transitively and
 through proofs (Lean's `#print axioms`). A script pins them with a
 `# axioms: a b` line above each declaration that rests on any, which
-`tests/scripts.rs` checks, so a new dependence on a postulate fails a test. `rationals.ott` rests on `mul_comm`,
-`mul_assoc` and `mul_cancel` (#463).
+`tests/scripts.rs` checks, so a new dependence on a postulate fails a test. `rationals.ott` rests on none: the
+ring laws it needs are proved through unary naturals (#463).
 
 ## 6. Next steps
 
