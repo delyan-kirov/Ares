@@ -66,7 +66,9 @@ fn univ() {
 #[test]
 fn level_polymorphism() {
     applies("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ n : Nat = id @ctx {.u = 1} Nat zero\n");
-    blocked("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ n : Nat = id Nat zero\n", "needs its level `u`");
+    // A level left out is inferred from the types around the use.
+    applies("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ n : Nat = id Nat zero\n");
+    blocked("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ n : @Type 1 = id\n", "cannot infer level `u` of `id`");
 }
 
 // Test [Pi-Form]

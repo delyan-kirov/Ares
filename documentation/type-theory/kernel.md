@@ -38,7 +38,8 @@ they evaluate.
 
 ## 3. The script language
 
-Scripts use the spelling #406 settled on, with every argument explicit:
+Scripts use the spelling #406 settled on, with every argument explicit
+except where a `_` or a left-out level stands for it:
 
 ```
 $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \t x => x
@@ -48,9 +49,10 @@ $ four : add (succ (succ zero)) (succ (succ zero)) ~ succ (succ (succ (succ zero
 ```
 
 - `$ name : T = e` defines, `$ name : T` postulates, `$ D : (params) -> @Type l = @data | c fields | ...` declares an inductive type. A constructor may state its result, `| c fields : D params indices`; the leading binders every constructor passes through unchanged are parameters, the rest indices: `$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @data | nil : Vec a zero | cons (m: Nat) (h: a) (t: Vec a m) : Vec a (succ m)`.
-- `@ctx {u: @l, ...} ->` at the start of a signature binds levels; a use passes them as `name @ctx {.u = l}`. Kernel levels range over every level, `0` included; the surface default `n >= 1` is a kernel `k + 1`.
+- `@ctx {u: @l, ...} ->` at the start of a signature binds levels; a use passes them as `name @ctx {.u = l}`, or leaves them out. Kernel levels range over every level, `0` included; the surface default `n >= 1` is a kernel `k + 1`.
 - Terms: `\x => e`, `\(x: A) => e`, `(x: A) -> B`, `A -> B`, `(x: A) * B`, `(a, b)`, `p.1`, `p.2`, `let x: T = e in b`, `(e : T)`, `a ~ b`.
 - Primitives: `@Type l`, `@Top`, `@tt`, `@Bottom`, `@absurd A e`, `@Eq A a b`, `@refl a`, `@transp t B u t' e`, `@cast A B e t`, `@Quot A R rr rs rt`, `@qin a`, `@qelim P f resp q`.
+- An argument written `_`, and a level left out of a use, are inferred by local argument synthesis: first-order matching against the expected type and the other arguments' types, such as `trans _ _ _ e f` against `a ~ c` or `Nat.elim (\n => P n) ...`. The checker then checks the application again with the solutions by the ordinary rules, so the elaborated terms are explicit and a wrong guess only rejects (#470). Matching does not see through computation: a step that proves `a ~ b` used as `nsucc a ~ nsucc b` needs its endpoints written.
 - `#` starts a comment.
 
 ## 4. The theory as implemented
@@ -75,7 +77,7 @@ each rule's implementation with `// Rule [Name]`, and
 - Equality between two instances of one inductive type with parameters, `D a ~ D a'`, is left stuck: computing it to `a ~ a'` would make type formers injective, which is inconsistent (#477).
 - Index types that depend on earlier indices are rejected (#490), as are nested recursive fields (#467). Infinitely branching fields are in, but outside the Lean consistency proof, whose model has only `ω` stages.
 - Definitions unfold eagerly, so error messages show unfolded terms. Glued evaluation would keep the names.
-- No metavariables or implicit arguments: the kernel checks elaborated terms, and every argument is written.
+- No metavariables or implicit arguments: the kernel checks elaborated terms. Scripts may leave arguments to local argument synthesis (section 3), which only fills in the script before the ordinary rules check it.
 
 ## 5.1 Axioms
 

@@ -10,7 +10,9 @@
 //! ```
 //!
 //! Every argument is explicit except levels, which a reference to a
-//! level-polymorphic global supplies with `@ctx {.u = l}`. A global without a
+//! level-polymorphic global supplies with `@ctx {.u = l}`. The checker
+//! infers left-out levels and an argument written `_` from the types around
+//! the application (see `check::spine`). A global without a
 //! body is an axiom, and one whose body is `@data | c fields | ...` an
 //! inductive type. Primitive forms are `@name` followed by a fixed number
 //! of arguments, read from the [`PRIMITIVES`] table.
@@ -52,6 +54,8 @@ pub enum RawKind {
     Snd(Box<Raw>),
     /// `a ~ b`.
     Eq(Box<Raw>, Box<Raw>),
+    /// `_`, an argument the checker infers.
+    Hole,
 }
 
 #[derive(Clone, Debug)]
@@ -673,6 +677,10 @@ impl Parser<'_> {
     fn atom_head(&mut self) -> Result<Raw> {
         let start = self.span().start;
         match self.peek(0).clone() {
+            Tok::Ident(n) if &*n == "_" => {
+                self.next();
+                Ok(self.raw(RawKind::Hole, start))
+            }
             Tok::Ident(_) => {
                 let (name, _) = self.ident()?;
                 let levels = self.level_args()?;
