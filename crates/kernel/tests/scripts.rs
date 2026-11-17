@@ -35,11 +35,17 @@ fn the_rationals_reject_wrong_claims() {
     let base = std::fs::read_to_string(path).expect("a readable script");
     let cases = [
         // 1/2 * 1/2 is not 1/2.
-        (format!("{base}\n$ wrong : qmul half half ~ half = @tt\n"), "expected `@Bottom`, found `@Top`"),
+        (format!("{base}\n$ wrong : qmul half half ~ half = @tt\n"), "this claim is false"),
         // The numerator of a fraction is not a function of its class.
         (
             format!("{base}\n$ numerator : Q -> Integer = \\q => @qelim (\\_ => Integer) (\\x => x.1) (\\x y e => e) q\n"),
             "~ y.1`, found",
+        ),
+        // Zero-ness respects the relation, but not because the relation says
+        // so; the expected type keeps `is_zero` folded.
+        (
+            format!("{base}\n$ wrong_zero : Q -> Bool = \\q => @qelim (\\_ => Bool) (\\x => is_zero x.1) (\\x y e => e) q\n"),
+            "(is_zero x.1) ~ is_zero y.1`, found `same x y`",
         ),
     ];
     for (src, needle) in cases {

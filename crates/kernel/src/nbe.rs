@@ -15,11 +15,18 @@
 //! it goes, so a value's levels are always closed over the parameters of the
 //! global being checked.
 //!
-//! Input: a term and an environment. Output: its value; [`quote`] reads a
-//! value back to a term at a context depth.
+//! A definition is not unfolded where it is evaluated: its application is a
+//! [`Val::Unfold`], which keeps the global and its arguments and computes the
+//! unfolding on demand ([`Val::force`]).
+//! See Note [Glued evaluation].
 //!
-//! Entry points: [`eval`], [`apply`], [`quote`].
+//! Input: a term and an environment. Output: its value; [`quote`] reads a
+//! value back to a term at a context depth, keeping definitions folded, and
+//! [`quote_unfolded`] reads it back to its normal form.
+//!
+//! Entry points: [`eval`], [`apply`], [`quote`], [`quote_unfolded`].
 
+use std::cell::OnceCell;
 use std::rc::Rc;
 
 use crate::inductive::{canonical, constructor_value, data_value, recursor_value, ConstructorVal, DataVal, RecursorArgs};
@@ -50,6 +57,57 @@ pub enum Val {
     Irrelevant,
     Quot(Rc<QuotVal>),
     QIn(Rc<Val>),
+    /// A definition applied to arguments, not yet unfolded.
+    Unfold(Rc<Unfold>),
+}
+
+/// A definition applied to zero or more arguments, with its unfolding
+/// computed the first time it is needed.
+/// See Note [Glued evaluation].
+pub struct Unfold {
+    pub global: GlobalId,
+    pub levels: Rc<[Level]>,
+    /// The application this one extends and its last argument, or `None` for
+    /// the definition itself.
+    pub applied: Option<(Rc<Unfold>, Val)>,
+    unfolded: OnceCell<Val>,
+}
+
+impl Unfold {
+    fn new(global: GlobalId, levels: Rc<[Level]>, applied: Option<(Rc<Unfold>, Val)>) -> Unfold {
+        Unfold {
+            global,
+            levels,
+            applied,
+            unfolded: OnceCell::new(),
+        }
+    }
+
+    /// The value with the definition unfolded, which may itself be another
+    /// definition's application.
+    pub fn unfolded(&self, sig: &Signature) -> &Val {
+        self.unfolded.get_or_init(|| match &self.applied {
+            None => {
+                let GlobalKind::Definition(body) = &sig.global(self.global).kind else {
+                    unreachable!("only a definition is glued")
+                };
+                eval(sig, &Env::with_levels(self.levels.clone()), body)
+            }
+            Some((f, a)) => apply(sig, f.unfolded(sig).clone(), a.clone()),
+        })
+    }
+
+    /// The arguments, first to last.
+    pub fn spine(&self) -> Vec<Val> {
+        let mut args = Vec::new();
+        let mut at = self;
+        while let Some((f, a)) = &at.applied {
+            args.push(a.clone());
+            at = f;
+        }
+        args.reverse();
+        args
+    }
 }
 
 /// A quotient type: a carrier in `@Type level` and an equivalence relation.
@@ -110,6 +168,15 @@ impl Val {
 
     pub fn neutral(n: Neutral) -> Val {
         Val::Neutral(Rc::new(n))
+    }
+
+    /// The value with every definition at its head unfolded: what the rules
+    /// that look at a value's head see.
+    pub fn force(&self, sig: &Signature) -> &Val {
+        match self {
+            Val::Unfold(u) => u.unfolded(sig).force(sig),
+            v => v,
+        }
     }
 }
 
@@ -185,8 +252,8 @@ pub fn eval(sig: &Signature, env: &Env, t: &Term) -> Val {
         Term::Let(_, _, val, body) => eval(sig, &env.extend(eval(sig, env, val)), body),
         Term::Sigma(b) => Val::Sigma(Rc::new(eval_binding(sig, env, b))),
         Term::Pair(a, b) => Val::Pair(Rc::new((eval(sig, env, a), eval(sig, env, b)))),
-        Term::Fst(e) => fst(eval(sig, env, e)),
-        Term::Snd(e) => snd(eval(sig, env, e)),
+        Term::Fst(e) => fst(sig, eval(sig, env, e)),
+        Term::Snd(e) => snd(sig, eval(sig, env, e)),
         Term::Top => Val::Top,
         Term::Tt => Val::Tt,
         Term::Bottom => Val::Bottom,
@@ -228,7 +295,8 @@ pub fn eval_global(sig: &Signature, id: GlobalId, levels: Rc<[Level]>) -> Val {
     let global = sig.global(id);
     assert_eq!(global.level_params.len(), levels.len(), "`{}` instantiated at the wrong number of levels", global.name);
     match &global.kind {
-        GlobalKind::Definition(body) => eval(sig, &Env::with_levels(levels), body),
+        // Algorithm [Glued evaluation]
+        GlobalKind::Definition(_) => Val::Unfold(Rc::new(Unfold::new(id, levels, None))),
         GlobalKind::Axiom => Val::neutral(Neutral::Axiom(id, levels)),
         GlobalKind::Data(data) => data_value(sig, *data, levels),
         GlobalKind::Constructor(data, index) => constructor_value(sig, *data, *index, levels),
@@ -248,6 +316,10 @@ pub fn apply(sig: &Signature, f: Val, a: Val) -> Val {
         Val::Lam(_, body) => body.apply(sig, a),
         Val::Neutral(n) => Val::neutral(Neutral::App(n, a)),
         Val::Irrelevant => Val::Irrelevant,
+        Val::Unfold(u) => {
+            let (global, levels) = (u.global, u.levels.clone());
+            Val::Unfold(Rc::new(Unfold::new(global, levels, Some((u, a)))))
+        }
         _ => unreachable!("applied a non-function: the checker let an ill-typed term through"),
     }
 }
@@ -258,39 +330,64 @@ pub fn qelim(sig: &Signature, motive: Val, method: Val, level: Level, q: Val) ->
         // Rule [Quot-Beta]
         Val::QIn(a) => apply(sig, method, (*a).clone()),
         Val::Neutral(n) => Val::neutral(Neutral::QElim { motive, method, level, quotient: n }),
+        Val::Unfold(u) => qelim(sig, motive, method, level, u.unfolded(sig).clone()),
         _ => unreachable!("eliminated a non-quotient: the checker let an ill-typed term through"),
     }
 }
 
 // Rule [Sigma-Pair]
-pub fn fst(p: Val) -> Val {
+pub fn fst(sig: &Signature, p: Val) -> Val {
     match p {
         Val::Pair(pair) => pair.0.clone(),
         Val::Neutral(n) => Val::neutral(Neutral::Fst(n)),
         Val::Irrelevant => Val::Irrelevant,
+        Val::Unfold(u) => fst(sig, u.unfolded(sig).clone()),
         _ => unreachable!("projected from a non-pair: the checker let an ill-typed term through"),
     }
 }
 
-pub fn snd(p: Val) -> Val {
+pub fn snd(sig: &Signature, p: Val) -> Val {
     match p {
         Val::Pair(pair) => pair.1.clone(),
         Val::Neutral(n) => Val::neutral(Neutral::Snd(n)),
         Val::Irrelevant => Val::Irrelevant,
+        Val::Unfold(u) => snd(sig, u.unfolded(sig).clone()),
         _ => unreachable!("projected from a non-pair: the checker let an ill-typed term through"),
     }
 }
 
 // ## Read-back
 
-/// Read a value back to a term in a context of `depth` variables.
+/// Read a value back to a term in a context of `depth` variables, with the
+/// definitions it applies folded, as they were written.
 pub fn quote(sig: &Signature, depth: Lvl, v: &Val) -> Term {
+    read_back(sig, Unfolding::Folded, depth, v)
+}
+
+/// Read a value back to its normal form, every definition unfolded.
+pub fn quote_unfolded(sig: &Signature, depth: Lvl, v: &Val) -> Term {
+    read_back(sig, Unfolding::Unfolded, depth, v)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Unfolding {
+    Folded,
+    Unfolded,
+}
+
+fn read_back(sig: &Signature, mode: Unfolding, depth: Lvl, v: &Val) -> Term {
+    let quote = |sig, depth, v| read_back(sig, mode, depth, v);
+    let quote_spine = |sig, depth, head, args: &[Val]| quote_spine(sig, mode, depth, head, args);
     match v {
-        Val::Neutral(n) => quote_neutral(sig, depth, n),
+        Val::Unfold(u) => match mode {
+            Unfolding::Folded => quote_spine(sig, depth, Term::Global(u.global, u.levels.clone()), &u.spine()),
+            Unfolding::Unfolded => quote(sig, depth, u.unfolded(sig)),
+        },
+        Val::Neutral(n) => quote_neutral(sig, mode, depth, n),
         Val::Sort(l) => Term::Sort(l.clone()),
-        Val::Pi(p) => Term::Pi(Rc::new(quote_binding(sig, depth, p))),
-        Val::Lam(name, body) => Term::Lam(name.clone(), None, Rc::new(quote_closure(sig, depth, body))),
-        Val::Sigma(p) => Term::Sigma(Rc::new(quote_binding(sig, depth, p))),
+        Val::Pi(p) => Term::Pi(Rc::new(quote_binding(sig, mode, depth, p))),
+        Val::Lam(name, body) => Term::Lam(name.clone(), None, Rc::new(read_back_closure(sig, mode, depth, body))),
+        Val::Sigma(p) => Term::Sigma(Rc::new(quote_binding(sig, mode, depth, p))),
         Val::Pair(pair) => Term::Pair(Rc::new(quote(sig, depth, &pair.0)), Rc::new(quote(sig, depth, &pair.1))),
         Val::Top => Term::Top,
         Val::Tt => Term::Tt,
@@ -330,15 +427,15 @@ pub fn quote(sig: &Signature, depth: Lvl, v: &Val) -> Term {
     }
 }
 
-fn quote_spine(sig: &Signature, depth: Lvl, head: Term, args: &[Val]) -> Term {
-    args.iter().fold(head, |f, a| Term::app(f, quote(sig, depth, a)))
+fn quote_spine(sig: &Signature, mode: Unfolding, depth: Lvl, head: Term, args: &[Val]) -> Term {
+    args.iter().fold(head, |f, a| Term::app(f, read_back(sig, mode, depth, a)))
 }
 
-fn quote_binding(sig: &Signature, depth: Lvl, p: &BindingVal) -> Binding {
+fn quote_binding(sig: &Signature, mode: Unfolding, depth: Lvl, p: &BindingVal) -> Binding {
     Binding {
         name: p.name.clone(),
-        dom: Rc::new(quote(sig, depth, &p.dom)),
-        cod: Rc::new(quote_closure(sig, depth, &p.cod)),
+        dom: Rc::new(read_back(sig, mode, depth, &p.dom)),
+        cod: Rc::new(read_back_closure(sig, mode, depth, &p.cod)),
         dom_level: p.dom_level.clone(),
         cod_level: p.cod_level.clone(),
     }
@@ -346,10 +443,17 @@ fn quote_binding(sig: &Signature, depth: Lvl, p: &BindingVal) -> Binding {
 
 /// Read a closure back to its body, under one more binder.
 pub fn quote_closure(sig: &Signature, depth: Lvl, c: &Closure) -> Term {
-    quote(sig, depth + 1, &c.apply(sig, Val::var(depth)))
+    read_back_closure(sig, Unfolding::Folded, depth, c)
 }
 
-fn quote_neutral(sig: &Signature, depth: Lvl, n: &Neutral) -> Term {
+fn read_back_closure(sig: &Signature, mode: Unfolding, depth: Lvl, c: &Closure) -> Term {
+    read_back(sig, mode, depth + 1, &c.apply(sig, Val::var(depth)))
+}
+
+fn quote_neutral(sig: &Signature, mode: Unfolding, depth: Lvl, n: &Neutral) -> Term {
+    let quote = |sig, depth, v| read_back(sig, mode, depth, v);
+    let quote_spine = |sig, depth, head, args: &[Val]| quote_spine(sig, mode, depth, head, args);
+    let quote_neutral = |sig, depth, n| quote_neutral(sig, mode, depth, n);
     match n {
         Neutral::Var(level) => {
             assert!(*level < depth, "variable level {level} escapes a context of depth {depth}");
@@ -378,3 +482,24 @@ fn quote_neutral(sig: &Signature, depth: Lvl, n: &Neutral) -> Term {
         }
     }
 }
+
+// Note [Glued evaluation]
+//
+// A definition evaluates to a `Val::Unfold`: the global, its arguments, and
+// its unfolding, computed the first time a rule looks at the head
+// (`Val::force`). Applying it extends the spine; every other elimination
+// forces it. This is smalltt's glued evaluation, for top-level definitions
+// only.
+//
+// The two sides serve two readers. Read-back for printing and for elaborated
+// terms takes the folded side, so an error shows `is_zero x.1` where the user
+// wrote it, not the recursor it unfolds to. `quote_unfolded` takes the other
+// side, for normal forms. Conversion first compares two applications of one
+// definition at equal levels by their arguments, along the definition's
+// type, and unfolds only when that fails: a no from the arguments is not a
+// no, because a definition need not be injective. A stuck equality or cast
+// keeps its sides as written, so it prints folded too.
+//
+// No rule changes: unfolding is the definition's own equation, applied later,
+// and equal arguments give equal applications by congruence.
+// See Algorithm [Glued evaluation].
