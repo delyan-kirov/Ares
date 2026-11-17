@@ -1662,6 +1662,7 @@ fn free_globals(
             }
         }
         Expr::Ascribe { expr, .. } => free_globals(ast, *expr, globals, bound, out),
+        Expr::CtxArg(_) | Expr::Type(_) => {}
     }
 }
 

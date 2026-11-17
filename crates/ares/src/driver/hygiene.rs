@@ -364,7 +364,7 @@ impl<'a> Walk<'a> {
                 self.ty(size);
                 self.ty(elem);
             }
-            Ty::MetaE(e) => self.expr(e),
+            Ty::MetaE(e) | Ty::Term(e) => self.expr(e),
             Ty::Arrow { from, effect, to, .. } => {
                 self.ty(from);
                 if let Some(row) = effect {
@@ -549,7 +549,8 @@ impl<'a> Walk<'a> {
                 self.expr(expr);
                 self.ty(ty);
             }
-            Expr::UseArg(fields) => self.fields(&self.ast.slice(fields).to_vec()),
+            Expr::UseArg(fields) | Expr::CtxArg(fields) => self.fields(&self.ast.slice(fields).to_vec()),
+            Expr::Type(ty) => self.ty(ty),
         }
     }
 

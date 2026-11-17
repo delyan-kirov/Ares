@@ -1,20 +1,27 @@
 use crate::{check_script, normal_form, Signature};
 
+/// `src` as a module: a test's script is its items alone.
+pub(crate) fn module(src: &str) -> String {
+    format!("$ @mod TEST\n{src}")
+}
+
 pub(crate) fn accept(src: &str) -> Signature {
+    let src = &module(src);
     match check_script(src) {
         Ok(sig) => {
             crate::recheck(&sig).unwrap_or_else(|e| panic!("does not re-check: {e}"));
             sig
         }
-        Err(e) => panic!("rejected:\n{}", e.render(src, "test.ott")),
+        Err(e) => panic!("rejected:\n{}", e.render(src, "TEST.ares")),
     }
 }
 
 pub(crate) fn reject(src: &str, needle: &str) {
+    let src = &module(src);
     match check_script(src) {
         Ok(_) => panic!("accepted, expected an error containing `{needle}`"),
         Err(e) => {
-            let shown = e.render(src, "test.ott");
+            let shown = e.render(src, "TEST.ares");
             assert!(shown.contains(needle), "error does not mention `{needle}`:\n{shown}");
         }
     }
@@ -29,25 +36,25 @@ $ succ : Num -> Num = \n t s z => s (n t s z)
 $ add : Num -> Num -> Num = \m n t s z => m t s (n t s z)
 $ two : Num = succ (succ zero)
 $ four : Num = succ (succ two)
-$ P : Num -> @Type 1
+$ P : Num -> @Type 1 = @axiom
 ";
 
 #[test]
 fn identity_at_every_level() {
     accept(
         r"
-$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \t x => x
-$ id1 : (t: @Type 1) -> t -> t = id @ctx {.u = 1}
-$ selfapp : (t: @Type 1) -> t -> t = id @ctx {.u = 2} ((t: @Type 1) -> t -> t) id1
+$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
+$ id1 : (t: @Type 1) -> t -> t = id @ctx {.u = 1} t
+$ selfapp : (t: @Type 1) -> t -> t = id @ctx {.u = 2} ((t: @Type 1) -> t -> t) id1 t
 ",
     );
 }
 
 #[test]
 fn conversion_evaluates() {
-    let src = format!("{CHURCH}$ p : P (add two two)\n$ q : P four = p\n");
+    let src = format!("{CHURCH}$ p : P (add two two) = @axiom\n$ q : P four = p\n");
     accept(&src);
-    let src = format!("{CHURCH}$ p : P (add two two)\n$ q : P two = p\n");
+    let src = format!("{CHURCH}$ p : P (add two two) = @axiom\n$ q : P two = p\n");
     reject(&src, "expected `P");
 }
 
@@ -61,10 +68,10 @@ fn normal_forms_read_back() {
 fn functions_are_compared_up_to_eta() {
     accept(
         r"
-$ A : @Type 1
-$ f : A -> A
-$ Q : (A -> A) -> @Type 1
-$ q : Q f
+$ A : @Type 1 = @axiom
+$ f : A -> A = @axiom
+$ Q : (A -> A) -> @Type 1 = @axiom
+$ q : Q f = @axiom
 $ r : Q (\x => f x) = q
 ",
     );
@@ -74,25 +81,25 @@ $ r : Q (\x => f x) = q
 fn proofs_of_a_proposition_are_equal() {
     accept(
         r"
-$ P : @Type 0
-$ p : P
-$ p' : P
-$ Q : P -> @Type 1
-$ q : Q p
-$ r : Q p' = q
+$ P : @Type 0 = @axiom
+$ p : P = @axiom
+$ p2 : P = @axiom
+$ Q : P -> @Type 1 = @axiom
+$ q : Q p = @axiom
+$ r : Q p2 = q
 ",
     );
     // Data are not proofs.
     reject(
         r"
-$ A : @Type 1
-$ a : A
-$ a' : A
-$ Q : A -> @Type 1
-$ q : Q a
-$ r : Q a' = q
+$ A : @Type 1 = @axiom
+$ a : A = @axiom
+$ a2 : A = @axiom
+$ Q : A -> @Type 1 = @axiom
+$ q : Q a = @axiom
+$ r : Q a2 = q
 ",
-        "expected `Q a'`",
+        "expected `Q a2`",
     );
 }
 
@@ -108,64 +115,64 @@ $ tt : True = \p x => x
 
 #[test]
 fn universes_are_not_cumulative() {
-    accept("$ A : @Type 1\n$ B : @Type 1 = A\n");
-    reject("$ A : @Type 1\n$ B : @Type 2 = A\n", "expected `@Type 2`, found `@Type 1`");
-    reject("$ A : @Type 0\n$ B : @Type 1 = A\n", "expected `@Type 1`, found `@Type 0`");
-    reject("$ A : @Type 2\n$ B : @Type 1 = A\n", "expected `@Type 1`, found `@Type 2`");
-    reject("$ F : @Type 1 -> @Type 1\n$ G : @Type 1 -> @Type 2 = F\n", "expected");
+    accept("$ A : @Type 1 = @axiom\n$ B : @Type 1 = A\n");
+    reject("$ A : @Type 1 = @axiom\n$ B : @Type 2 = A\n", "expected `@Type 2`, found `@Type 1`");
+    reject("$ A : @Type 0 = @axiom\n$ B : @Type 1 = A\n", "expected `@Type 1`, found `@Type 0`");
+    reject("$ A : @Type 2 = @axiom\n$ B : @Type 1 = A\n", "expected `@Type 1`, found `@Type 2`");
+    reject("$ F : @Type 1 -> @Type 1 = @axiom\n$ G : @Type 1 -> @Type 2 = F\n", "expected");
 }
 
 #[test]
 fn levels_must_be_given_and_bound() {
-    reject("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ f : @Type 1 = id\n", "cannot infer level `u` of `id`");
-    reject("$ A : @Type v\n", "unknown level `v`");
+    reject("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\x => x\n$ f : @Type 1 = id\n", "cannot infer level `u` of `id`");
+    reject("$ A : @Type v = @axiom\n", "unknown level `v`");
 }
 
 #[test]
 fn names_are_resolved() {
-    reject("$ A : @Type 1\n$ B : @Type 1 = Aa\n", "unknown name `Aa`");
-    reject("$ A : @Type 1\n$ A : @Type 1\n", "already defined");
+    reject("$ A : @Type 1 = @axiom\n$ B : @Type 1 = Aa\n", "unknown name `Aa`");
+    reject("$ A : @Type 1 = @axiom\n$ A : @Type 1 = @axiom\n", "already defined");
 }
 
 #[test]
 fn let_is_transparent() {
-    let src = format!("{CHURCH}$ p : P four\n$ q : P (let n = two in add n n) = p\n");
+    let src = format!("{CHURCH}$ p : P four = @axiom\n$ q : P (let n = two in add n n) = p\n");
     accept(&src);
 }
 
 #[test]
 fn unannotated_lambdas_need_an_expected_type() {
-    reject("$ f = \\x => x\n", "expected `:`");
-    reject("$ A : @Type 1\n$ f : @Type 1 = (\\x => x) A\n", "cannot infer the type of `x`");
+    reject("$ f = \\x => x\n", "needs its type");
+    reject("$ A : @Type 1 = @axiom\n$ f : @Type 1 = (\\x => x) A\n", "cannot infer the type of `x`");
 }
 
 #[test]
 fn pairs_are_dependent() {
     let sig = accept(
         r"
-$ A : @Type 1
-$ B : A -> @Type 1
-$ a : A
-$ b : B a
-$ p : (x: A) * B x = (a, b)
-$ second : B p.1 = p.2
-$ swap : (A * A) -> (A * A) = \q => (q.2, q.1)
-$ again : A * A = swap (swap (a, a))
+$ A : @Type 1 = @axiom
+$ B : A -> @Type 1 = @axiom
+$ a : A = @axiom
+$ b : B a = @axiom
+$ p : {x: A, snd: B x} = {a, b}
+$ second : B p.0 = p.1
+$ swap : {A, A} -> {A, A} = \q => {q.1, q.0}
+$ again : {A, A} = swap (swap {a, a})
 ",
     );
-    assert_eq!(normal_form(&sig, "again").unwrap(), "(a, a)");
-    reject("$ A : @Type 1\n$ a : A\n$ p : A * A = (a, @tt)\n", "expected `A`, found `@Top`");
+    assert_eq!(normal_form(&sig, "again").unwrap(), "{a, a}");
+    reject("$ A : @Type 1 = @axiom\n$ a : A = @axiom\n$ p : {A, A} = {a, @tt}\n", "expected `A`, found `@Top`");
 }
 
 #[test]
 fn pairs_are_compared_up_to_eta() {
     accept(
         r"
-$ A : @Type 1
-$ p : A * A
-$ Q : (A * A) -> @Type 1
-$ q : Q p
-$ r : Q (p.1, p.2) = q
+$ A : @Type 1 = @axiom
+$ p : {A, A} = @axiom
+$ Q : {A, A} -> @Type 1 = @axiom
+$ q : Q p = @axiom
+$ r : Q {p.0, p.1} = q
 ",
     );
 }
@@ -174,13 +181,13 @@ $ r : Q (p.1, p.2) = q
 fn a_pair_of_proofs_is_a_proposition() {
     accept(
         r"
-$ P : @Type 0
-$ Q : @Type 0
-$ And : @Type 0 = P * Q
-$ p : P
-$ q : Q
-$ both : And = (p, q)
-$ swap : (P * Q) -> (Q * P) = \h => (h.2, h.1)
+$ P : @Type 0 = @axiom
+$ Q : @Type 0 = @axiom
+$ And : @Type 0 = {P, Q}
+$ p : P = @axiom
+$ q : Q = @axiom
+$ both : And = {p, q}
+$ swap : {P, Q} -> {Q, P} = \h => {h.1, h.0}
 ",
     );
 }
@@ -191,15 +198,15 @@ fn refined_values_are_data() {
     // and two of them are equal when their data parts are.
     accept(
         r"
-$ A : @Type 1
-$ P : A -> @Type 0
-$ Refined : @Type 1 = (x: A) * P x
-$ a : A
-$ p : P a
-$ p' : P a
-$ Q : Refined -> @Type 1
-$ q : Q (a, p)
-$ r : Q (a, p') = q
+$ A : @Type 1 = @axiom
+$ P : A -> @Type 0 = @axiom
+$ Refined : @Type 1 = {x: A, snd: P x}
+$ a : A = @axiom
+$ p : P a = @axiom
+$ p2 : P a = @axiom
+$ Q : Refined -> @Type 1 = @axiom
+$ q : Q {a, p} = @axiom
+$ r : Q {a, p2} = q
 ",
     );
 }
@@ -208,30 +215,30 @@ $ r : Q (a, p') = q
 fn bottom_proves_anything() {
     accept(
         r"
-$ A : @Type 1
+$ A : @Type 1 = @axiom
 $ Not : @Type 0 -> @Type 0 = \p => p -> @Bottom
-$ explode : @Bottom -> A = \e => @absurd A e
+$ explode : @Bottom -> A = \e => (e |> @absurd : A)
 $ trivial : @Top = @tt
-$ contradiction : (P: @Type 0) -> P -> Not P -> @Bottom = \P p n => n p
+$ contradiction : (p2: @Type 0) -> p2 -> Not p2 -> @Bottom = \p n => n p
 ",
     );
-    reject("$ A : @Type 1\n$ a : A\n$ bad : A = @absurd A @tt\n", "expected `@Bottom`, found `@Top`");
+    reject("$ A : @Type 1 = @axiom\n$ a : A = @axiom\n$ bad : A = (@tt |> @absurd : A)\n", "expected `@Bottom`, found `@Top`");
 }
 
 pub(crate) const NAT: &str = r"
-$ Nat : @Type 1 = @data | zero | succ Nat
-$ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => succ r) m
-$ two : Nat = succ (succ zero)
-$ four : Nat = succ (succ (succ (succ zero)))
-$ P : Nat -> @Type 1
+$ Nat : @union = Zero: {}, Succ: Nat
+$ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
+$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
+$ four : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Zero } } } }
+$ P : Nat -> @Type 1 = @axiom
 ";
 
 #[test]
 fn recursors_compute_on_constructors() {
-    let src = format!("{NAT}$ p : P (add two two)\n$ q : P four = p\n");
+    let src = format!("{NAT}$ p : P (add two two) = @axiom\n$ q : P four = p\n");
     let sig = accept(&src);
     assert_eq!(normal_form(&sig, "q").unwrap(), "p");
-    reject(&format!("{NAT}$ p : P (add two two)\n$ q : P two = p\n"), "expected `P two`, found `P (add two two)`");
+    reject(&format!("{NAT}$ p : P (add two two) = @axiom\n$ q : P two = p\n"), "expected `P two`, found `P (add two two)`");
 }
 
 #[test]
@@ -239,12 +246,7 @@ fn applications_of_one_definition_compare_by_arguments() {
     // `pow two sixteen` unfolds to 65536 constructors; equal arguments make
     // the two sides equal without unfolding it.
     let src = format!(
-        "{NAT}$ mul : Nat -> Nat -> Nat = \\m n => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) zero (\\_ r => add n r) m
-$ pow : Nat -> Nat -> Nat = \\b e => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) (succ zero) (\\_ r => mul b r) e
-$ sixteen : Nat = mul four four
-$ p : P (pow two sixteen)
-$ q : P (pow two (add (mul two four) (mul four two))) = p
-"
+        "{NAT}$ mul : Nat -> Nat -> Nat = \\m n => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) Nat.Zero (\\_ r => add n r) m\n$ pow : Nat -> Nat -> Nat = \\b e => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) Nat.Succ.{{ Nat.Zero }} (\\_ r => mul b r) e\n$ sixteen : Nat = mul four four\n$ p : P (pow two sixteen) = @axiom\n$ q : P (pow two (add (mul two four) (mul four two))) = p\n"
     );
     accept(&src);
 }
@@ -252,9 +254,9 @@ $ q : P (pow two (add (mul two four) (mul four two))) = p
 #[test]
 fn recursors_are_stuck_on_variables() {
     // `add n zero` does not reduce: the recursion is on the first argument.
-    let src = format!("{NAT}$ n : Nat\n$ p : P (add zero n)\n$ q : P n = p\n");
+    let src = format!("{NAT}$ n : Nat = @axiom\n$ p : P (add Nat.Zero n) = @axiom\n$ q : P n = p\n");
     accept(&src);
-    reject(&format!("{NAT}$ n : Nat\n$ p : P (add n zero)\n$ q : P n = p\n"), "expected `P n`");
+    reject(&format!("{NAT}$ n : Nat = @axiom\n$ p : P (add n Nat.Zero) = @axiom\n$ q : P n = p\n"), "expected `P n`");
 }
 
 #[test]
@@ -270,7 +272,7 @@ fn recursor_types_are_generated() {
     .to_string();
     assert_eq!(
         ty,
-        "(P: Nat -> @Type m) -> P zero -> ((f0: Nat) -> P f0 -> P (succ f0)) -> (x: Nat) -> P x"
+        "(motive: Nat -> @Type m) -> motive Nat.Zero -> ((f0: Nat) -> motive f0 -> motive Nat.Succ.{ f0 }) -> (x: Nat) -> motive x"
     );
 }
 
@@ -278,15 +280,14 @@ fn recursor_types_are_generated() {
 fn parameters_and_dependent_motives() {
     accept(&format!(
         r"{NAT}
-$ List : @ctx {{u: @l}} -> (a: @Type (u + 1)) -> @Type (u + 1) = @data | nil | cons (h: a) (t: List @ctx {{.u = u}} a)
-$ length : List @ctx {{.u = 0}} Nat -> Nat =
-    \xs => List.elim @ctx {{.u = 0, .m = 1}} Nat (\_ => Nat) zero (\_ _ r => succ r) xs
-$ xs : List @ctx {{.u = 0}} Nat = cons @ctx {{.u = 0}} Nat two (cons @ctx {{.u = 0}} Nat four (nil @ctx {{.u = 0}} Nat))
-$ p : P (length xs)
+$ List : @ctx {{u: @l}} -> (a: @Type (u + 1)) -> @Type (u + 1) = @union Nil: {{}}, Cons: {{h: a, t: List @ctx {{.u = u}} a}}
+$ length : List @ctx {{.u = 0}} Nat -> Nat = \xs => List.elim @ctx {{.u = 0, .m = 1}} Nat (\_ => Nat) Nat.Zero (\_ _ r => Nat.Succ.{{ r }}) xs
+$ xs : List @ctx {{.u = 0}} Nat = List.Cons.{{ two, List.Cons.{{ four, List.Nil }} }}
+$ p : P (length xs) = @axiom
 $ q : P two = p
-$ Unit : @Type 1 = @data | unit
-$ Vec : Nat -> @Type 1 = \n => Nat.elim @ctx {{.m = 2}} (\_ => @Type 1) Unit (\_ t => Nat * t) n
-$ v : Vec two = (zero, (four, unit))
+$ Unit : @union = Unit: {{}}
+$ Vec : Nat -> @Type 1 = \n => Nat.elim @ctx {{.m = 2}} (\_ => @Type 1) Unit (\_ t => {{Nat, t}}) n
+$ v : Vec two = {{Nat.Zero, four, Unit.Unit}}
 "
     ));
 }
@@ -295,26 +296,24 @@ $ v : Vec two = (zero, (four, unit))
 fn constructors_are_injective_by_conversion() {
     accept(&format!(
         r"{NAT}
-$ n : Nat
-$ p : P (succ (add zero n))
-$ q : P (succ n) = p
+$ n : Nat = @axiom
+$ p : P Nat.Succ.{{ add Nat.Zero n }} = @axiom
+$ q : P Nat.Succ.{{ n }} = p
 "
     ));
 }
 
 #[test]
 fn inductive_declarations_are_checked() {
-    reject("$ Bad : @Type 1 = @data | mk (Bad -> Bad)\n", "may only occur as the result of a field");
-    reject("$ Prop : @Type 0 = @data | yes\n", "inductive propositions are not supported");
-    reject("$ Big : @Type 1 = @data | mk (@Type 1)\n", "too large");
-    reject("$ Idx : @Type 1 -> @Type 2 = @data | mk\n$ I : @Type 1 = @data | a | a\n", "`a` is already defined");
-    reject("$ F : @Type 1 = @data | mk\n$ G : F = @data | mk\n", "must end in `@Type l`");
+    reject("$ Bad : @union = Mk: {Bad -> Bad}\n", "may only occur as the result of a field");
+    reject("$ Prop : @Type 0 = @union Yes: {}\n", "inductive propositions are not supported");
+    reject("$ Big : @union = Mk: @Type 1\n", "too large");
+    reject("$ Idx : @Type 1 -> @Type 2 = @union Mk: {}\n$ I : @union = A: {}, A: {}\n", "`I.A` is already defined");
+    reject("$ F : @union = Mk: {}\n$ G : F = @union Mk: {}\n", "must end in `@Type l`");
 }
 
 const VEC: &str = r"
-$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @data
-    | vnil : Vec a zero
-    | vcons (m: Nat) (h: a) (t: Vec a m) : Vec a (succ m)
+$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @union Vnil: {} -> Vec a Nat.Zero, Vcons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }
 ";
 
 #[test]
@@ -329,9 +328,9 @@ fn indexed_families_have_an_indexed_recursor() {
     };
     assert_eq!(
         shown.to_string(),
-        "(a: @Type 1) -> (P: (n: Nat) -> Vec a n -> @Type m) -> P zero (vnil a) \
-         -> ((m: Nat) -> (h: a) -> (t: Vec a m) -> P m t -> P (succ m) (vcons a m h t)) \
-         -> (n: Nat) -> (x: Vec a n) -> P n x"
+        "(a: @Type 1) -> (motive: (n: Nat) -> Vec a n -> @Type m) -> motive Nat.Zero Vec.Vnil \
+         -> ((m: Nat) -> (h: a) -> (t: Vec a m) -> motive m t -> motive Nat.Succ.{ m } Vec.Vcons.{ m, h, t }) \
+         -> (n: Nat) -> (x: Vec a n) -> motive n x"
     );
 }
 
@@ -340,45 +339,41 @@ fn the_index_rules_out_constructors() {
     // `head` needs no real case for `vnil`: its motive is `{}`-like at zero.
     let src = format!(
         r"{NAT}{VEC}
-$ Unit : @Type 1 = @data | unit
+$ Unit : @union = Unit: {{}}
 $ Head : Nat -> @Type 1 = \k => Nat.elim @ctx {{.m = 2}} (\_ => @Type 1) Unit (\_ _ => Nat) k
-$ head : (n: Nat) -> Vec Nat (succ n) -> Nat =
-    \n v => Vec.elim @ctx {{.m = 1}} Nat (\k _ => Head k) unit (\m h t r => h) (succ n) v
-$ h : Nat = head zero (vcons Nat zero four (vnil Nat))
+$ head : (n: Nat) -> Vec Nat Nat.Succ.{{ n }} -> Nat = \v => Vec.elim @ctx {{.m = 1}} Nat (\k _ => Head k) Unit.Unit (\m h t r => h) Nat.Succ.{{ n }} v
+$ h : Nat = head Nat.Zero Vec.Vcons.{{ Nat.Zero, four, (Vec.Vnil : Vec Nat Nat.Zero) }}
 "
     );
     let sig = accept(&src);
-    assert_eq!(normal_form(&sig, "h").unwrap(), "succ (succ (succ (succ zero)))");
+    assert_eq!(normal_form(&sig, "h").unwrap(), "Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Zero } } } }");
 }
 
 #[test]
 fn a_value_at_propositionally_equal_indices_is_a_cast() {
     let src = format!(
         r"{NAT}{VEC}
-$ length : (a: @Type 1) -> (n: Nat) -> Vec a n -> Nat =
-    \a n v => Vec.elim @ctx {{.m = 1}} a (\_ _ => Nat) zero (\m h t r => succ r) n v
-$ k : Nat
-$ e : succ zero ~ k
-$ one : Vec Nat (succ zero) = vcons Nat zero two (vnil Nat)
-$ moved : Vec Nat k =
-    @cast (Vec Nat (succ zero)) (Vec Nat k) (@transp (succ zero) (\j => Vec Nat (succ zero) ~ Vec Nat j) (@refl (Vec Nat (succ zero))) k e) one
+$ length : (a: @Type 1) -> (n: Nat) -> Vec a n -> Nat = \v => Vec.elim @ctx {{.m = 1}} a (\_ _ => Nat) Nat.Zero (\m h t r => Nat.Succ.{{ r }}) n v
+$ k : Nat = @axiom
+$ e : Nat.Succ.{{ Nat.Zero }} ~ k = @axiom
+$ one : Vec Nat Nat.Succ.{{ Nat.Zero }} = Vec.Vcons.{{ Nat.Zero, two, (Vec.Vnil : Vec Nat Nat.Zero) }}
+$ moved : Vec Nat k = @cast (Vec Nat Nat.Succ.{{ Nat.Zero }}) (Vec Nat k) (@transp Nat.Succ.{{ Nat.Zero }} (\j => Vec Nat Nat.Succ.{{ Nat.Zero }} ~ Vec Nat j) (@refl (Vec Nat Nat.Succ.{{ Nat.Zero }})) k e) one
 $ len : Nat = length Nat k moved
 "
     );
     let sig = accept(&src);
-    assert!(normal_form(&sig, "moved").unwrap().starts_with("@cast (Vec Nat (succ zero)) (Vec Nat k) @irrelevant (vcons Nat zero"));
-    assert_eq!(normal_form(&sig, "len").unwrap(), "succ zero");
+    assert!(normal_form(&sig, "moved").unwrap().starts_with("@cast (Vec Nat Nat.Succ.{ Nat.Zero }) (Vec Nat k) @irrelevant Vec.Vcons.{ Nat.Zero"));
+    assert_eq!(normal_form(&sig, "len").unwrap(), "Nat.Succ.{ Nat.Zero }");
 }
 
 #[test]
 fn the_identity_type_is_an_indexed_family() {
     let src = format!(
         r"{NAT}
-$ Id : (A: @Type 1) -> (x: A) -> (y: A) -> @Type 1 = @data | idrefl : Id A x x
-$ J : (A: @Type 1) -> (x: A) -> (P: (y: A) -> Id A x y -> @Type 1) -> P x (idrefl A x) -> (y: A) -> (p: Id A x y) -> P y p =
-    \A x P d y p => Id.elim @ctx {{.m = 1}} A x P d y p
-$ p : P two
-$ q : P (J Nat two (\_ _ => Nat) two two (idrefl Nat two)) = p
+$ Id : (a: @Type 1) -> (x: a) -> (y: a) -> @Type 1 = @union Idrefl: {{}} -> Id a x x
+$ J : (a: @Type 1) -> (x: a) -> (p2: (y: a) -> Id a x y -> @Type 1) -> p2 x (Id.Idrefl : Id a x x) -> (y: a) -> (p: Id a x y) -> p2 y p = \d y p => Id.elim @ctx {{.m = 1}} a x p2 d y p
+$ p : P two = @axiom
+$ q : P (J Nat two (\_ _ => Nat) two two (Id.Idrefl : Id Nat two two)) = p
 "
     );
     accept(&src);
@@ -386,23 +381,23 @@ $ q : P (J Nat two (\_ _ => Nat) two two (idrefl Nat two)) = p
 
 #[test]
 fn indexed_families_are_restricted() {
-    reject(&format!("{NAT}$ V : (n: Nat) -> @Type 1 = @data | a : V zero | b\n"), "must state its result");
-    reject(&format!("{NAT}$ V : (n: Nat) -> @Type 1 = @data | mk : Nat\n"), "must be `V` at its own parameters");
+    reject(&format!("{NAT}$ V : (n: Nat) -> @Type 1 = @union A: {{}} -> V Nat.Zero, B: {{}}\n"), "must state its result");
+    reject(&format!("{NAT}$ V : (n: Nat) -> @Type 1 = @union Mk: {{}} -> Nat\n"), "must be `V` at its own parameters");
     reject(
-        &format!("{NAT}$ V : (n: Nat) -> (f: P n) -> @Type 1 = @data | mk (p: P zero) : V zero p\n"),
+        &format!("{NAT}$ V : (n: Nat) -> (f: P n) -> @Type 1 = @union Mk: {{p: P Nat.Zero}} -> V Nat.Zero p\n"),
         "may depend on the parameters, not on earlier indices",
     );
-    reject("$ V : (p: @Top) -> @Type 1 = @data | mk : V @tt\n", "must be data");
+    reject("$ V : (p: @Top) -> @Type 1 = @union Mk: {} -> V @tt\n", "must be data");
 }
 
 const EQUALITY: &str = r"
-$ trans : (x y z: Nat) -> x ~ y -> y ~ z -> x ~ z = \x y z e f => @transp y (\w => x ~ w) e z f
-$ sym : (x y: Nat) -> x ~ y -> y ~ x = \x y e => @transp x (\w => w ~ x) (@refl x) y e
-$ a : Nat
-$ b : Nat
-$ c : Nat
-$ ab : a ~ b
-$ bc : b ~ c
+$ trans : (x: Nat) -> (y: Nat) -> (z: Nat) -> x ~ y -> y ~ z -> x ~ z = \e f => @transp y (\w => x ~ w) e z f
+$ sym : (x: Nat) -> (y: Nat) -> x ~ y -> y ~ x = \e => @transp x (\w => w ~ x) (@refl x) y e
+$ a : Nat = @axiom
+$ b : Nat = @axiom
+$ c : Nat = @axiom
+$ ab : a ~ b = @axiom
+$ bc : b ~ c = @axiom
 ";
 
 #[test]
@@ -419,16 +414,14 @@ fn holes_are_solved_from_the_expected_type_and_the_arguments() {
 #[test]
 fn a_motive_level_left_out_is_inferred() {
     let sig = accept(&format!(
-        "{NAT}$ double : Nat -> Nat = \\n => Nat.elim (\\_ => Nat) zero (\\_ r => succ (succ r)) n
-$ add_zero : (n: Nat) -> add n zero ~ n = \\n => Nat.elim (\\n => add n zero ~ n) @tt (\\_ ih => ih) n
-"
+        "{NAT}$ double : Nat -> Nat = \\n => Nat.elim (\\_ => Nat) Nat.Zero (\\_ r => Nat.Succ.{{ Nat.Succ.{{ r }} }}) n\n$ add_zero : (n: Nat) -> add n Nat.Zero ~ n = Nat.elim (\\n => add n Nat.Zero ~ n) @tt (\\_ ih => ih) n\n"
     ));
-    assert_eq!(normal_form(&sig, "double").unwrap(), r"\n => Nat.elim @ctx {.m = 1} (\_ => Nat) zero (\_ => \r => succ (succ r)) n");
+    assert_eq!(normal_form(&sig, "double").unwrap(), r"\n => Nat.elim @ctx {.m = 1} (\_ => Nat) Nat.Zero (\_ => \r => Nat.Succ.{ Nat.Succ.{ r } }) n");
 }
 
 #[test]
 fn holes_that_nothing_fixes_are_rejected() {
-    reject(&format!("{NAT}{EQUALITY}$ f : (x: Nat) -> a ~ x -> a ~ x = \\x e => trans _ _ _ e (@refl _)\n"), "cannot infer this `_`");
+    reject(&format!("{NAT}{EQUALITY}$ f : (x: Nat) -> a ~ x -> a ~ x = \\e => trans _ _ _ e (@refl _)\n"), "cannot infer this `_`");
     reject(&format!("{NAT}{EQUALITY}$ t : Nat -> Nat -> @Type 0 = \\x y => trans x _ y\n"), "cannot infer this argument");
     reject(&format!("{NAT}$ n : @Type 1 = Nat.elim\n"), "cannot infer level `m` of `Nat.elim`");
     reject(&format!("{NAT}$ n : Nat = _\n"), "cannot infer this `_`");
@@ -442,5 +435,5 @@ fn a_wrong_proof_is_rejected_with_holes_as_without() {
 
 #[test]
 fn a_level_left_out_of_a_declaration_is_inferred() {
-    accept("$ List : @ctx {u: @l} -> (a: @Type (u + 1)) -> @Type (u + 1) = @data | nil | cons (h: a) (t: List a)\n");
+    accept("$ List : @ctx {u: @l} -> (a: @Type (u + 1)) -> @Type (u + 1) = @union Nil: {}, Cons: {h: a, t: List a}\n");
 }

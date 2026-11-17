@@ -877,6 +877,7 @@ impl<'a> Parser<'a> {
                     let (splices, variants) = self.parse_union_body()?;
                     return Ok(Item::Union {
                         name,
+                        sig: None,
                         params,
                         splices,
                         variants,
@@ -899,8 +900,23 @@ impl<'a> Parser<'a> {
                 _ => {} // an @tycon type signature; fall through
             }
         }
-        self.require_value_lowercase(self.text(name_tok), &name_tok)?;
+        // A capitalized name with a signature defines a type: types are
+        // expressions (#406), so `$ Frac : @Type 1 = {Integer, Pos}`, or an
+        // inductive type whose signature states its parameters and universe,
+        // `$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> ..`.
         let (sig, ctx) = self.parse_signature()?;
+        if is_upper(self.text(name_tok)) && self.ctx_written.is_none() {
+            expect!(self, Kind::Eq, "expected '=' after the type signature");
+            if self.at_intrinsic("union")? {
+                self.bump()?; // '@union'
+                let (splices, variants) = self.parse_union_body()?;
+                let params = self.ast.make_slice(Vec::new());
+                return Ok(Item::Union { name, sig: Some(sig), params, splices, variants });
+            }
+            let body = self.parse_expr(0)?;
+            let body = self.bind_signature(sig, body);
+            return Ok(Item::Def { name, sig: Some(sig), ctx, body });
+        }
         let body = self.parse_def_body()?;
         let body = self.bind_signature(sig, body);
         Ok(Item::Def {
@@ -919,16 +935,18 @@ impl<'a> Parser<'a> {
     /// signature, whose first `from` is that context parameter.
     fn parse_signature(&mut self) -> Result<(Aol<Ty>, Option<Aol<Ty>>)> {
         let start = self.here()?;
+        let levels = if self.at_level_binder()? { Some(self.parse_level_binder()?) } else { None };
         let mut fields: Vec<UseField> = Vec::new();
-        let mut params: Vec<(usize, Option<Token>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
+        let mut params: Vec<(usize, Option<(StrId, Span)>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
         self.ctx_written = None;
         let result = loop {
             if self.at_ctx()? {
-                if self.ctx_written.is_some() {
+                if self.ctx_written.is_some() || self.at_level_binder()? {
                     return Err(self.ctx_reserved()?);
                 }
                 let kw = self.bump()?; // '@ctx'
-                let ty = self.parse_type_app()?;
+                let e = self.parse_expr(table::ARROW.left + 1)?;
+                let ty = self.to_ty(e)?;
                 let span = Span::new(kw.span.start, self.last_end);
                 expect!(self, Kind::Arrow, "expected '->' after the `@ctx` parameter");
                 self.ctx_written = Some(CtxWritten { kw, ty, span });
@@ -954,30 +972,25 @@ impl<'a> Parser<'a> {
                 continue;
             }
             let at = self.here()?;
-            if self.at_named_param()? {
-                let (name, from, effect) = self.parse_named_param()?;
-                params.push((at, Some(name), from, effect));
-                continue;
-            }
-            let from = self.parse_type_app()?;
+            let from = self.parse_expr(table::ARROW.left + 1)?;
             if !matches!(self.peek_kind()?, Kind::Arrow) {
-                break from;
+                break self.to_ty(from)?;
             }
             self.bump()?; // '->'
             let effect = self.parse_effect_row_opt()?;
-            params.push((at, None, from, effect));
+            self.expect_type_after_arrow()?;
+            let (binder, from) = self.arrow_domain(from)?;
+            params.push((at, binder, from, effect));
         };
         let mut to = result;
-        for (at, name, from, effect) in params.into_iter().rev() {
-            to = match name {
-                Some(name) => self.named_arrow(at, name, from, effect, to)?,
-                None => {
-                    let node = self.ty(Ty::Arrow { binder: None, from, effect, to });
-                    self.stamp_ty(at, node)
-                }
-            };
+        for (at, binder, from, effect) in params.into_iter().rev() {
+            to = self.arrow_ty(at, binder, from, effect, to);
         }
+        let levels = levels.map(|l| self.ast.make_slice(l));
         let (Some(first), Some(last)) = (fields.first().copied(), fields.last().copied()) else {
+            if let Some(levels) = levels {
+                self.ast.level_params.insert(to, levels);
+            }
             return Ok((to, None));
         };
         let ctx = match fields.as_slice() {
@@ -994,7 +1007,68 @@ impl<'a> Parser<'a> {
         let sig = self.stamp_ty(start, node);
         let fields = self.ast.make_slice(fields);
         self.ast.use_params.insert(sig, fields);
+        if let Some(levels) = levels {
+            self.ast.level_params.insert(sig, levels);
+        }
         Ok((sig, Some(ctx)))
+    }
+
+    /// Is the cursor on a level binder, `@ctx {u: @l, ...}`?
+    fn at_level_binder(&mut self) -> Result<bool> {
+        if !self.at_ctx()? || !matches!(self.peek_kind_at(1)?, Kind::LBrace) {
+            return Ok(false);
+        }
+        let mut n = 2;
+        loop {
+            let at = self.peek_at(n + 2)?;
+            let level = matches!(at.kind, Kind::At) && self.text(at) == "@l";
+            if !matches!(self.peek_kind_at(n)?, Kind::Word) || !matches!(self.peek_kind_at(n + 1)?, Kind::Colon) || !level {
+                return Ok(false);
+            }
+            match self.peek_kind_at(n + 3)? {
+                Kind::Comma => n += 4,
+                Kind::RBrace => return Ok(true),
+                _ => return Ok(false),
+            }
+        }
+    }
+
+    /// A signature's leading `@ctx {u: @l, ...} ->`: the levels it binds.
+    fn parse_level_binder(&mut self) -> Result<Vec<UseField>> {
+        self.bump()?; // '@ctx'
+        self.bump()?; // '{'
+        let mut levels: Vec<UseField> = Vec::new();
+        loop {
+            let t = self.peek()?;
+            let name = self.bump_word()?;
+            self.bump()?; // ':'
+            let ty = self.parse_type_arg()?;
+            if levels.iter().any(|l| l.name == name) {
+                return Err(Diagnostic::error(
+                    Code::DuplicateSymbol,
+                    t.span,
+                    t.line,
+                    format!("level `{name}` is bound twice in this signature"),
+                ));
+            }
+            levels.push(UseField { name, ty, before: 0, span: t.span });
+            if !self.eat(|k| matches!(k, Kind::Comma))? {
+                break;
+            }
+        }
+        expect!(self, Kind::RBrace, "expected '}' to close the level parameters");
+        expect!(self, Kind::Arrow, "expected '->' after the level parameters");
+        Ok(levels)
+    }
+
+    /// After `->` and its row: a type must follow.
+    fn expect_type_after_arrow(&mut self) -> Result<()> {
+        let t = self.peek()?;
+        let prefix = matches!(t.kind, Kind::Op) && (self.text(t) == table::SPLICE || table::prefix(self.text(t)).is_some());
+        if self.starts_operand(t.kind) || prefix || matches!(t.kind, Kind::Dot | Kind::Do) {
+            return Ok(());
+        }
+        Err(self.unexpected(&t, "expected a type"))
     }
 
     /// The `{name: Type, ...}` of a `@use` parameter, after the keyword. A field
@@ -1301,7 +1375,15 @@ impl<'a> Parser<'a> {
                     } else {
                         Payload::None
                     };
-                    variants.push(VariantDecl { tag, payload });
+                    // `Tag: {fields} -> D a i`: an indexed family's constructor
+                    // states its result. A bare payload's arrow is its own type.
+                    let result = if !matches!(payload, Payload::Bare(_)) && matches!(self.peek_kind()?, Kind::Arrow) {
+                        self.bump()?; // '->'
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
+                    variants.push(VariantDecl { tag, payload, result });
                 }
                 _ => break,
             }
@@ -1362,151 +1444,33 @@ impl<'a> Parser<'a> {
     }
 
     // -- types --------------------------------------------------------------
+    //
+    // Types are expressions (#406): a type position parses an expression and
+    // reads it as a [`Ty`], the view the checker elaborates. An expression no
+    // `Ty` variant spells (a lambda, `a ~ b`, a projection) stays a term,
+    // `Ty::Term`, which the kernel reads and the checker rejects.
 
     fn parse_type(&mut self) -> Result<Aol<Ty>> {
         if self.at_ctx()? {
             return Err(self.ctx_reserved()?);
         }
         if self.at_intrinsic("use")? {
-            let at = self.peek()?;
-            return Err(Diagnostic::error(
-                Code::UnexpectedToken,
-                at.span,
-                at.line,
-                "a `@use` parameter stands only on the arrows of a definition's signature",
-            )
-            .with_note("not inside a parameter's type, an annotation, or a field type"));
+            return Err(self.use_param_misplaced()?);
         }
-        let start = self.here()?;
-        if self.at_named_param()? {
-            return self.parse_named_arrow(start);
-        }
-        let from = self.parse_type_app()?;
-        if !matches!(self.peek_kind()?, Kind::Arrow) {
-            return Ok(from);
-        }
-        self.bump()?; // '->'
-        let effect = self.parse_effect_row_opt()?;
-        let to = self.parse_type()?; // right-associative
-        let node = self.ty(Ty::Arrow { binder: None, from, effect, to });
-        Ok(self.stamp_ty(start, node))
+        let e = self.parse_expr(0)?;
+        self.to_ty(e)
     }
 
-    /// Whether the cursor is on a named parameter `(x: A)`.
-    fn at_named_param(&mut self) -> Result<bool> {
-        Ok(matches!(self.peek_kind()?, Kind::LParen)
-            && matches!(self.peek_kind_at(1)?, Kind::Word)
-            && matches!(self.peek_kind_at(2)?, Kind::Colon))
+    /// One argument of an effect row entry, `<Chan @Int e>`: an atom read as a
+    /// type.
+    fn parse_type_arg(&mut self) -> Result<Aol<Ty>> {
+        let e = self.parse_primary()?;
+        self.to_ty(e)
     }
 
-    /// A function type with a named parameter, `(x: A) -> B`, with the cursor
-    /// on `(`.
-    fn parse_named_arrow(&mut self, start: usize) -> Result<Aol<Ty>> {
-        let (name, from, effect) = self.parse_named_param()?;
-        let to = self.parse_type()?;
-        self.named_arrow(start, name, from, effect, to)
-    }
-
-    /// The `(x: A) ->` of a named parameter, with the cursor on `(`: its name
-    /// token, its type and the arrow's effect row.
-    fn parse_named_param(&mut self) -> Result<(Token, Aol<Ty>, Option<EffectRow>)> {
-        self.bump()?; // '('
-        let name = self.bump()?;
-        self.bump()?; // ':'
-        let from = self.parse_type()?;
-        expect!(self, Kind::RParen, "expected ')' to close the named parameter");
-        let what = format!("expected '->' after the named parameter `({}: ...)`", self.text(name));
-        expect!(self, Kind::Arrow, &what);
-        let effect = self.parse_effect_row_opt()?;
-        Ok((name, from, effect))
-    }
-
-    /// The arrow `(x: A) -> B`. Its result may not name `x` yet: that is a
-    /// dependent function type, which needs the elaborator of #406.
-    fn named_arrow(
-        &mut self,
-        start: usize,
-        name: Token,
-        from: Aol<Ty>,
-        effect: Option<EffectRow>,
-        to: Aol<Ty>,
-    ) -> Result<Aol<Ty>> {
-        let binder = self.intern(self.text(name));
-        if let Some(at) = self.ty_mention(to, binder) {
-            let span = self.ast.ty_span(at).unwrap_or(name.span);
-            return Err(utilities::diag!(
-                Code::UnexpectedToken, span, name.line,
-                "the result type names the parameter `{binder}`, which needs dependent types";
-                note: "a function type whose result depends on its argument comes with \
-                       dependent types (#406); until then `{binder}` here is a type variable";
-                help: "rename the parameter, or the type variable if that is what you meant"
-            )
-            .with_label(name.span, "the parameter"));
-        }
-        let node = self.ty(Ty::Arrow { binder: Some(binder), from, effect, to });
-        self.ast.binder_spans.insert(node, name.span);
-        Ok(self.stamp_ty(start, node))
-    }
-
-    /// The first place `ty` names the type variable `name`.
-    fn ty_mention(&self, ty: Aol<Ty>, name: StrId) -> Option<Aol<Ty>> {
-        let row_mentions = |row: &Option<EffectRow>| {
-            row.as_ref().is_some_and(|row| row.tail == Some(name))
-        };
-        match self.ast.ty(ty) {
-            Ty::Var(v) if *v == name => Some(ty),
-            Ty::Var(_) | Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(_) => None,
-            Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) | Ty::App(a, b) => {
-                self.ty_mention(*a, name).or_else(|| self.ty_mention(*b, name))
-            }
-            Ty::Sized { size, elem } => {
-                self.ty_mention(*size, name).or_else(|| self.ty_mention(*elem, name))
-            }
-            Ty::Arrow { from, effect, to, .. } => {
-                let args = effect.as_ref().map(|row| {
-                    self.ast.slice(row.entries).iter().flat_map(|e| self.ast.slice(e.args).to_vec()).collect()
-                });
-                let args: Vec<Aol<Ty>> = args.unwrap_or_default();
-                if row_mentions(effect) {
-                    return Some(ty);
-                }
-                self.ty_mention(*from, name)
-                    .or_else(|| self.ty_mention(*to, name))
-                    .or_else(|| args.into_iter().find_map(|a| self.ty_mention(a, name)))
-            }
-            Ty::Tuple(items) => self.ast.slice(*items).iter().find_map(|t| self.ty_mention(*t, name)),
-            Ty::Record { fields, tail } => {
-                if *tail == Some(name) {
-                    return Some(ty);
-                }
-                self.ast.slice(*fields).iter().find_map(|f| self.ty_mention(f.ty, name))
-            }
-        }
-    }
-
-    fn parse_type_app(&mut self) -> Result<Aol<Ty>> {
-        let start = self.here()?;
-        let mut head = if self.at_intrinsic("Tensor")? {
-            self.parse_tensor_type()?
-        } else {
-            self.parse_type_atom()?
-        };
-        while self.starts_type_atom()? {
-            let arg = self.parse_type_atom()?;
-            head = self.ty(Ty::App(head, arg));
-            head = self.stamp_ty(start, head);
-        }
-        Ok(head)
-    }
-
-    fn starts_type_atom(&mut self) -> Result<bool> {
-        if self.at_tyvar()? {
-            return Ok(true);
-        }
-        // `@use` opens a signature's instance parameter; it is not a type atom, so
-        // type application must not swallow it. A splice is not an argument either:
-        // `&` is a prefix operator, as in an expression, so it heads a type or a
-        // row entry and an argument is parenthesized, `@Vec (&f a)`.
+    fn starts_type_arg(&mut self) -> Result<bool> {
+        // `@use` and `@ctx` open a signature's parameters, and a splice is a
+        // prefix operator, so none of them is an argument: `@Vec (&f a)`.
         if self.at_ctx()? || self.at_intrinsic("use")? || self.at_splice()? {
             return Ok(false);
         }
@@ -1516,195 +1480,210 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_type_atom(&mut self) -> Result<Aol<Ty>> {
-        let start = self.here()?;
-        let node = self.parse_type_atom_inner()?;
-        Ok(self.stamp_ty(start, node))
+    /// `@use {d: T} ->` anywhere but on a definition's signature.
+    fn use_param_misplaced(&mut self) -> Result<Diagnostic> {
+        let at = self.peek()?;
+        Ok(Diagnostic::error(
+            Code::UnexpectedToken,
+            at.span,
+            at.line,
+            "a `@use` parameter stands only on the arrows of a definition's signature",
+        )
+        .with_note("not inside a parameter's type, an annotation, or a field type"))
     }
 
-    fn parse_type_atom_inner(&mut self) -> Result<Aol<Ty>> {
-        if self.at_tyvar()? {
-            let name = self.expect_tyvar("expected a type-variable name")?;
-            return Ok(self.ty(Ty::Var(name)));
+    /// The function type `from -> to` an arrow builds in an expression. A
+    /// domain that ascribes a bare name, `(x: A) -> B`, names the parameter.
+    fn arrow_expr(
+        &mut self,
+        start: usize,
+        from: Aol<Expr>,
+        effect: Option<EffectRow>,
+        to: Aol<Expr>,
+    ) -> Result<Aol<Expr>> {
+        let (binder, from) = self.arrow_domain(from)?;
+        let to = self.to_ty(to)?;
+        let ty = self.arrow_ty(start, binder, from, effect, to);
+        let node = self.expr(Expr::Type(ty));
+        Ok(self.stamp(start, node))
+    }
+
+    /// The parameter an arrow's domain names, if any, and its type.
+    fn arrow_domain(&mut self, from: Aol<Expr>) -> Result<(Option<(StrId, Span)>, Aol<Ty>)> {
+        if let Some((name, span, ty)) = self.named_param(from) {
+            return Ok((Some((name, span)), ty));
         }
-        let t = self.peek()?;
-        match t.kind {
-            Kind::Word => {
-                self.bump()?;
-                if matches!(self.peek_kind()?, Kind::Dot) {
-                    self.bump()?; // '.'
-                    let member = expect!(self, Kind::Word, "expected a type name after '.'");
-                    self.require_type_capital(self.text(member), &member)?;
-                    let module = self.intern(self.text(t));
-                    let name = self.intern(self.text(member));
-                    Ok(self.ty(Ty::Con {
-                        module: Some(module),
-                        name,
-                    }))
+        Ok((None, self.to_ty(from)?))
+    }
+
+    /// `(x: A)`: an ascription of a bare lowercase name.
+    fn named_param(&self, e: Aol<Expr>) -> Option<(StrId, Span, Aol<Ty>)> {
+        let Expr::Ascribe { expr, ty } = self.ast.expr(e) else { return None };
+        let Expr::Var { module: None, name } = self.ast.expr(*expr) else { return None };
+        if is_upper(name.as_str()) || name.as_str().starts_with('@') {
+            return None;
+        }
+        Some((*name, self.ast.expr_span(*expr)?, *ty))
+    }
+
+    fn arrow_ty(
+        &mut self,
+        start: usize,
+        binder: Option<(StrId, Span)>,
+        from: Aol<Ty>,
+        effect: Option<EffectRow>,
+        to: Aol<Ty>,
+    ) -> Aol<Ty> {
+        let node = self.ty(Ty::Arrow { binder: binder.map(|b| b.0), from, effect, to });
+        if let Some((_, span)) = binder {
+            self.ast.binder_spans.insert(node, span);
+        }
+        self.stamp_ty(start, node)
+    }
+
+    /// The type an expression in type position denotes. The checker's own
+    /// forms keep their shape (names, applications, `@Tensor n T`, sizes,
+    /// tuples, records, splices); any other expression is a `Ty::Term`.
+    fn to_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
+        let span = self.ast.expr_span(e);
+        let node = match self.ast.expr(e).clone() {
+            Expr::Type(ty) => return Ok(ty),
+            Expr::Var { module: None, name } if name.as_str() == "@Tensor" => {
+                let span = span.unwrap_or(Span::at(0));
+                return Err(Diagnostic::error(
+                    Code::UnexpectedToken,
+                    span,
+                    0,
+                    "a tensor type `@Tensor n T` stands only at the head of an application",
+                )
+                .with_help("parenthesize it: `(@Tensor n T)`"));
+            }
+            Expr::Var { module: None, name } if name.as_str() == "_" => Ty::Term(e),
+            Expr::Var { module: None, name } => {
+                if name.as_str().starts_with(|c: char| c.is_ascii_lowercase()) {
+                    Ty::Var(name)
                 } else {
-                    self.require_type_capital(self.text(t), &t)?;
-                    let name = self.intern(self.text(t));
-                    Ok(self.ty(Ty::Con { module: None, name }))
+                    Ty::Con { module: None, name }
                 }
             }
-            Kind::Op if self.text(t) == table::SPLICE => {
-                let e = self.parse_splice_operand()?;
-                Ok(self.ty(Ty::MetaE(e)))
+            // `M.T`: a qualified type reads as a variant of `M` with no payload.
+            Expr::Variant { module: None, ty: Some(m), tag, fields } if self.ast.slice(fields).is_empty() => {
+                Ty::Con { module: Some(m), name: tag }
             }
-            // A size literal, an argument of a size-parameterized alias:
-            // `Matrix 2 3 @Int`.
-            Kind::Int(_) => self.parse_size_atom(),
-            Kind::At if self.intrinsic_name(t) == "Tensor" => Err(Diagnostic::error(
-                Code::UnexpectedToken,
-                t.span,
-                t.line,
-                "a tensor type `@Tensor n T` stands only at the head of an application",
-            )
-            .with_help("parenthesize it: `(@Tensor n T)`")),
-            Kind::At => {
-                self.bump()?;
-                let name = self.intern(self.text(t));
-                Ok(self.ty(Ty::Con { module: None, name }))
+            Expr::App(..) => return self.app_ty(e),
+            Expr::Int(n) if n >= 0 => Ty::Nat(n as u64),
+            Expr::BinOp { op, lhs, rhs } if matches!(op.as_str(), "+" | "*") => {
+                let (a, b) = (self.size_ty(lhs)?, self.size_ty(rhs)?);
+                if op.as_str() == "+" { Ty::SizeAdd(a, b) } else { Ty::SizeMul(a, b) }
             }
-            Kind::LParen
-                if matches!(self.peek_kind_at(1)?, Kind::Word)
-                    && matches!(self.peek_kind_at(2)?, Kind::Colon) =>
-            {
-                Err(self.named_param_type()?)
+            Expr::Unit => Ty::Unit,
+            Expr::Tuple(items) => {
+                let items = self.ast.slice(items).to_vec();
+                let tys = items.into_iter().map(|t| self.to_ty(t)).collect::<Result<Vec<_>>>()?;
+                Ty::Tuple(self.ast.make_slice(tys))
             }
-            Kind::LParen => {
-                self.bump()?;
-                let inner = self.parse_type()?;
-                expect!(self, Kind::RParen, "expected ')' to close the type");
-                Ok(inner)
+            Expr::Splice(x) => Ty::MetaE(x),
+            Expr::Ascribe { .. } if self.named_param(e).is_some() => {
+                let (name, ..) = self.named_param(e).unwrap();
+                let span = span.unwrap_or(Span::at(0));
+                return Err(utilities::diag!(
+                    Code::UnexpectedToken, span, 0,
+                    "a named parameter `({name}: ...)` stands only before `->`";
+                    help: "parenthesize the whole function type: `((x: A) -> B)`"
+                ));
             }
-            Kind::LBrace => self.parse_brace_type(),
-            _ => Err(self.unexpected(&t, "expected a type")),
+            _ => Ty::Term(e),
+        };
+        let node = self.ty(node);
+        if let Some(span) = span {
+            self.ast.ty_spans.insert(node, span);
         }
+        Ok(node)
     }
 
-    /// A named parameter `(x: A)` where no arrow can follow it (an argument
-    /// of a type application, a field type), with the cursor on `(`.
-    fn named_param_type(&mut self) -> Result<Diagnostic> {
-        let open = self.bump()?;
-        let name = self.bump()?;
-        let name = self.text(name).to_string();
-        self.bump()?; // ':'
-        self.parse_type()?;
-        let close = expect!(self, Kind::RParen, "expected ')' to close the named parameter");
-        Ok(utilities::diag!(
-            Code::UnexpectedToken, Span::new(open.span.start, close.span.end), open.line,
-            "a named parameter `({name}: ...)` stands only before `->`";
-            help: "parenthesize the whole function type: `((x: A) -> B)`"
-        ))
-    }
-
-    /// A sized tensor type `@Tensor n elem`, with the cursor on `@Tensor`: the
-    /// size and the element type, each one atom (`@Tensor 3 @Int`,
-    /// `@Tensor (n + 1) a`, `@Tensor m (@Tensor n a)` for a matrix).
-    fn parse_tensor_type(&mut self) -> Result<Aol<Ty>> {
-        let start = self.here()?;
-        self.bump()?; // '@Tensor'
-        let size = self.parse_size_atom()?;
-        let elem = self.parse_type_atom()?;
-        let node = self.ty(Ty::Sized { size, elem });
-        Ok(self.stamp_ty(start, node))
-    }
-
-    /// A tensor size expression: `+` of `*`-terms over Nat literals and size
-    /// variables (`[n+m]`, `[2*n+1]`). `*` binds tighter than `+`; `( )` groups.
-    fn parse_size(&mut self) -> Result<Aol<Ty>> {
-        let mut lhs = self.parse_size_term()?;
-        while self.at_op("+")? {
-            self.bump()?;
-            let rhs = self.parse_size_term()?;
-            lhs = self.ty(Ty::SizeAdd(lhs, rhs));
+    /// An application in type position: `@Tensor n T` at its head is a sized
+    /// tensor, any other head is applied to its arguments one at a time.
+    fn app_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
+        let mut args = Vec::new();
+        let mut head = e;
+        while let Expr::App(f, a) = *self.ast.expr(head) {
+            args.push(a);
+            head = f;
         }
-        Ok(lhs)
-    }
-
-    fn parse_size_term(&mut self) -> Result<Aol<Ty>> {
-        let mut lhs = self.parse_size_atom()?;
-        while self.at_op("*")? {
-            self.bump()?;
-            let rhs = self.parse_size_atom()?;
-            lhs = self.ty(Ty::SizeMul(lhs, rhs));
-        }
-        Ok(lhs)
-    }
-
-    fn parse_size_atom(&mut self) -> Result<Aol<Ty>> {
-        let t = self.peek()?;
-        match t.kind {
-            Kind::Int(v) if v >= 0 => {
-                self.bump()?;
-                let node = self.ty(Ty::Nat(v as u64));
-                Ok(self.stamp_ty(t.span.start, node))
+        args.reverse();
+        let start = self.ast.expr_span(e).map_or(0, |s| s.start);
+        let tensor = matches!(self.ast.expr(head), Expr::Var { module: None, name } if name.as_str() == "@Tensor");
+        let (mut ty, rest) = if tensor {
+            if args.len() < 2 {
+                let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
+                return Err(Diagnostic::error(Code::UnexpectedToken, span, 0, "expected a type: `@Tensor n T` takes a size and an element type"));
             }
-            Kind::Int(_) => Err(self.unexpected(&t, "a tensor size must be non-negative")),
-            Kind::LParen => {
-                self.bump()?;
-                let inner = self.parse_size()?;
-                expect!(self, Kind::RParen, "expected ')' in a tensor size");
-                Ok(inner)
-            }
-            _ if self.at_tyvar()? => {
-                let name = self.expect_tyvar("expected a size variable")?;
-                let node = self.ty(Ty::Var(name));
-                Ok(self.stamp_ty(t.span.start, node))
-            }
-            _ => Err(self.unexpected(
-                &t,
-                "expected a size (a Nat literal, a lowercase variable, or `+`/`*` of them)",
-            )),
-        }
-    }
-
-    /// `{}` unit, `{A, B}` tuple, or `{x: A, y: B}` named-record parameter sugar.
-    fn parse_brace_type(&mut self) -> Result<Aol<Ty>> {
-        self.bump()?; // '{'
-        if self.eat(|k| matches!(k, Kind::RBrace))? {
-            return Ok(self.ty(Ty::Unit));
-        }
-        let is_record = matches!(self.peek_kind()?, Kind::Word)
-            && matches!(self.peek_kind_at(1)?, Kind::Colon);
-        if is_record {
-            let mut fields = Vec::new();
-            let mut tail = None;
-            loop {
-                let name = self.expect_word("expected a record field name")?;
-                expect!(self, Kind::Colon, "expected ':' after the field name");
-                let ty = self.parse_type()?;
-                fields.push(RecField { name, ty });
-                // `{ x: A, y: B | r }`: `| r` opens the record with a row variable.
-                if self.at_op("|")? {
-                    self.bump()?;
-                    tail = Some(self.expect_tyvar("expected a row variable after '|'")?);
-                    break;
-                }
-                if !self.eat(|k| matches!(k, Kind::Comma))?
-                    || matches!(self.peek_kind()?, Kind::RBrace)
-                {
-                    break;
-                }
-            }
-            expect!(self, Kind::RBrace, "expected '}' to close the record type");
-            let fields = self.ast.make_slice(fields);
-            Ok(self.ty(Ty::Record { fields, tail }))
+            let size = self.size_ty(args[0])?;
+            let elem = self.to_ty(args[1])?;
+            let node = self.ty(Ty::Sized { size, elem });
+            (node, &args[2..])
         } else {
-            let mut tys = Vec::new();
-            loop {
-                tys.push(self.parse_type()?);
-                if !self.eat(|k| matches!(k, Kind::Comma))?
-                    || matches!(self.peek_kind()?, Kind::RBrace)
-                {
-                    break;
-                }
-            }
-            expect!(self, Kind::RBrace, "expected '}' to close the tuple type");
-            let tys = self.ast.make_slice(tys);
-            Ok(self.ty(Ty::Tuple(tys)))
+            (self.to_ty(head)?, &args[..])
+        };
+        let mut end = self.ast.ty_span(ty).map_or(start, |s| s.end);
+        if tensor {
+            end = self.ast.expr_span(args[1]).map_or(end, |s| s.end);
+            self.ast.ty_spans.insert(ty, Span::new(start, end));
         }
+        for &arg in rest {
+            let a = self.to_ty(arg)?;
+            end = self.ast.expr_span(arg).map_or(end, |s| s.end);
+            ty = self.ty(Ty::App(ty, a));
+            self.ast.ty_spans.insert(ty, Span::new(start, end));
+        }
+        Ok(ty)
+    }
+
+    /// A tensor size: a `Nat` literal, a size variable, or `+`/`*` of them.
+    fn size_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
+        let ok = match self.ast.expr(e) {
+            Expr::Int(n) => *n >= 0,
+            Expr::Var { module: None, name } => name.as_str().starts_with(|c: char| c.is_ascii_lowercase()),
+            Expr::BinOp { op, .. } => matches!(op.as_str(), "+" | "*"),
+            _ => false,
+        };
+        if !ok {
+            let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
+            let what = match self.ast.expr(e) {
+                Expr::Int(_) => "a tensor size must be non-negative",
+                _ => "expected a size (a Nat literal, a lowercase variable, or `+`/`*` of them)",
+            };
+            return Err(Diagnostic::error(Code::UnexpectedToken, span, 0, what));
+        }
+        self.to_ty(e)
+    }
+
+    /// The fields of a record type, `{x: A, y: B}` or open `{x: A | r}`, with
+    /// the cursor on the first field name (the `{` consumed).
+    fn parse_record_type(&mut self, start: usize) -> Result<Aol<Expr>> {
+        let mut fields = Vec::new();
+        let mut tail = None;
+        loop {
+            let name = self.expect_word("expected a record field name")?;
+            expect!(self, Kind::Colon, "expected ':' after the field name");
+            let ty = self.parse_type()?;
+            fields.push(RecField { name, ty });
+            // `{ x: A, y: B | r }`: `| r` opens the record with a row variable.
+            if self.at_op("|")? {
+                self.bump()?;
+                tail = Some(self.expect_tyvar("expected a row variable after '|'")?);
+                break;
+            }
+            if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
+                break;
+            }
+        }
+        expect!(self, Kind::RBrace, "expected '}' to close the record type");
+        let fields = self.ast.make_slice(fields);
+        let ty = self.ty(Ty::Record { fields, tail });
+        let ty = self.stamp_ty(start, ty);
+        let node = self.expr(Expr::Type(ty));
+        Ok(self.stamp(start, node))
     }
 
     /// An optional effect row right after `->`: `<>`, `<e>`, `<A, B>`,
@@ -1761,8 +1740,8 @@ impl<'a> Parser<'a> {
             }
             let name = self.expect_effect_label()?;
             let mut args = Vec::new();
-            while self.starts_type_atom()? {
-                args.push(self.parse_type_atom()?);
+            while self.starts_type_arg()? {
+                args.push(self.parse_type_arg()?);
             }
             let args = self.ast.make_slice(args);
             entries.push(RowEntry {
@@ -1828,6 +1807,17 @@ impl<'a> Parser<'a> {
                         lhs = self.stamp(start, node);
                     }
                 },
+                // A function type: types are expressions (#406).
+                Kind::Arrow => {
+                    if table::ARROW.left < min_bp {
+                        break;
+                    }
+                    self.bump()?; // '->'
+                    let effect = self.parse_effect_row_opt()?;
+                    self.expect_type_after_arrow()?;
+                    let to = self.parse_expr(table::ARROW.right)?;
+                    lhs = self.arrow_expr(start, lhs, effect, to)?;
+                }
                 _ if self.starts_operand(t.kind) => {
                     if table::APP.left < min_bp {
                         break;
@@ -2284,6 +2274,7 @@ impl<'a> Parser<'a> {
 
     /// `{}` unit or `{a, b, ...}` tuple.
     fn parse_brace_expr(&mut self) -> Result<Aol<Expr>> {
+        let start = self.here()?;
         self.bump()?; // '{'
         if self.eat(|k| matches!(k, Kind::RBrace))? {
             return Ok(self.expr(Expr::Unit));
@@ -2296,6 +2287,9 @@ impl<'a> Parser<'a> {
                     && matches!(self.peek_kind_at(2)?, Kind::Eq)));
         if is_record {
             return self.parse_record_expr();
+        }
+        if matches!(self.peek_kind()?, Kind::Word) && matches!(self.peek_kind_at(1)?, Kind::Colon) {
+            return self.parse_record_type(start);
         }
         let mut elems = Vec::new();
         loop {
@@ -2529,30 +2523,62 @@ impl<'a> Parser<'a> {
                 let arms = self.ast.make_slice(Vec::new());
                 Ok(self.match_lambda(arms, 1))
             }
+            "use" if matches!(self.peek_kind_at(1)?, Kind::LBrace)
+                && matches!(self.peek_kind_at(2)?, Kind::Word)
+                && matches!(self.peek_kind_at(3)?, Kind::Colon) =>
+            {
+                Err(self.use_param_misplaced()?)
+            }
             "use" => self.parse_use_arg(),
+            "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace) && matches!(self.peek_kind_at(2)?, Kind::Dot) => {
+                self.parse_ctx_arg()
+            }
             "ctx" => {
                 let t = self.peek()?;
                 Err(Self::ctx_reserved_at(&t).with_help(
                     "an explicit instance is passed by its `@use` field's name: `f @use {.d = value} ...`",
                 ))
             }
-            "Array" => self.parse_array(),
+            "Array" if matches!(self.peek_kind_at(1)?, Kind::Dot) => self.parse_array(),
             "extern" => self.parse_extern(),
             // Any other lowercase `@name` is a reference to a compiler intrinsic
             // (`@tensor_create`, `@tensor_index`, `@vec_get`, ...), usable as a value
             // function value. The `@` sigil marks it as a primitive, not a library fn.
             // A base type (`@Int32`) parses the same way, so a misplaced one reaches
             // the checker's diagnostics rather than a bare parse error.
-            other if other.starts_with(|c: char| c.is_ascii_lowercase())
-                || crate::typing::BASE_TYPES.contains(&self.text(at)) => {
+            // Any other `@name` is a compiler intrinsic (`@vec_get`), a builtin
+            // type or effect (`@Int32`, `@IO`), or a primitive of the dependent
+            // core (`@Type`, `@refl`): types are expressions, so each parses as
+            // a name, and the checker decides where it may stand.
+            _ => {
                 self.bump()?;
                 let name = self.intern(self.text(at));
                 Ok(self.expr(Expr::Var { module: None, name }))
             }
-            other => {
-                Err(self.unexpected(&at, &format!("'@{other}' is not valid in an expression")))
+        }
+    }
+
+    /// `@ctx {.u = l, ...}`: level arguments, as a `@use` argument supplies
+    /// instances.
+    fn parse_ctx_arg(&mut self) -> Result<Aol<Expr>> {
+        let start = self.here()?;
+        self.bump()?; // '@ctx'
+        self.bump()?; // '{'
+        let mut inits = Vec::new();
+        loop {
+            expect!(self, Kind::Dot, "expected a `.level = value`");
+            let name = self.expect_word("expected a level name after '.'")?;
+            expect!(self, Kind::Eq, "expected '=' after the level name");
+            let value = self.parse_expr(0)?;
+            inits.push(FieldInit::Named { name, value });
+            if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
+                break;
             }
         }
+        expect!(self, Kind::RBrace, "expected '}' to close the `@ctx` argument");
+        let inits = self.ast.make_slice(inits);
+        let node = self.expr(Expr::CtxArg(inits));
+        Ok(self.stamp(start, node))
     }
 
     /// `@use {.f = e, ...}`: explicit values for some of the callee's `@use`

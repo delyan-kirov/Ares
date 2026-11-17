@@ -3,9 +3,9 @@
 //! Equality: Now for Good", POPL 2022, and "Impredicative Observational
 //! Equality", POPL 2023).
 //!
-//! It stands apart from the frontend: it checks scripts in its own small
-//! syntax (the spelling the dependent design settled on), so the theory can be
-//! tried before the frontend's checker grows into it.
+//! It stands apart from the frontend's checker: it reads Ares modules through
+//! the frontend's parser, where types are expressions, and checks them itself,
+//! so the theory can be tried before the checker grows into it.
 //!
 //! * [`level`] is universe levels, with `@Type 0` the universe of
 //!   propositions, and the decision procedure for `<=`.
@@ -15,8 +15,8 @@
 //!   gives the declared inductive types their recursors.
 //! * [`observational`] is the computation of equality and cast.
 //! * [`conversion`] decides definitional equality.
-//! * [`syntax`] parses scripts and [`check`] elaborates them by bidirectional
-//!   type checking.
+//! * [`syntax`] lowers a parsed module to the kernel's input and [`check`]
+//!   elaborates it by bidirectional type checking.
 //! * [`mod@recheck`] checks an elaborated signature again from its terms alone.
 //!
 //! Entry point: [`check_script`].

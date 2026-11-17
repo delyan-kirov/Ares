@@ -3,7 +3,7 @@
 **Status:** prototype, plan step 1 of issue #406. A separate crate,
 `crates/kernel`, that the frontend does not use yet.
 **Date:** 2026-11-10.
-**Scope:** what the kernel checks, the script language it reads, how it
+**Scope:** what the kernel checks, the Ares it reads, how it
 computes, and where it departs from the published system.
 
 ---
@@ -17,7 +17,7 @@ a kernel that implements the theory on its own, so the rules can be tried and
 tested before the frontend's checker grows into them (steps 2 to 4).
 
 The milestone the plan sets is rationals over a user-defined binary `Integer`
-with respectful quotient elimination. It is `crates/kernel/scripts/rationals.ott`.
+with respectful quotient elimination. It is `crates/kernel/scripts/RATIONALS.ares`.
 
 ## 2. Layout
 
@@ -30,29 +30,36 @@ with respectful quotient elimination. It is `crates/kernel/scripts/rationals.ott
 | `inductive` | constructor and recursor types, iota reduction |
 | `observational` | the computation of `a ~ b` and `@cast` |
 | `conversion` | typed definitional equality |
-| `syntax` | lexer and parser of the script language |
+| `syntax` | lowering of a module the frontend parsed to the kernel's input |
 | `check` | bidirectional elaboration of scripts into core terms |
 
-No external crates. Values are `Rc`-shared because closures capture the terms
-they evaluate.
+No external crates; the parser is the frontend's. Values are `Rc`-shared
+because closures capture the terms they evaluate.
 
-## 3. The script language
+## 3. The language it reads
 
-Scripts use the spelling #406 settled on, with every argument explicit
-except where a `_` or a left-out level stands for it:
+A script is an Ares module (#473). The kernel parses it with the frontend's
+parser, where types are expressions (#406 step 3, parser half), and lowers
+the tree itself; the frontend's checker rejects the dependent forms until its
+elaborator takes types as terms. Every argument is explicit except where a
+`_` or a left-out level stands for it:
 
+```ares
+$ @mod NAT
+$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
+$ Nat : @union = Zero: {}, Succ: Nat
+$ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
+$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
+$ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl four
 ```
-$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \t x => x
-$ Nat : @Type 1 = @data | zero | succ Nat
-$ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => succ r) m
-$ four : add (succ (succ zero)) (succ (succ zero)) ~ succ (succ (succ (succ zero))) = @refl four
-```
 
-- `$ name : T = e` defines, `$ name : T` postulates, `$ D : (params) -> @Type l = @data | c fields | ...` declares an inductive type. A constructor may state its result, `| c fields : D params indices`; the leading binders every constructor passes through unchanged are parameters, the rest indices: `$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @data | nil : Vec a zero | cons (m: Nat) (h: a) (t: Vec a m) : Vec a (succ m)`.
+- `$ name : T = e` defines and `$ name : T = @axiom` postulates. A signature's leading named parameters `(x: A) ->` are bound by the signature, as in every Ares definition (#437): `id`'s body binds only `x`. A capitalized name defines a type, `$ Frac : @Type 1 = {Integer, Pos}`.
+- An inductive type is a union. `$ D : @union = Tag: payload, ...` is in `@Type 1`; with parameters, indices or another universe, the signature states them and the body is the union, `$ D : (params) -> @Type l = @union ...`. A constructor may state its result, `Tag: {fields} -> D params indices`; the leading binders every constructor passes through unchanged are parameters, the rest indices: `$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }`. A payload is `{}`, a bare type, or braced fields, named or not.
+- Constructor `Tag` of `D` is the global `D.Tag`, written `D.Tag.{ fields }` (positional or `.f = e`) or `.Tag.{ fields }` when one constructor has that tag; its parameters are inferred. Each declaration adds `D.elim`, and, with parameters, the projections `D.eq_Tag_f` (`D.eq_Tag_argN` for an unnamed field).
 - `@ctx {u: @l, ...} ->` at the start of a signature binds levels; a use passes them as `name @ctx {.u = l}`, or leaves them out. Kernel levels range over every level, `0` included; the surface default `n >= 1` is a kernel `k + 1`.
-- Terms: `\x => e`, `\(x: A) => e`, `(x: A) -> B`, `A -> B`, `(x: A) * B`, `(a, b)`, `p.1`, `p.2`, `let x: T = e in b`, `(e : T)`, `a ~ b`.
-- Primitives: `@Type l`, `@Top`, `@tt`, `@Bottom`, `@absurd A e`, `@Eq A a b`, `@refl a`, `@transp t B u t' e`, `@cast A B e t`, `@Quot A R rr rs rt`, `@qin a`, `@qelim P f resp q`.
-- An argument written `_`, and a level left out of a use, are inferred by local argument synthesis: first-order matching against the expected type and the other arguments' types, such as `trans _ _ _ e f` against `a ~ c` or `Nat.elim (\n => P n) ...`. The checker then checks the application again with the solutions by the ordinary rules, so the elaborated terms are explicit and a wrong guess only rejects (#470). Matching does not see through computation: a step that proves `a ~ b` used as `nsucc a ~ nsucc b` needs its endpoints written.
+- Terms: `\x => e`, `\(x: A) => e`, `(x: A) -> B`, `A -> B`, `let x: T = e in b`, `(e : T)`, `a ~ b`, `f <| x` and `x |> f`. `{a, b}` is a pair where a pair type is expected and otherwise the type of pairs; `{x: A, y: B x}` is a dependent pair type; `p.0` and `p.1` project.
+- Primitives: `@Type l`, `@Top`, `@tt`, `@Bottom`, `x |> @absurd` (at the type expected), `@Eq A a b`, `@refl a`, `@transp t B u t2 e`, `@cast A B e t`, `@Quot A R rr rs rt`, `@qin a`, `@qelim P f resp q`.
+- An argument written `_`, and a level left out of a use, are inferred by local argument synthesis: first-order matching against the expected type and the other arguments' types, such as `trans _ _ _ e f` against `a ~ c` or `Nat.elim (\n => P n) ...`. The checker then checks the application again with the solutions by the ordinary rules, so the elaborated terms are explicit and a wrong guess only rejects (#470). Matching does not see through computation: a step that proves `a ~ b` used as `Nat.Succ.{ a } ~ Nat.Succ.{ b }` needs its endpoints written.
 - `#` starts a comment.
 
 ## 4. The theory as implemented
@@ -84,14 +91,15 @@ each rule's implementation with `// Rule [Name]`, and
 `kernel::axioms` lists the postulates a global rests on, transitively and
 through proofs (Lean's `#print axioms`). A script pins them with a
 `# axioms: a b` line above each declaration that rests on any, which
-`tests/scripts.rs` checks, so a new dependence on a postulate fails a test. `rationals.ott` rests on none: the
+`tests/scripts.rs` checks, so a new dependence on a postulate fails a test. `RATIONALS.ares` rests on none: the
 ring laws it needs are proved through unary naturals (#463).
 
 ## 6. Next steps
 
 Plan step 2 is done: `documentation/syntax/ares.y` has one grammar for types and
 expressions, and every corpus file groups as it did under the separate type
-grammar (the parser in `crates/frontend` keeps its own type parser until step
-3). Step 3 grows the frontend's Algorithm W into a
-bidirectional elaborator with NbE conversion, for which this kernel is the
-reference.
+grammar. The parser in `crates/frontend` reads type positions as expressions
+too (#473), which is how the kernel reads Ares; the checker still takes the
+`Ty` view of them and rejects the dependent forms. Step 3 grows the
+frontend's Algorithm W into a bidirectional elaborator with NbE conversion,
+for which this kernel is the reference.

@@ -1,0 +1,598 @@
+$ @mod RATIONALS
+
+# Rationals as a quotient of fractions over binary integers (issue #406,
+# kernel milestone).
+#
+# `Integer` is user-defined, with a binary representation. A rational is a
+# fraction `a / b` (`b` positive) up to `a * d ~ c * b`. Two classes are
+# equal exactly when their fractions are related, so `1/2 ~ 2/4` holds by
+# computation, and every operation must respect the relation before
+# `@qelim` accepts it.
+#
+# The ring laws of multiplication that the relation needs (commutativity,
+# associativity, cancelling a positive factor) are proved, through unary
+# naturals, so the script rests on no postulate.
+#
+# The endpoints of equality steps are `_`, and the motive level of a
+# recursor is left out: the checker infers both. A middle endpoint is
+# written where a step proves `a ~ b` and is used as
+# `Nat.Succ.{ a } ~ Nat.Succ.{ b }`, which computes to it but does not show it.
+#
+# A `# axioms:` line above a declaration would name the postulates it rests
+# on, transitively and through proofs, and tests/scripts.rs checks it. No
+# declaration here rests on one.
+
+# ## Binary positive numbers
+
+$ Bool : @union = False: {}, True: {}
+
+$ Pos : @union = One: {}, Bit0: Pos, Bit1: Pos
+
+# Case analysis: the recursor with the induction hypotheses ignored.
+$ pcase : (t: @Type 1) -> t -> (Pos -> t) -> (Pos -> t) -> Pos -> t = \a f g p =>
+    Pos.elim (\_ => t) a (\q _ => f q) (\q _ => g q) p
+
+$ psucc : Pos -> Pos = \p =>
+    Pos.elim (\_ => Pos) Pos.Bit0.{ Pos.One } (\q _ => Pos.Bit1.{ q }) (\_ r => Pos.Bit0.{ r }) p
+
+$ padd : Pos -> Pos -> Pos = \p =>
+    Pos.elim (\_ => Pos -> Pos) (\q =>
+        pcase Pos Pos.Bit0.{ Pos.One } (\q2 => Pos.Bit1.{ q2 }) (\q2 => Pos.Bit0.{ psucc q2 })
+            q) (\p2 r q =>
+                pcase Pos Pos.Bit1.{ p2 } (\q2 => Pos.Bit0.{ r q2 }) (\q2 => Pos.Bit1.{ r q2 })
+                    q) (\p2 r q =>
+                        pcase Pos Pos.Bit0.{ psucc p2 } (\q2 => Pos.Bit1.{ r q2 }) (\q2 =>
+                            Pos.Bit0.{ psucc (r q2) }) q) p
+
+$ pmul : Pos -> Pos -> Pos = \p =>
+    Pos.elim (\_ => Pos -> Pos) (\q => q) (\_ r q => Pos.Bit0.{ r q }) (\_ r q =>
+        padd q Pos.Bit0.{ r q }) p
+
+# `2p - 1`.
+$ pdouble_pred : Pos -> Pos = \p =>
+    Pos.elim (\_ => Pos) Pos.One (\_ r => Pos.Bit1.{ r }) (\q _ => Pos.Bit1.{ Pos.Bit0.{ q } }) p
+
+# ## Binary integers
+
+$ Integer : @union = Zero: {}, Pos: Pos, Neg: Pos
+
+$ icase : (t: @Type 1) -> t -> (Pos -> t) -> (Pos -> t) -> Integer -> t = \a f g z =>
+    Integer.elim (\_ => t) a f g z
+
+$ ineg : Integer -> Integer =
+    icase Integer Integer.Zero (\p => Integer.Neg.{ p }) (\p => Integer.Pos.{ p })
+
+$ idouble : Integer -> Integer =
+    icase Integer Integer.Zero (\p => Integer.Pos.{ Pos.Bit0.{ p } }) (\p =>
+        Integer.Neg.{ Pos.Bit0.{ p } })
+$ isucc_double : Integer -> Integer =
+    icase Integer Integer.Pos.{ Pos.One } (\p => Integer.Pos.{ Pos.Bit1.{ p } }) (\p =>
+        Integer.Neg.{ pdouble_pred p })
+$ ipred_double : Integer -> Integer =
+    icase Integer Integer.Neg.{ Pos.One } (\p => Integer.Pos.{ pdouble_pred p }) (\p =>
+        Integer.Neg.{ Pos.Bit1.{ p } })
+
+# `p - q`, by recursion on `p` and cases on `q`.
+$ psub : Pos -> Pos -> Integer = \p =>
+    Pos.elim (\_ => Pos -> Integer) (\q =>
+        pcase Integer Integer.Zero (\q2 => Integer.Neg.{ pdouble_pred q2 }) (\q2 =>
+            Integer.Neg.{ Pos.Bit0.{ q2 } }) q) (\p2 r q =>
+                pcase Integer Integer.Pos.{ pdouble_pred p2 } (\q2 => idouble (r q2)) (\q2 =>
+                    ipred_double (r q2)) q) (\p2 r q =>
+                        pcase Integer Integer.Pos.{ Pos.Bit0.{ p2 } } (\q2 =>
+                            isucc_double (r q2)) (\q2 => idouble (r q2)) q) p
+
+$ iadd : Integer -> Integer -> Integer = \a b =>
+    icase Integer b (\p =>
+        icase Integer Integer.Pos.{ p } (\q => Integer.Pos.{ padd p q }) (\q => psub p q) b) (\p =>
+            icase Integer Integer.Neg.{ p } (\q => psub q p) (\q => Integer.Neg.{ padd p q }) b) a
+
+$ imul : Integer -> Integer -> Integer = \a b =>
+    icase Integer Integer.Zero (\p =>
+        icase Integer Integer.Zero (\q => Integer.Pos.{ pmul p q }) (\q => Integer.Neg.{ pmul p q })
+            b) (\p =>
+                icase Integer Integer.Zero (\q => Integer.Neg.{ pmul p q }) (\q =>
+                    Integer.Pos.{ pmul p q }) b) a
+
+$ is_zero : Integer -> Bool = icase Bool Bool.True (\_ => Bool.False) (\_ => Bool.False)
+
+# Arithmetic computes: 5 + (-3) = 2, 3 * (-2) = -6.
+$ five : Pos = Pos.Bit1.{ Pos.Bit0.{ Pos.One } }
+$ three : Pos = Pos.Bit1.{ Pos.One }
+$ sum_check : iadd Integer.Pos.{ five } Integer.Neg.{ three } ~ Integer.Pos.{
+    Pos.Bit0.{ Pos.One }
+} =
+    @tt
+$ mul_check : imul Integer.Pos.{ three } Integer.Neg.{ Pos.Bit0.{ Pos.One } } ~ Integer.Neg.{
+    Pos.Bit0.{ three }
+} =
+    @tt
+
+# ## Equality reasoning on integers
+
+$ isym : (x: Integer) -> (y: Integer) -> x ~ y -> y ~ x = \e =>
+    @transp x (\z => z ~ x) (@refl x) y e
+$ itrans : (x: Integer) -> (y: Integer) -> (z: Integer) -> x ~ y -> y ~ z -> x ~ z = \e f =>
+    @transp y (\w => x ~ w) e z f
+$ iap : (f: Integer -> Integer) -> (x: Integer) -> (y: Integer) -> x ~ y -> f x ~ f y = \e =>
+    @transp x (\z => f x ~ f z) (@refl (f x)) y e
+
+# ## Unary naturals
+#
+# The laws of `pmul` go through unary naturals: `nat_of` maps `Pos` into them
+# injectively and turns `padd` and `pmul` into `nadd` and `nmul`, whose laws
+# follow by induction on one argument.
+
+$ Nat : @union = Zero: {}, Succ: Nat
+
+$ nadd : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) m (\_ r => Nat.Succ.{ r }) n
+$ nmul : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) Nat.Zero (\_ r => nadd m r) n
+$ ndouble : Nat -> Nat = \n => Nat.elim (\_ => Nat) Nat.Zero (\_ r => Nat.Succ.{ Nat.Succ.{ r } }) n
+
+$ nsym : (x: Nat) -> (y: Nat) -> x ~ y -> y ~ x = \e => @transp x (\z => z ~ x) (@refl x) y e
+$ ntrans : (x: Nat) -> (y: Nat) -> (z: Nat) -> x ~ y -> y ~ z -> x ~ z = \e f =>
+    @transp y (\w => x ~ w) e z f
+$ nap : (f: Nat -> Nat) -> (x: Nat) -> (y: Nat) -> x ~ y -> f x ~ f y = \e =>
+    @transp x (\z => f x ~ f z) (@refl (f x)) y e
+
+$ nadd_zero_r : (n: Nat) -> nadd n Nat.Zero ~ n =
+    Nat.elim (\n => nadd n Nat.Zero ~ n) @tt (\_ ih => ih) n
+
+$ nadd_one_r : (n: Nat) -> nadd n Nat.Succ.{ Nat.Zero } ~ Nat.Succ.{ n } =
+    Nat.elim (\n => nadd n Nat.Succ.{ Nat.Zero } ~ Nat.Succ.{ n }) @tt (\_ ih => ih) n
+
+$ nadd_succ_r : (n: Nat) -> (m: Nat) -> nadd n Nat.Succ.{ m } ~ Nat.Succ.{ nadd n m } =
+    Nat.elim (\n => nadd n Nat.Succ.{ m } ~ Nat.Succ.{ nadd n m }) (@refl m) (\_ ih => ih) n
+
+$ nadd_comm : (n: Nat) -> (m: Nat) -> nadd n m ~ nadd m n =
+    Nat.elim (\n => nadd n m ~ nadd m n) (nsym _ _ (nadd_zero_r m)) (\k ih =>
+        ntrans _ _ _ ih (nsym _ _ (nadd_succ_r m k))) n
+
+$ nadd_assoc : (a: Nat) -> (b: Nat) -> (c: Nat) -> nadd (nadd a b) c ~ nadd a (nadd b c) =
+    Nat.elim (\a => nadd (nadd a b) c ~ nadd a (nadd b c)) (@refl (nadd b c)) (\_ ih => ih) a
+
+# `a + (b + c) ~ b + (a + c)`.
+$ nadd_swap : (a: Nat) -> (b: Nat) -> (c: Nat) -> nadd a (nadd b c) ~ nadd b (nadd a c) =
+    ntrans _ _ _ (nsym _ _ (nadd_assoc a b c))
+        (ntrans _ _ _ (nap (\t => nadd t c) _ _ (nadd_comm a b)) (nadd_assoc b a c))
+
+$ nadd_cancel_l : (a: Nat) -> (b: Nat) -> (c: Nat) -> nadd a b ~ nadd a c -> b ~ c =
+    Nat.elim (\a => nadd a b ~ nadd a c -> b ~ c) (\h => h) (\_ ih h => ih h) a
+
+$ ndouble_add : (a: Nat) -> (b: Nat) -> ndouble (nadd a b) ~ nadd (ndouble a) (ndouble b) =
+    Nat.elim (\a => ndouble (nadd a b) ~ nadd (ndouble a) (ndouble b)) (@refl (ndouble b)) (\_ ih =>
+        ih) a
+
+# `2a + c ~ a + (a + c)`.
+$ ndouble_add_l : (a: Nat) -> (c: Nat) -> nadd (ndouble a) c ~ nadd a (nadd a c) =
+    Nat.elim (\a => nadd (ndouble a) c ~ nadd a (nadd a c)) (@refl c) (\k ih =>
+        ntrans _ Nat.Succ.{ nadd k (nadd k c) } _ ih (nsym _ _ (nadd_succ_r k (nadd k c)))) a
+
+$ nmul_zero_r : (n: Nat) -> nmul n Nat.Zero ~ Nat.Zero =
+    Nat.elim (\n => nmul n Nat.Zero ~ Nat.Zero) @tt (\_ ih => ih) n
+
+$ nmul_succ_r : (n: Nat) -> (m: Nat) -> nmul n Nat.Succ.{ m } ~ nadd n (nmul n m) =
+    Nat.elim (\n => nmul n Nat.Succ.{ m } ~ nadd n (nmul n m)) @tt (\k ih =>
+        ntrans _ _ _ (nap (nadd m) _ _ ih) (nadd_swap m k (nmul k m))) n
+
+$ nmul_comm : (n: Nat) -> (m: Nat) -> nmul n m ~ nmul m n =
+    Nat.elim (\n => nmul n m ~ nmul m n) (nsym _ _ (nmul_zero_r m)) (\k ih =>
+        ntrans _ _ _ (nap (nadd m) _ _ ih) (nsym _ _ (nmul_succ_r m k))) n
+
+$ nmul_add_r : (a: Nat) -> (b: Nat) -> (c: Nat) -> nmul (nadd a b) c ~ nadd (nmul a c) (nmul b c) =
+    Nat.elim (\a => nmul (nadd a b) c ~ nadd (nmul a c) (nmul b c)) (@refl (nmul b c)) (\k ih =>
+        ntrans _ _ _ (nap (nadd c) _ _ ih) (nsym _ _ (nadd_assoc c (nmul k c) (nmul b c)))) a
+
+$ nmul_assoc : (a: Nat) -> (b: Nat) -> (c: Nat) -> nmul (nmul a b) c ~ nmul a (nmul b c) =
+    Nat.elim (\a => nmul (nmul a b) c ~ nmul a (nmul b c)) @tt (\k ih =>
+        ntrans _ _ _ (nmul_add_r b (nmul k b) c) (nap (nadd (nmul b c)) _ _ ih)) a
+
+$ nmul_double_l : (n: Nat) -> (m: Nat) -> nmul (ndouble n) m ~ ndouble (nmul n m) =
+    Nat.elim (\n => nmul (ndouble n) m ~ ndouble (nmul n m)) @tt (\k ih =>
+        let b = nadd m (nadd m (ndouble (nmul k m))) in
+        let c = ndouble (nadd m (nmul k m)) in
+        let d = nadd (ndouble m) (ndouble (nmul k m)) in
+        ntrans _ _ _ (nap (\t => nadd m (nadd m t)) _ _ ih)
+            (
+                ntrans _ _ _ (nsym _ _ (ndouble_add_l m (ndouble (nmul k m))))
+                    (nsym _ _ (ndouble_add m (nmul k m)))
+            )) n
+
+# Cancelling a successor: `a (p + 1) ~ b (p + 1)` gives `a ~ b`.
+$ nmul_cancel_succ : (p: Nat) -> (a: Nat) -> (b: Nat)
+    -> nmul a Nat.Succ.{ p } ~ nmul b Nat.Succ.{ p } -> a ~ b =
+    Nat.elim (\a => (b: Nat) -> nmul a Nat.Succ.{ p } ~ nmul b Nat.Succ.{ p } -> a ~ b) (\b =>
+        Nat.elim (\b => nmul Nat.Zero Nat.Succ.{ p } ~ nmul b Nat.Succ.{ p } -> Nat.Zero ~ b) (\h =>
+            @tt) (\_ _ h => h) b) (\k ih b =>
+                Nat.elim (\b =>
+                    nmul Nat.Succ.{ k } Nat.Succ.{ p } ~ nmul b
+                        Nat.Succ.{ p } -> Nat.Succ.{ k } ~ b) (\h => h) (\j _ h =>
+                            ih j
+                                (
+                                    nadd_cancel_l Nat.Succ.{ p } (nmul k Nat.Succ.{ p })
+                                        (nmul j Nat.Succ.{ p }) h
+                                )) b) a b
+
+$ nmul_cancel_r : (c: Nat) -> (c ~ Nat.Zero -> @Bottom) -> (a: Nat) -> (b: Nat)
+    -> nmul a c ~ nmul b c -> a ~ b =
+    Nat.elim (\c =>
+        (c ~ Nat.Zero -> @Bottom) -> (a: Nat) -> (b: Nat) -> nmul a c ~ nmul b
+            c -> a ~ b) (\nz a b h => (nz @tt |> @absurd : a ~ b)) (\p _ nz => nmul_cancel_succ p) c
+
+$ ndouble_inj : (a: Nat) -> (b: Nat) -> ndouble a ~ ndouble b -> a ~ b =
+    Nat.elim (\a => (b: Nat) -> ndouble a ~ ndouble b -> a ~ b) (\b =>
+        Nat.elim (\b => ndouble Nat.Zero ~ ndouble b -> Nat.Zero ~ b) (\h => @tt) (\_ _ h => h)
+            b) (\k ih b =>
+                Nat.elim (\b => ndouble Nat.Succ.{ k } ~ ndouble b -> Nat.Succ.{ k } ~ b) (\h =>
+                    h) (\j _ h => ih j h) b) a b
+
+# An even number is not odd.
+$ ndouble_odd : (a: Nat) -> (b: Nat) -> ndouble a ~ Nat.Succ.{ ndouble b } -> @Bottom =
+    Nat.elim (\a => (b: Nat) -> ndouble a ~ Nat.Succ.{ ndouble b } -> @Bottom) (\b h =>
+        h) (\k ih b =>
+            Nat.elim (\b => ndouble Nat.Succ.{ k } ~ Nat.Succ.{ ndouble b } -> @Bottom) (\h =>
+                h) (\j _ h => ih j h) b) a b
+
+# ## Positive numbers as naturals
+
+$ nat_of : Pos -> Nat = \p =>
+    Pos.elim (\_ => Nat) Nat.Succ.{ Nat.Zero } (\_ r => ndouble r) (\_ r => Nat.Succ.{ ndouble r })
+        p
+
+$ nat_of_succ : (p: Pos) -> nat_of (psucc p) ~ Nat.Succ.{ nat_of p } =
+    Pos.elim (\p => nat_of (psucc p) ~ Nat.Succ.{ nat_of p }) @tt (\q _ =>
+        @refl (nat_of Pos.Bit1.{ q })) (\q ih => nap ndouble _ _ ih) p
+
+$ nat_of_nonzero : (p: Pos) -> nat_of p ~ Nat.Zero -> @Bottom =
+    Pos.elim (\p => nat_of p ~ Nat.Zero -> @Bottom) (\h => h) (\q ih h =>
+        ih (ndouble_inj (nat_of q) Nat.Zero h)) (\_ _ h => h) p
+
+$ nat_of_inj : (p: Pos) -> (q: Pos) -> nat_of p ~ nat_of q -> p ~ q =
+    Pos.elim (\p => (q: Pos) -> nat_of p ~ nat_of q -> p ~ q) (\q =>
+        Pos.elim (\q => nat_of Pos.One ~ nat_of q -> Pos.One ~ q) (\h => @tt) (\q2 _ h =>
+            ndouble_odd (nat_of q2) Nat.Zero (nsym _ _ h)) (\q2 _ h =>
+                nat_of_nonzero q2 (ndouble_inj (nat_of q2) Nat.Zero (nsym _ _ h))) q) (\p2 ih q =>
+                    Pos.elim (\q => nat_of Pos.Bit0.{ p2 } ~ nat_of q -> Pos.Bit0.{ p2 } ~ q) (\h =>
+                        ndouble_odd (nat_of p2) Nat.Zero h) (\q2 _ h =>
+                            ih q2 (ndouble_inj (nat_of p2) (nat_of q2) h)) (\q2 _ h =>
+                                ndouble_odd (nat_of p2) (nat_of q2) h) q) (\p2 ih q =>
+                                    Pos.elim (\q =>
+                                        nat_of Pos.Bit1.{ p2 } ~ nat_of
+                                            q -> Pos.Bit1.{ p2 } ~ q) (\h =>
+                                                nat_of_nonzero p2
+                                                    (
+                                                        ndouble_inj (nat_of p2) Nat.Zero h
+                                                    )) (\q2 _ h =>
+                                                        ndouble_odd (nat_of q2) (nat_of p2)
+                                                            (nsym _ _ h)) (\q2 _ h =>
+                                                                ih q2
+                                                                    (
+                                                                        ndouble_inj (nat_of p2)
+                                                                            (nat_of q2) h
+                                                                    )) q) p q
+
+$ nat_of_add : (p: Pos) -> (q: Pos) -> nat_of (padd p q) ~ nadd (nat_of p) (nat_of q) =
+    Pos.elim (\p => (q: Pos) -> nat_of (padd p q) ~ nadd (nat_of p) (nat_of q)) (\q =>
+        Pos.elim (\q => nat_of (padd Pos.One q) ~ nadd (nat_of Pos.One) (nat_of q)) @tt (\q2 _ =>
+            @refl (nat_of Pos.Bit1.{ q2 })) (\q2 _ => nap ndouble _ _ (nat_of_succ q2))
+            q) (\p2 ih q =>
+                Pos.elim (\q =>
+                    nat_of (padd Pos.Bit0.{ p2 } q) ~ nadd (nat_of Pos.Bit0.{ p2 }) (nat_of q))
+                    (nsym _ _ (nadd_one_r (ndouble (nat_of p2)))) (\q2 _ =>
+                        ntrans _ _ _ (nap ndouble _ _ (ih q2))
+                            (ndouble_add (nat_of p2) (nat_of q2))) (\q2 _ =>
+                                let dp = ndouble (nat_of p2) in
+                                let dq = ndouble (nat_of q2) in
+                                ntrans _ Nat.Succ.{ nadd dp dq } _
+                                    (
+                                        ntrans _ _ _ (nap ndouble _ _ (ih q2))
+                                            (ndouble_add (nat_of p2) (nat_of q2))
+                                    ) (nsym _ _ (nadd_succ_r dp dq))) q) (\p2 ih q =>
+                                        Pos.elim (\q =>
+                                            nat_of (padd Pos.Bit1.{ p2 } q) ~ nadd
+                                                (nat_of Pos.Bit1.{ p2 }) (nat_of q))
+                                            (
+                                                let dp = ndouble (nat_of p2) in
+                                                ntrans _ _ _ (nap ndouble _ _ (nat_of_succ p2))
+                                                    (nsym _ _ (nadd_one_r dp))
+                                            ) (\q2 _ =>
+                                                ntrans _ _ _ (nap ndouble _ _ (ih q2))
+                                                    (ndouble_add (nat_of p2) (nat_of q2))) (\q2 _ =>
+                                                        let dp = ndouble (nat_of p2) in
+                                                        let dq = ndouble (nat_of q2) in
+                                                        let x = padd p2 q2 in
+                                                        ntrans _ _ _
+                                                            (nap ndouble _ _ (nat_of_succ x))
+                                                            (
+                                                                ntrans
+                                                                    Nat.Succ.{ ndouble (nat_of x) }
+                                                                    Nat.Succ.{ nadd dp dq } _
+                                                                    (
+                                                                        ntrans _ _ _
+                                                                            (
+                                                                                nap ndouble _ _
+                                                                                    (ih q2)
+                                                                            )
+                                                                            (
+                                                                                ndouble_add
+                                                                                    (nat_of p2)
+                                                                                    (nat_of q2)
+                                                                            )
+                                                                    ) (nsym _ _ (nadd_succ_r dp dq))
+                                                            )) q) p q
+
+$ nat_of_mul : (p: Pos) -> (q: Pos) -> nat_of (pmul p q) ~ nmul (nat_of p) (nat_of q) =
+    Pos.elim (\p => nat_of (pmul p q) ~ nmul (nat_of p) (nat_of q))
+        (nsym _ _ (nadd_zero_r (nat_of q))) (\p2 ih =>
+            ntrans _ _ _ (nap ndouble _ _ ih)
+                (nsym _ _ (nmul_double_l (nat_of p2) (nat_of q)))) (\p2 ih =>
+                    let y = nat_of q in
+                    ntrans _ _ _ (nat_of_add q Pos.Bit0.{ pmul p2 q })
+                        (
+                            nap (nadd y) _ _
+                                (
+                                    ntrans _ _ _ (nap ndouble _ _ ih)
+                                        (nsym _ _ (nmul_double_l (nat_of p2) y))
+                                )
+                        )) p
+
+# ## Ring laws
+
+$ pmul_comm : (p: Pos) -> (q: Pos) -> pmul p q ~ pmul q p = nat_of_inj (pmul p q) (pmul q p)
+    (
+        ntrans _ _ _ (nat_of_mul p q)
+            (ntrans _ _ _ (nmul_comm (nat_of p) (nat_of q)) (nsym _ _ (nat_of_mul q p)))
+    )
+
+$ pmul_assoc : (p: Pos) -> (q: Pos) -> (r: Pos) -> pmul (pmul p q) r ~ pmul p (pmul q r) =
+    let x = nat_of p in
+    let y = nat_of q in
+    let z = nat_of r in
+    let l = nat_of (pmul (pmul p q) r) in
+    let rr = nat_of (pmul p (pmul q r)) in
+    nat_of_inj (pmul (pmul p q) r) (pmul p (pmul q r))
+        (
+            ntrans _ _ _ (nat_of_mul (pmul p q) r)
+                (
+                    ntrans _ _ _ (nap (\t => nmul t z) _ _ (nat_of_mul p q))
+                        (
+                            ntrans _ _ _ (nmul_assoc x y z)
+                                (
+                                    ntrans _ _ _ (nap (nmul x) _ _ (nsym _ _ (nat_of_mul q r)))
+                                        (nsym _ _ (nat_of_mul p (pmul q r)))
+                                )
+                        )
+                )
+        )
+
+$ pmul_cancel : (a: Pos) -> (b: Pos) -> (p: Pos) -> pmul a p ~ pmul b p -> a ~ b = \h =>
+    let x = nat_of a in
+    let y = nat_of b in
+    let z = nat_of p in
+    nat_of_inj a b
+        (
+            nmul_cancel_r z (nat_of_nonzero p) x y
+                (
+                    ntrans _ _ _ (nsym _ _ (nat_of_mul a p))
+                        (
+                            ntrans _ _ _
+                                (
+                                    @transp (pmul a p) (\w => nat_of (pmul a p) ~ nat_of w)
+                                        (@refl (nat_of (pmul a p))) (pmul b p) h
+                                ) (nat_of_mul b p)
+                        )
+                )
+        )
+
+$ mul_comm : (a: Integer) -> (b: Integer) -> imul a b ~ imul b a =
+    Integer.elim (\a => imul a b ~ imul b a)
+        (
+            Integer.elim (\b => imul Integer.Zero b ~ imul b Integer.Zero) @tt (\_ => @tt) (\_ =>
+                @tt) b
+        ) (\p =>
+            Integer.elim (\b => imul Integer.Pos.{ p } b ~ imul b Integer.Pos.{ p }) @tt (\q =>
+                pmul_comm p q) (\q => pmul_comm p q) b) (\p =>
+                    Integer.elim (\b => imul Integer.Neg.{ p } b ~ imul b Integer.Neg.{ p })
+                        @tt (\q => pmul_comm p q) (\q => pmul_comm p q) b) a
+
+# Cases on the signs: a zero anywhere makes both sides zero, and otherwise
+# both sides have the same sign and `pmul_assoc` relates the magnitudes.
+$ mul_assoc : (a: Integer) -> (b: Integer) -> (c: Integer)
+    -> imul (imul a b) c ~ imul a (imul b c) =
+    Integer.elim (\a => imul (imul a b) c ~ imul a (imul b c)) @tt (\p =>
+        Integer.elim (\b => imul (imul Integer.Pos.{ p } b) c ~ imul Integer.Pos.{ p } (imul b c))
+            @tt (\q =>
+                Integer.elim (\c =>
+                    imul (imul Integer.Pos.{ p } Integer.Pos.{ q }) c ~ imul Integer.Pos.{ p }
+                        (imul Integer.Pos.{ q } c)) @tt (\r => pmul_assoc p q r) (\r =>
+                            pmul_assoc p q r) c) (\q =>
+                                Integer.elim (\c =>
+                                    imul (imul Integer.Pos.{ p } Integer.Neg.{ q }) c ~ imul
+                                        Integer.Pos.{ p } (imul Integer.Neg.{ q } c)) @tt (\r =>
+                                            pmul_assoc p q r) (\r => pmul_assoc p q r) c) b) (\p =>
+                                                Integer.elim (\b =>
+                                                    imul (imul Integer.Neg.{ p } b) c ~ imul
+                                                        Integer.Neg.{ p } (imul b c)) @tt (\q =>
+                                                            Integer.elim (\c =>
+                                                                imul
+                                                                    (
+                                                                        imul Integer.Neg.{ p }
+                                                                            Integer.Pos.{ q }
+                                                                    ) c ~ imul Integer.Neg.{ p }
+                                                                    (imul Integer.Pos.{ q } c))
+                                                                @tt (\r => pmul_assoc p q r) (\r =>
+                                                                    pmul_assoc p q r) c) (\q =>
+                                                                        Integer.elim (\c =>
+                                                                            imul
+                                                                                (
+                                                                                    imul
+                                                                                        Integer.Neg.{
+                                                                                            p
+                                                                                        }
+                                                                                        Integer.Neg.{
+                                                                                            q
+                                                                                        }
+                                                                                ) c ~ imul
+                                                                                Integer.Neg.{ p }
+                                                                                (
+                                                                                    imul
+                                                                                        Integer.Neg.{
+                                                                                            q
+                                                                                        } c
+                                                                                )) @tt (\r =>
+                                                                                    pmul_assoc p q
+                                                                                        r) (\r =>
+                                                                                            pmul_assoc
+                                                                                                p q
+                                                                                                r)
+                                                                            c) b) a
+
+# When `a` and `b` differ in sign, the hypothesis and the conclusion both
+# compute to `@Bottom`.
+$ mul_cancel : (a: Integer) -> (b: Integer) -> (p: Pos)
+    -> imul a Integer.Pos.{ p } ~ imul b Integer.Pos.{ p } -> a ~ b =
+    Integer.elim (\a => imul a Integer.Pos.{ p } ~ imul b Integer.Pos.{ p } -> a ~ b)
+        (
+            Integer.elim (\b =>
+                imul Integer.Zero Integer.Pos.{ p } ~ imul b
+                    Integer.Pos.{ p } -> Integer.Zero ~ b) (\h => @tt) (\_ h => h) (\_ h => h) b
+        ) (\a2 =>
+            Integer.elim (\b =>
+                imul Integer.Pos.{ a2 } Integer.Pos.{ p } ~ imul b
+                    Integer.Pos.{ p } -> Integer.Pos.{ a2 } ~ b) (\h => h) (\b2 h =>
+                        pmul_cancel a2 b2 p h) (\_ h => h) b) (\a2 =>
+                            Integer.elim (\b =>
+                                imul Integer.Neg.{ a2 } Integer.Pos.{ p } ~ imul b
+                                    Integer.Pos.{ p } -> Integer.Neg.{ a2 } ~ b) (\h => h) (\_ h =>
+                                        h) (\b2 h => pmul_cancel a2 b2 p h) b) a
+
+# `(a b) c ~ (a c) b`.
+$ swap_right : (a: Integer) -> (b: Integer) -> (c: Integer)
+    -> imul (imul a b) c ~ imul (imul a c) b =
+    itrans _ _ _ (mul_assoc a b c)
+        (itrans _ _ _ (iap (imul a) _ _ (mul_comm b c)) (isym _ _ (mul_assoc a c b)))
+
+# `(a b) (c d) ~ (a c) (b d)`.
+$ swap_middle : (a: Integer) -> (b: Integer) -> (c: Integer) -> (d: Integer)
+    -> imul (imul a b) (imul c d) ~ imul (imul a c) (imul b d) =
+    itrans _ _ _ (isym _ _ (mul_assoc (imul a b) c d))
+        (itrans _ _ _ (iap (\t => imul t d) _ _ (swap_right a b c)) (mul_assoc (imul a c) b d))
+
+# ## Fractions and the relation
+
+$ Frac : @Type 1 = { Integer, Pos }
+
+$ same : Frac -> Frac -> @Type 0 = \x y =>
+    imul x.0 Integer.Pos.{ y.1 } ~ imul y.0 Integer.Pos.{ x.1 }
+
+$ same_refl : (x: Frac) -> same x x = @refl (imul x.0 Integer.Pos.{ x.1 })
+
+$ same_sym : (x: Frac) -> (y: Frac) -> same x y -> same y x = \e => isym _ _ e
+
+# From `a d ~ c b` and `c f ~ e d`: `(a f) d ~ (e b) d`, then cancel `d`.
+$ same_trans : (x: Frac) -> (y: Frac) -> (z: Frac) -> same x y -> same y z -> same x z = \h1 h2 =>
+    let a = x.0 in
+    let b = Integer.Pos.{ x.1 } in
+    let c = y.0 in
+    let d = Integer.Pos.{ y.1 } in
+    let e = z.0 in
+    let f = Integer.Pos.{ z.1 } in
+    mul_cancel (imul a f) (imul e b) y.1
+        (
+            itrans _ _ _ (swap_right a f d)
+                (
+                    itrans _ _ _ (iap (\t => imul t f) _ _ h1)
+                        (
+                            itrans _ _ _ (swap_right c b f)
+                                (itrans _ _ _ (iap (\t => imul t b) _ _ h2) (swap_right e d b))
+                        )
+                )
+        )
+
+# ## Rationals
+
+$ Q : @Type 1 = @Quot Frac same same_refl same_sym same_trans
+
+$ frac : Integer -> Pos -> Q = \a b => @qin { a, b }
+
+# Equal classes, by computation: 1/2 ~ 2/4, and 1/2 is not 1/3.
+$ half : Q = frac Integer.Pos.{ Pos.One } Pos.Bit0.{ Pos.One }
+$ two_quarters : Q = frac Integer.Pos.{ Pos.Bit0.{ Pos.One } } Pos.Bit0.{ Pos.Bit0.{ Pos.One } }
+$ half_is_two_quarters : half ~ two_quarters = @tt
+$ half_is_not_a_third : half ~ frac Integer.Pos.{ Pos.One } three -> @Bottom = \e => e
+
+# Negation respects the relation because `(-a) d ~ -(a d)` holds by
+# computation on each sign of `a` and `d`.
+$ neg_mul : (a: Integer) -> (b: Integer) -> imul (ineg a) b ~ ineg (imul a b) =
+    Integer.elim (\a => imul (ineg a) b ~ ineg (imul a b)) @tt (\p =>
+        Integer.elim (\b => imul Integer.Neg.{ p } b ~ ineg (imul Integer.Pos.{ p } b)) @tt (\q =>
+            @refl (pmul p q)) (\q => @refl (pmul p q)) b) (\p =>
+                Integer.elim (\b => imul Integer.Pos.{ p } b ~ ineg (imul Integer.Neg.{ p } b))
+                    @tt (\q => @refl (pmul p q)) (\q => @refl (pmul p q)) b) a
+
+$ qneg : Q -> Q = \q =>
+    @qelim (\_ => Q) (\x => @qin { ineg x.0, x.1 }) (\x y e =>
+        itrans _ _ _ (neg_mul x.0 Integer.Pos.{ y.1 })
+            (itrans _ _ _ (iap ineg _ _ e) (isym _ _ (neg_mul y.0 Integer.Pos.{ x.1 })))) q
+
+$ neg_half : qneg half ~ frac Integer.Neg.{ Pos.One } Pos.Bit0.{ Pos.One } = @tt
+
+# Whether a rational is zero respects the relation by cases alone: if
+# `a d ~ c b` with `b`, `d` positive, then `a` and `c` are both zero or both
+# not.
+$ zero_iff : (p: Pos) -> (q: Pos) -> (a: Integer) -> (c: Integer)
+    -> imul a Integer.Pos.{ p } ~ imul c Integer.Pos.{ q } -> is_zero a ~ is_zero c =
+    Integer.elim (\a =>
+        (c: Integer) -> imul a Integer.Pos.{ p } ~ imul c Integer.Pos.{ q } -> is_zero a ~ is_zero
+            c) (\c =>
+                Integer.elim (\c =>
+                    imul Integer.Zero Integer.Pos.{ p } ~ imul c Integer.Pos.{ q } -> is_zero
+                        Integer.Zero ~ is_zero c) (\h => @tt) (\c2 h => h) (\c2 h => h) c) (\a2 c =>
+                            Integer.elim (\c =>
+                                imul Integer.Pos.{ a2 } Integer.Pos.{ p } ~ imul c
+                                    Integer.Pos.{ q } -> is_zero Integer.Pos.{ a2 } ~ is_zero
+                                    c) (\h => h) (\c2 h => @tt) (\c2 h => @tt) c) (\a2 c =>
+                                        Integer.elim (\c =>
+                                            imul Integer.Neg.{ a2 } Integer.Pos.{ p } ~ imul c
+                                                Integer.Pos.{ q } -> is_zero
+                                                Integer.Neg.{ a2 } ~ is_zero c) (\h => h) (\c2 h =>
+                                                    @tt) (\c2 h => @tt) c) a c
+
+$ qis_zero : Q -> Bool = \q =>
+    @qelim (\_ => Bool) (\x => is_zero x.0) (\x y e => zero_iff y.1 x.1 x.0 y.0 e) q
+
+$ zero_over_five : qis_zero (frac Integer.Zero five) ~ Bool.True = @tt
+$ half_is_not_zero : qis_zero half ~ Bool.False = @tt
+
+# Multiplication: `(a/b) (c/d) = (a c)/(b d)`. The inner method respects the
+# relation in its second argument; the outer one in its first, for every
+# second argument, proved by quotient induction (elimination into a
+# proposition, where respect is trivial).
+$ fmul : Frac -> Frac -> Frac = \x y => { imul x.0 y.0, pmul x.1 y.1 }
+
+$ qmul_right : Frac -> Q -> Q = \x q =>
+    @qelim (\_ => Q) (\y => @qin (fmul x y)) (\y y2 e =>
+        let a = x.0 in
+        let b = Integer.Pos.{ x.1 } in
+        itrans _ _ _ (swap_middle a y.0 b Integer.Pos.{ y2.1 })
+            (
+                itrans _ _ _ (iap (imul (imul a b)) _ _ e)
+                    (isym _ _ (swap_middle a y2.0 b Integer.Pos.{ y.1 }))
+            )) q
+
+$ qmul : Q -> Q -> Q = \p =>
+    @qelim (\_ => Q -> Q) (\x => qmul_right x) (\x x2 h q =>
+        @qelim (\q => qmul_right x q ~ qmul_right x2 q) (\y =>
+            let c = y.0 in
+            let d = Integer.Pos.{ y.1 } in
+            itrans _ _ _ (swap_middle x.0 c Integer.Pos.{ x2.1 } d)
+                (
+                    itrans _ _ _ (iap (\t => imul t (imul c d)) _ _ h)
+                        (isym _ _ (swap_middle x2.0 c Integer.Pos.{ x.1 } d))
+                )) (\y y2 e => @tt) q) p
+
+# (1/2) (1/2) ~ 1/4, and (2/4) (1/2) ~ 1/4 although the fractions differ.
+$ quarter : Q = frac Integer.Pos.{ Pos.One } Pos.Bit0.{ Pos.Bit0.{ Pos.One } }
+$ half_squared : qmul half half ~ quarter = @tt
+$ two_quarters_times_half : qmul two_quarters half ~ quarter = @tt
+$ minus_half_squared : qmul (qneg half) (qneg half) ~ quarter = @tt

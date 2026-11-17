@@ -26,7 +26,7 @@
    computation rule either.
 4. **Efficient implementation.** Sirman et al. implement TT^obs's form.
 5. **Fits Ares.** The rationals milestone uses the computation: `1/2 ~ 2/4`
-   holds by computation in `rationals.ott`.
+   holds by computation in `RATIONALS.ares`.
 
 ## Decision record (proposed)
 

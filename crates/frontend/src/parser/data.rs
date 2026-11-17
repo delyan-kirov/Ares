@@ -58,6 +58,10 @@ pub struct Ast {
     /// handle `Item::Def::sig` and the checker's context table carry), in the
     /// order written. Present only when the signature declares `@use`.
     pub use_params: SecondaryMap<Ty, Slice<UseField>>,
+    /// The level parameters of a signature's leading `@ctx {u: @l, ...} ->`,
+    /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
+    /// `@l`. Only the kernel reads them so far (#406).
+    pub level_params: SecondaryMap<Ty, Slice<UseField>>,
     /// Source span of each `Expr` node, for diagnostics. Populated by the parser;
     /// a node absent here (e.g. one synthesized by a later pass) has no span.
     pub expr_spans: SecondaryMap<Expr, Span>,
@@ -156,6 +160,38 @@ impl Ast {
         self.pats.lookup(id)
     }
 
+    /// The first place `ty` names the type variable `name`. A `Ty::Term` is
+    /// not looked into.
+    pub fn ty_mention(&self, ty: Aol<Ty>, name: StrId) -> Option<Aol<Ty>> {
+        let row_mentions = |row: &Option<EffectRow>| row.as_ref().is_some_and(|row| row.tail == Some(name));
+        match self.ty(ty) {
+            Ty::Var(v) if *v == name => Some(ty),
+            Ty::Var(_) | Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(_) | Ty::Term(_) => None,
+            Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) | Ty::App(a, b) => {
+                self.ty_mention(*a, name).or_else(|| self.ty_mention(*b, name))
+            }
+            Ty::Sized { size, elem } => self.ty_mention(*size, name).or_else(|| self.ty_mention(*elem, name)),
+            Ty::Arrow { from, effect, to, .. } => {
+                if row_mentions(effect) {
+                    return Some(ty);
+                }
+                let args: Vec<Aol<Ty>> = effect.as_ref().map_or_else(Vec::new, |row| {
+                    self.slice(row.entries).iter().flat_map(|e| self.slice(e.args).to_vec()).collect()
+                });
+                self.ty_mention(*from, name)
+                    .or_else(|| self.ty_mention(*to, name))
+                    .or_else(|| args.into_iter().find_map(|a| self.ty_mention(a, name)))
+            }
+            Ty::Tuple(items) => self.slice(*items).iter().find_map(|t| self.ty_mention(*t, name)),
+            Ty::Record { fields, tail } => {
+                if *tail == Some(name) {
+                    return Some(ty);
+                }
+                self.slice(*fields).iter().find_map(|f| self.ty_mention(f.ty, name))
+            }
+        }
+    }
+
     /// A declared type rendered back to source that parses as the same type, or
     /// None while it still holds a `&` splice. Reflection reports field and
     /// payload types this way, for a generator to copy them into a declaration.
@@ -176,7 +212,7 @@ impl Ast {
                 wrap(format!("@Tensor {} {}", self.size_src(*size, 2)?, self.ty_src(*elem, 2)?), 1)
             }
             Ty::App(head, arg) => wrap(format!("{} {}", self.ty_src(*head, 1)?, self.ty_src(*arg, 2)?), 1),
-            Ty::MetaE(_) => return None,
+            Ty::MetaE(_) | Ty::Term(_) => return None,
             Ty::Arrow { binder, from, effect, to } => {
                 let row = match effect {
                     Some(row) => format!("{} ", self.row_src(row)?),
@@ -301,9 +337,12 @@ pub enum Item {
     },
     /// `$ Name : @union [a b ...] = Tag : payload, ...`. `params` are the declared
     /// type parameters (inferred from the variants when omitted). `splices` are
-    /// `&X` entries generating variants, as for structs.
+    /// `&X` entries generating variants, as for structs. `sig` is set for the
+    /// dependent form `$ Name : (a: A) -> @Type l = @union ...`, whose
+    /// parameters and universe the signature states (#406).
     Union {
         name: StrId,
+        sig: Option<Aol<Ty>>,
         params: Slice<StrId>,
         splices: Slice<EntrySplice>,
         variants: Slice<VariantDecl>,
@@ -358,11 +397,13 @@ pub struct EntrySplice {
     pub span: Span,
 }
 
-/// One `Tag : payload` arm of a union declaration.
+/// One `Tag : payload` arm of a union declaration. `result` is the stated
+/// result of an indexed family's constructor, `Tag: {fields} -> D a i`.
 #[derive(Clone, Debug)]
 pub struct VariantDecl {
     pub tag: StrId,
     pub payload: Payload,
+    pub result: Option<Aol<Ty>>,
 }
 
 /// A union variant's payload.
@@ -421,6 +462,11 @@ pub enum Ty {
     Unit,
     /// A tuple type `{ A, B, ... }` (n >= 1).
     Tuple(Slice<Aol<Ty>>),
+    /// A type written as a term no other variant spells: a lambda, `a ~ b`, a
+    /// projection, a constructor. Types are expressions (#406); the frontend's
+    /// checker rejects this one until its elaborator takes types as terms,
+    /// and the kernel reads it as any other term.
+    Term(Aol<Expr>),
     /// A record type `{ x: A, y: B }` (closed) or `{ x: A | r }` (open, `tail` is
     /// the row variable). A closed record in parameter
     /// position is also the named-record parameter sugar; an open one (`tail`
@@ -688,6 +734,12 @@ pub enum Expr {
     /// `@use {.f = e, ...}` in argument position: supply the named `@use` fields
     /// of the callee; the ones it omits are still searched.
     UseArg(Slice<FieldInit>),
+    /// `@ctx {.u = l, ...}` in argument position: the level arguments of a
+    /// level-polymorphic global (#406).
+    CtxArg(Slice<FieldInit>),
+    /// A type in term position: a function type `A -> B` or a record type
+    /// `{x: A}` where an expression stands, as in a lambda that returns a type.
+    Type(Aol<Ty>),
 }
 
 /// A field initializer in a struct literal or variant payload.

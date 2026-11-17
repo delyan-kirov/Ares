@@ -409,6 +409,27 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `(x: A) -> B` whose result names `x`: a dependent function type, which
+    /// needs the elaborator of #406. Until then `x` in `B` is a type variable.
+    fn dependent_arrow(&mut self, arrow: Aol<Ty>, binder: StrId, to: Aol<Ty>) {
+        let Some(at) = self.ast.ty_mention(to, binder) else { return };
+        if self.unknown_type.is_some() {
+            return;
+        }
+        let name_span = self.ast.binder_spans.get(arrow).copied().unwrap_or(Span::at(0));
+        let span = self.ast.ty_span(at).unwrap_or(name_span);
+        self.unknown_type = Some(
+            diag!(
+                Code::UnexpectedToken, span, 0,
+                "the result type names the parameter `{binder}`, which needs dependent types";
+                note: "a function type whose result depends on its argument comes with \
+                       dependent types (#406); until then `{binder}` here is a type variable";
+                help: "rename the parameter, or the type variable if that is what you meant"
+            )
+            .with_label(name_span, "the parameter"),
+        );
+    }
+
     pub(super) fn con_of_ast(&mut self, ty: Aol<Ty>) -> Type {
         let Ty::Con { name, .. } = self.tnode(ty) else {
             unreachable!("con_of_ast on a non-constructor");
@@ -470,8 +491,17 @@ impl<'a> Checker<'a> {
                 let elem_ty = self.ty_of_ast(elem, tvars);
                 tensor_type(&self.unifier.types, size_ty, elem_ty)
             }
-            Ty::Arrow { from, effect, to, .. } => {
-                let (from, to) = (*from, *to);
+            Ty::Term(_) => {
+                if self.unknown_type.is_none() {
+                    self.unknown_type = Some(dependent_only(self.ast.ty_span(ty), "a type written as a term"));
+                }
+                self.unifier.fresh()
+            }
+            Ty::Arrow { from, effect, to, binder } => {
+                let (from, to, binder) = (*from, *to, *binder);
+                if let Some(name) = binder {
+                    self.dependent_arrow(ty, name, to);
+                }
                 // An unannotated arrow is pure.
                 let eff = match effect {
                     Some(row) => self.row_of_ast(row.entries, row.tail, tvars),

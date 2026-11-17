@@ -241,8 +241,8 @@ fn eq_types(sig: &Signature, k: &Level, a: Val, b: Val) -> Val {
                 and(doms, cods)
             } else {
                 // Rule [Eq-Sigma]
-                // `(x: A) * B ~ (x: A') * B'` is `A ~ A'` and, for every
-                // `a: A`, `B[a] ~ B'[cast a]`.
+                // `{x: A, snd: B} ~ {x: A2, snd: B2}` is `A ~ A2` and, for every
+                // `a: A`, `B[a] ~ B2[cast a]`.
                 let doms = eq_types(sig, &dom, p.dom.clone(), q.dom.clone());
                 let (name, dom, dom_level) = (p.name.clone(), p.dom.clone(), p.dom_level.clone());
                 let cods = proposition_pi(&name, dom, dom_level, move |sig, a1| {
@@ -360,15 +360,15 @@ fn stuck_cast(a: Val, b: Val, e: Val, t: Val) -> Val {
 //
 // `D a ~ D a'` does not compute to `a ~ a'`. That rule would make every type
 // former injective in its parameters, and with a parameter from a larger
-// universe than the type's own (`D : (X: @Type 1 -> @Type 1) -> @Type 1`) it
+// universe than the type's own (`D : (x: @Type 1 -> @Type 1) -> @Type 1`) it
 // injects a large type into a small one, which is Russell's paradox in the
 // form CIC^obs rejects (Pujet, Leray, Tabareau, TOPLAS 2025, Section 2.3).
 // CIC^obs instead lets the equality imply only that the constructors' field
 // types are equal (its `eq_c` projections, Section 4.1). Each inductive type
 // with parameters gets one such projection per constructor field, as the
-// global `D.eq.c.f` (`inductive::projection_type`); `List.eq.cons.h` derives
-// `A ~ B` from `List A ~ List B`, but nothing derives `X ~ Y` for a
-// parameter `X` that is not a field type. A cast into a constructor needs
+// global `D.eq_Tag_f` (`inductive::projection_type`); `List.eq_Cons_h` derives
+// `a ~ b` from `List a ~ List b`, but nothing derives `x ~ y` for a
+// parameter `x` that is not a field type. A cast into a constructor needs
 // exactly these equalities, and passes the irrelevant witness for them.
 // See Rule [Eq-Data-Stuck].
 

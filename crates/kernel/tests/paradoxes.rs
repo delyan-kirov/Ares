@@ -10,8 +10,14 @@
 //! proof of `@Bottom` but a loss of normalisation; the kernel must accept them
 //! and still terminate.
 
+/// `src` as a module: a case's script is its items alone.
+fn module(src: &str) -> String {
+    format!("$ @mod PARADOX\n{src}")
+}
+
 /// Check `src` and require an error whose rendering contains `needle`.
 fn rejects(name: &str, src: &str, needle: &str) {
+    let src = &module(src);
     match kernel::check_script(src) {
         Ok(_) => panic!("{name}: accepted\n{src}"),
         Err(e) => {
@@ -33,10 +39,10 @@ fn no_universe_contains_itself() {
 /// its own universe is a universe containing itself.
 #[test]
 fn no_field_is_as_large_as_its_type() {
-    rejects("large-field", "$ Big : @Type 1 = @data | mk (@Type 1)\n", "this field is too large");
+    rejects("large-field", "$ Big : @union = Mk: @Type 1\n", "this field is too large");
     rejects(
         "large-field-polymorphic",
-        "$ Big : @ctx {u: @l} -> @Type (u + 1) = @data | mk (@Type (u + 1))\n",
+        "$ Big : @ctx {u: @l} -> @Type (u + 1) = @union Mk: @Type (u + 1)\n",
         "this field is too large",
     );
 }
@@ -45,8 +51,8 @@ fn no_field_is_as_large_as_its_type() {
 /// anything (the standard counterexample to dropping strict positivity).
 #[test]
 fn no_negative_occurrence() {
-    rejects("negative", "$ Bad : @Type 1 = @data | mk (Bad -> @Bottom)\n", "may only occur as the result of a field");
-    rejects("negative-nested", "$ Bad : @Type 1 = @data | mk ((Bad -> @Top) -> @Top)\n", "may only occur as the result of a field");
+    rejects("negative", "$ Bad : @union = Mk: {Bad -> @Bottom}\n", "may only occur as the result of a field");
+    rejects("negative-nested", "$ Bad : @union = Mk: {(Bad -> @Top) -> @Top}\n", "may only occur as the result of a field");
 }
 
 /// An inductive proposition with two constructors and large elimination
@@ -55,14 +61,14 @@ fn no_negative_occurrence() {
 /// question 2).
 #[test]
 fn no_inductive_propositions() {
-    rejects("inductive-prop", "$ P : @Type 0 = @data | a | b\n", "inductive propositions are not supported");
+    rejects("inductive-prop", "$ P : @Type 0 = @union A: {}, B: {}\n", "inductive propositions are not supported");
 }
 
 /// A proposition used as data would let one proof stand for many values.
 /// Cumulativity starts at `@Type 1`.
 #[test]
 fn a_proposition_is_not_data() {
-    rejects("prop-as-data", "$ f : @Type 0 -> @Type 1 = \\X => X\n", "expected `@Type 1`, found `@Type 0`");
+    rejects("prop-as-data", "$ f : @Type 0 -> @Type 1 = \\x => x\n", "expected `@Type 1`, found `@Type 0`");
 }
 
 /// A strong sum with a large first component, in the impredicative universe,
@@ -70,7 +76,7 @@ fn a_proposition_is_not_data() {
 /// a Sigma type is the maximum of its sides', so it cannot be a proposition.
 #[test]
 fn no_strong_impredicative_sum() {
-    rejects("strong-impredicative-sigma", "$ s : @Type 0 = (X: @Type 1) * @Top\n", "expected `@Type 0`, found `@Type 2`");
+    rejects("strong-impredicative-sigma", "$ s : @Type 0 = {@Type 1, @Top}\n", "expected `@Type 0`, found `@Type 2`");
 }
 
 /// A quotient eliminator whose method does not respect the relation tells
@@ -78,7 +84,7 @@ fn no_strong_impredicative_sum() {
 #[test]
 fn quotient_elimination_needs_respect() {
     let src = "\
-$ Nat : @Type 1 = @data | zero | succ Nat
+$ Nat : @union = Zero: {}, Succ: Nat
 $ R : Nat -> Nat -> @Type 0 = \\x y => @Top
 $ Q : @Type 1 = @Quot Nat R (\\x => @tt) (\\x y e => @tt) (\\x y z e f => @tt)
 $ bad : Q -> Nat = \\q => @qelim (\\_ => Nat) (\\x => x) (\\x y e => @refl x) q
@@ -91,6 +97,7 @@ $ bad : Q -> Nat = \\q => @qelim (\\_ => Nat) (\\x => x) (\\x y e => @refl x) q
 fn terminates(name: &'static str, src: &'static str, names: &'static [&'static str]) {
     let (done, wait) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        let src = &module(src);
         let outcome = kernel::check_script(src).map(|sig| {
             kernel::recheck(&sig).unwrap_or_else(|e| panic!("{name} does not re-check: {e}"));
             names.iter().map(|n| kernel::normal_form(&sig, n).expect("a definition")).collect::<Vec<_>>()
@@ -114,13 +121,13 @@ fn casts_of_proofs_do_not_loop() {
     terminates(
         "all-propositions-equal",
         r"
-$ Bot : @Type 0 = (A: @Type 0) -> A
+$ Bot : @Type 0 = (a: @Type 0) -> a
 $ Tru : @Type 0 = Bot -> Bot
 $ delta : Tru = \z => z Tru z
-$ omega : ((A B: @Type 0) -> A ~ B) -> Bot = \h A => @cast Tru A (h Tru A) delta
-$ Omega : ((A B: @Type 0) -> A ~ B) -> Bot = \h => delta (omega h)
-$ Q : (((A B: @Type 0) -> A ~ B) -> Bot) -> @Type 1
-$ q : Q Omega
+$ omega : ((a: @Type 0) -> (b: @Type 0) -> a ~ b) -> Bot = \h a => @cast Tru a (h Tru a) delta
+$ Omega : ((a: @Type 0) -> (b: @Type 0) -> a ~ b) -> Bot = \h => delta (omega h)
+$ Q : (((a: @Type 0) -> (b: @Type 0) -> a ~ b) -> Bot) -> @Type 1 = @axiom
+$ q : Q Omega = @axiom
 $ r : Q (\h => omega h) = q
 ",
         &["omega", "Omega"],
@@ -128,14 +135,14 @@ $ r : Q (\h => omega h) = q
     terminates(
         "propositional-extensionality",
         r"
-$ taut : (A B: @Type 0) -> A -> B -> A ~ B = \A B a b => (\_ => b, \_ => a)
-$ T : @Type 0 = (A: @Type 0) -> A -> A
+$ taut : (a2: @Type 0) -> (b2: @Type 0) -> a2 -> b2 -> a2 ~ b2 = \a b => {\_ => b, \_ => a}
+$ T : @Type 0 = (a: @Type 0) -> a -> a
 $ id : T -> T = \x => x
 $ delta : T -> T = \z => z (T -> T) id z
-$ omega : T = \A a => @cast (T -> T) A (taut (T -> T) A id a) delta
+$ omega : T = \a2 a => @cast (T -> T) a2 (taut (T -> T) a2 id a) delta
 $ Omega : T = delta omega
-$ Q : T -> @Type 1
-$ q : Q Omega
+$ Q : T -> @Type 1 = @axiom
+$ q : Q Omega = @axiom
 $ r : Q (delta (delta omega)) = q
 ",
         &["omega", "Omega"],

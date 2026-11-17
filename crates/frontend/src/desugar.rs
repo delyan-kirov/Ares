@@ -861,6 +861,7 @@ impl<'a> Desugarer<'a> {
             // to (`ctx_args` holds its values), so reaching it here means the
             // checker let a stray one through.
             Expr::UseArg(_) => self.fault("a `@use {...}` argument out of place"),
+            Expr::CtxArg(_) | Expr::Type(_) => self.fault("a dependent form the checker rejects"),
 
             Expr::Ascribe { expr, ty } => {
                 let (expr, ty) = (*expr, *ty);
@@ -1078,6 +1079,7 @@ impl<'a> Desugarer<'a> {
     /// every type sub-position an annotation can nest a `&` in.
     fn collect_meta_types(&mut self, ty: Aol<Ty>) {
         match self.tnode(ty) {
+            Ty::Term(_) => {}
             Ty::MetaE(expr) => {
                 let expr = *expr;
                 let span = self.ast.ty_span(ty).unwrap_or_else(|| Span::at(0));

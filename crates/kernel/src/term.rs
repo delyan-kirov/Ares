@@ -177,7 +177,7 @@ impl Printer<'_> {
                 close(out, Precedence::App);
             }
             Term::Pi(b) => self.binding(out, prec, b, " -> ", Precedence::Arrow),
-            Term::Sigma(b) => self.binding(out, prec, b, " * ", Precedence::Product),
+            Term::Sigma(_) => self.sigma(out, t),
             Term::Lam(name, dom, body) => {
                 open(out, Precedence::Arrow);
                 match dom {
@@ -191,6 +191,7 @@ impl Printer<'_> {
                 self.bind(name, |p| p.print(out, Precedence::Top, body));
                 close(out, Precedence::Arrow);
             }
+            Term::App(..) if self.constructor(out, prec, t) => {}
             Term::App(f, a) => {
                 open(out, Precedence::App);
                 self.print(out, Precedence::App, f);
@@ -209,15 +210,21 @@ impl Printer<'_> {
                 close(out, Precedence::Arrow);
             }
             Term::Pair(a, b) => {
-                out.push('(');
+                out.push('{');
                 self.print(out, Precedence::Top, a);
+                let mut rest = &**b;
+                while let Term::Pair(x, y) = rest {
+                    out.push_str(", ");
+                    self.print(out, Precedence::Top, x);
+                    rest = y;
+                }
                 out.push_str(", ");
-                self.print(out, Precedence::Top, b);
-                out.push(')');
+                self.print(out, Precedence::Top, rest);
+                out.push('}');
             }
             Term::Fst(e) | Term::Snd(e) => {
                 self.print(out, Precedence::Atom, e);
-                out.push_str(if matches!(t, Term::Fst(_)) { ".1" } else { ".2" });
+                out.push_str(if matches!(t, Term::Fst(_)) { ".0" } else { ".1" });
             }
             Term::Eq(_, _, a, b) => {
                 open(out, Precedence::Product);
@@ -286,14 +293,78 @@ impl Printer<'_> {
             Term::Tt => out.push_str("@tt"),
             Term::Bottom => out.push_str("@Bottom"),
             Term::Absurd(ty, e) => {
-                open(out, Precedence::App);
-                out.push_str("@absurd ");
-                self.print(out, Precedence::Atom, ty);
-                out.push(' ');
-                self.print(out, Precedence::Atom, e);
-                close(out, Precedence::App);
+                out.push('(');
+                self.print(out, Precedence::App, e);
+                out.push_str(" |> @absurd : ");
+                self.print(out, Precedence::Top, ty);
+                out.push(')');
             }
         }
+    }
+
+    /// A Sigma type: `{A, B}`, or `{x: A, snd: B}` when `B` mentions `x`.
+    /// Right-nested pairs of types flatten, `{A, B, C}`.
+    fn sigma(&mut self, out: &mut String, t: &Term) {
+        let Term::Sigma(b) = t else { unreachable!("a Sigma type") };
+        if mentions(&b.cod, 0) {
+            out.push_str(&format!("{{{}: ", b.name));
+            self.print(out, Precedence::Top, &b.dom);
+            out.push_str(", snd: ");
+            self.bind(&b.name, |p| p.print(out, Precedence::Top, &b.cod));
+            out.push('}');
+            return;
+        }
+        out.push('{');
+        self.print(out, Precedence::Top, &b.dom);
+        let mut pushed = 1;
+        self.names.push(b.name.clone());
+        let mut rest = &*b.cod;
+        while let Term::Sigma(c) = rest {
+            if mentions(&c.cod, 0) {
+                break;
+            }
+            out.push_str(", ");
+            self.print(out, Precedence::Top, &c.dom);
+            self.names.push(c.name.clone());
+            pushed += 1;
+            rest = &c.cod;
+        }
+        out.push_str(", ");
+        self.print(out, Precedence::Top, rest);
+        self.names.truncate(self.names.len() - pushed);
+        out.push('}');
+    }
+
+    /// A constructor applied to its parameters and every field, written
+    /// `D.Tag.{ fields }` (`D.Tag` with none). Reports whether `t` is one.
+    fn constructor(&mut self, out: &mut String, prec: Precedence, t: &Term) -> bool {
+        let mut args = Vec::new();
+        let mut head = t;
+        while let Term::App(f, a) = head {
+            args.push(&**a);
+            head = f;
+        }
+        let Term::Global(id, levels) = head else { return false };
+        let crate::signature::GlobalKind::Constructor(data, index) = self.sig.global(*id).kind else { return false };
+        let decl = self.sig.data(data);
+        let fields = decl.constructors[index].surface.len();
+        if args.len() != decl.uniform + fields {
+            return false;
+        }
+        args.reverse();
+        let _ = (prec, levels);
+        out.push_str(&self.sig.global(*id).name);
+        if fields > 0 {
+            out.push_str(".{ ");
+            for (i, a) in args[decl.uniform..].iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                self.print(out, Precedence::Top, a);
+            }
+            out.push_str(" }");
+        }
+        true
     }
 
     /// A Pi or Sigma type, written `(x: A) op B`, or `A op B` when `B` does

@@ -9,8 +9,7 @@ fn scripts() -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
         .expect("the scripts directory exists")
         .map(|e| e.expect("a readable entry").path())
-        // FIXME(#473): `.ott` until the kernel reads Ares, then `.ares`.
-        .filter(|p| p.extension().is_some_and(|e| e == "ott"))
+        .filter(|p| p.extension().is_some_and(|e| e == "ares"))
         .collect();
     paths.sort();
     assert!(!paths.is_empty(), "no scripts in {}", dir.display());
@@ -31,28 +30,28 @@ fn every_script_checks() {
 
 #[test]
 fn the_rationals_reject_wrong_claims() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/rationals.ott");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/RATIONALS.ares");
     let base = std::fs::read_to_string(path).expect("a readable script");
     let cases = [
         // 1/2 * 1/2 is not 1/2.
         (format!("{base}\n$ wrong : qmul half half ~ half = @tt\n"), "this claim is false"),
         // The numerator of a fraction is not a function of its class.
         (
-            format!("{base}\n$ numerator : Q -> Integer = \\q => @qelim (\\_ => Integer) (\\x => x.1) (\\x y e => e) q\n"),
-            "~ y.1`, found",
+            format!("{base}\n$ numerator : Q -> Integer = \\q => @qelim (\\_ => Integer) (\\x => x.0) (\\x y e => e) q\n"),
+            "~ y.0`, found",
         ),
         // Zero-ness respects the relation, but not because the relation says
         // so; the expected type keeps `is_zero` folded.
         (
-            format!("{base}\n$ wrong_zero : Q -> Bool = \\q => @qelim (\\_ => Bool) (\\x => is_zero x.1) (\\x y e => e) q\n"),
-            "(is_zero x.1) ~ is_zero y.1`, found `same x y`",
+            format!("{base}\n$ wrong_zero : Q -> Bool = \\q => @qelim (\\_ => Bool) (\\x => is_zero x.0) (\\x y e => e) q\n"),
+            "(is_zero x.0) ~ is_zero y.0`, found `same x y`",
         ),
     ];
     for (src, needle) in cases {
         match kernel::check_script(&src) {
             Ok(_) => panic!("accepted, expected an error containing `{needle}`"),
             Err(e) => {
-                let shown = e.render(&src, "rationals.ott");
+                let shown = e.render(&src, "RATIONALS.ares");
                 assert!(shown.contains(needle), "error does not mention `{needle}`:\n{shown}");
             }
         }
@@ -115,11 +114,12 @@ fn every_script_pins_its_axioms() {
 #[test]
 fn axioms_used_only_inside_a_proof_are_reported() {
     let src = "\
-$ Nat : @Type 1 = @data | zero | succ Nat
-$ ax : zero ~ succ zero
-$ pr : (P: Nat -> @Type 0) -> P zero -> P (succ zero) = \\P p => @transp zero (\\x => P x) p (succ zero) ax
-$ uses_pr : (P: Nat -> @Type 0) -> P zero -> P (succ zero) = pr
-$ clean : Nat = succ zero
+$ @mod AXIOMS
+$ Nat : @union = Zero: {}, Succ: Nat
+$ ax : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom
+$ pr : (p2: Nat -> @Type 0) -> p2 Nat.Zero -> p2 Nat.Succ.{ Nat.Zero } = \\p => @transp Nat.Zero (\\x => p2 x) p Nat.Succ.{ Nat.Zero } ax
+$ uses_pr : (p: Nat -> @Type 0) -> p Nat.Zero -> p Nat.Succ.{ Nat.Zero } = pr p
+$ clean : Nat = Nat.Succ.{ Nat.Zero }
 ";
     let sig = kernel::check_script(src).unwrap_or_else(|e| panic!("{}", e.render(src, "test")));
     assert_eq!(kernel::axioms(&sig, "pr").unwrap(), ["ax"]);
@@ -135,8 +135,9 @@ $ clean : Nat = succ zero
 #[test]
 fn type_formers_are_not_injective() {
     let src = "\
-$ D : (X: @Type 1 -> @Type 1) -> @Type 1 = @data | mk
-$ inj : (X Y: @Type 1 -> @Type 1) -> D X ~ D Y -> X ~ Y = \\X Y e => e
+$ @mod INJECTIVE
+$ D : (x: @Type 1 -> @Type 1) -> @Type 1 = @union Mk: {}
+$ inj : (x: @Type 1 -> @Type 1) -> (y: @Type 1 -> @Type 1) -> D x ~ D y -> x ~ y = \\e => e
 ";
     match kernel::check_script(src) {
         Ok(_) => panic!("accepted a proof that `D` is injective"),
