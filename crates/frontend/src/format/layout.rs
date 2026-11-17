@@ -39,6 +39,18 @@ pub(super) fn trees(toks: &[Tok]) -> Vec<Tree> {
 
 // ## Layout
 
+/// Where a run of arms goes when it breaks, relative to its head.
+#[derive(Clone, Copy)]
+enum Under {
+    /// One level under the head.
+    Always,
+    /// At the head's level.
+    Never,
+    /// One level under the head, unless the group `D` (the head's) broke:
+    /// then at the head's level, as the head's own last line reads.
+    UnlessBroken(D),
+}
+
 /// A laid-out piece and its first and last tokens, which decide the spacing
 /// when it is joined to a neighbour.
 #[derive(Clone, Copy)]
@@ -57,11 +69,14 @@ pub(super) struct Layout<'t, 's> {
     /// non-empty `{ }` or `[ ]`, or a parenthesized lambda.
     opens: Vec<bool>,
     width: usize,
+    /// Groups broken only because the source broke them at their chosen
+    /// point. See Note [Kept line breaks].
+    kept: std::collections::HashSet<D>,
 }
 
 pub(super) fn format_item(toks: &[Tok], style: &Style) -> String {
     let ts = trees(toks);
-    let mut l = Layout { toks, docs: Docs::default(), closes: vec![None; toks.len()], opens: vec![false; toks.len()], width: style.width };
+    let mut l = Layout { toks, docs: Docs::default(), closes: vec![None; toks.len()], opens: vec![false; toks.len()], width: style.width, kept: Default::default() };
     let root = l.item(&ts);
     print(&l.docs, root, style).trim_end_matches('\n').to_string()
 }
@@ -72,9 +87,6 @@ pub(super) const BREAK_BEFORE: &[&str] = &["|>", "++", "&&", "||"];
 
 /// Operators a long expression wraps before, as many operands to a line as fit.
 pub(super) const FILL_BEFORE: &[&str] = &["+", "-", "*"];
-
-/// A match with more arms than this always puts each arm on its own line.
-pub(super) const MAX_FLAT_ARMS: usize = 2;
 
 /// Arms and bindings line up their `=>` or `=`, except one whose left side is
 /// wider than this: a long pattern would push every other arm far right.
@@ -153,6 +165,14 @@ impl Layout<'_, '_> {
     /// Whether the source broke a line anywhere between tokens `a` and `b`.
     fn multiline(&self, a: usize, b: usize) -> bool {
         (a + 1..=b.min(self.toks.len().saturating_sub(1))).any(|i| self.toks[i].newline)
+    }
+
+    /// Whether the source broke a line after token `a`, before the next token
+    /// that is not a comment. A form the author broke at its one chosen point
+    /// stays broken. See Note [Kept line breaks].
+    fn broken_after(&self, a: usize) -> bool {
+        let next = (a + 1..self.toks.len()).find(|&i| !matches!(self.toks[i].kind, Kind::Comment));
+        next.is_some_and(|b| self.multiline(a, b))
     }
 
     /// Join pieces left to right, a space or nothing between each pair.
@@ -434,6 +454,7 @@ impl Layout<'_, '_> {
         if breaks.is_empty() {
             return segment(self, 0, run.len());
         }
+        let kept = breaks.iter().find(|&&(_, pipe)| !pipe).is_some_and(|&(at, _)| self.broken_after(run[at - 1].last));
         let mut segments = Vec::new();
         let mut from = 0;
         for &(at, _) in &breaks {
@@ -464,7 +485,7 @@ impl Layout<'_, '_> {
             let n = self.docs.nest(tail);
             acc.d = self.docs.cat(vec![acc.d, n]);
         }
-        let g = self.docs.group(acc.d, false);
+        let g = self.kept_group(None, acc.d, false, kept);
         P { d: g, ..acc }
     }
 
@@ -549,9 +570,16 @@ impl Layout<'_, '_> {
                 let bar_or = |t: &Tok| halt(t) || is_bar(t);
                 let name = self.expr(ts, pos, &bar_or, false);
                 let ctl_head = self.join(&[ctl, name]).expect("non-empty");
-                let handled = self.arms(ctl_head, ts, pos, halt, false);
-                let joined = self.line_join(head, handled, Node::Line);
-                P { d: self.docs.group(joined.d, true), ..joined }
+                if self.multiline(head.last, ctl.last) {
+                    // `do` and `ctl` on lines of their own, the clauses at `ctl`'s level.
+                    let handled = self.arms(ctl_head, ts, pos, halt, false);
+                    let joined = self.line_join(head, handled, Node::Line);
+                    return P { d: self.kept_group(None, joined.d, false, true), ..joined };
+                }
+                // `do .. ctl k` on one line when it fits, the clauses one level under it.
+                let joined = self.line_join(head, ctl_head, Node::Line);
+                let g = self.docs.group(joined.d, false);
+                self.arms_laid(P { d: g, ..joined }, ts, pos, halt, false, Under::UnlessBroken(g))
             }
             _ => unreachable!("not a form keyword"),
         }
@@ -590,15 +618,38 @@ impl Layout<'_, '_> {
 
     /// The width of `d` printed on one line, if it can be.
     fn flat_width(&self, d: D) -> Option<usize> {
+        self.width_of(d, false)
+    }
+
+    /// [`Self::flat_width`], or with `natural`, the width a kept group would
+    /// have had on one line had the source not broken it.
+    fn width_of(&self, d: D, natural: bool) -> Option<usize> {
         match &self.docs.nodes[d] {
             Node::Text(s) => (!s.contains('\n')).then(|| s.chars().count()),
             Node::Line | Node::FillLine => Some(1),
             Node::Soft => Some(0),
+            Node::Group(x, true) if natural && self.kept.contains(&d) => self.width_of(*x, natural),
             Node::Hard | Node::Fresh | Node::HangTail(_) | Node::Broken(_) | Node::Group(_, true) => None,
-            Node::Nest(x) | Node::LineIndent(x) | Node::Group(x, false) => self.flat_width(*x),
-            Node::Cat(xs) => xs.iter().map(|x| self.flat_width(*x)).sum(),
-            Node::Cond { flat, .. } | Node::Hang { flat, .. } => self.flat_width(*flat),
+            Node::Nest(x) | Node::LineIndent(x) | Node::Group(x, false) => self.width_of(*x, natural),
+            Node::Cat(xs) => xs.iter().map(|x| self.width_of(*x, natural)).sum(),
+            Node::Cond { flat, .. } | Node::Hang { flat, .. } => self.width_of(*flat, natural),
         }
+    }
+
+    /// A group, broken if `force` or if the source broke it at its chosen
+    /// point (`kept`).
+    fn kept_group(&mut self, at: Option<D>, d: D, force: bool, kept: bool) -> D {
+        let g = match at {
+            Some(at) => {
+                self.docs.fill_group(at, d, force || kept);
+                at
+            }
+            None => self.docs.group(d, force || kept),
+        };
+        if kept && !force {
+            self.kept.insert(g);
+        }
+        g
     }
 
     /// The width of a left side that lines up with its neighbours, or `None`
@@ -610,7 +661,8 @@ impl Layout<'_, '_> {
         if self.opens_block(right) || self.closes[right.first] == Some(right.last) {
             return Some(w);
         }
-        let r = self.flat_width(right.d)?;
+        // A block the author kept broken lines up as it would on one line.
+        let r = self.width_of(right.d, true)?;
         (w + 4 + r <= self.width).then_some(w)
     }
 
@@ -759,7 +811,8 @@ impl Layout<'_, '_> {
         }
         let line = self.docs.add(Node::Line);
         let d = self.docs.cat(vec![head, line, body.d]);
-        self.docs.fill_group(outer, d, false);
+        let kept = self.broken_after(in_kw.last);
+        self.kept_group(Some(outer), d, false, kept);
         P { d: outer, first: kw.first, last: body.last }
     }
 
@@ -772,6 +825,7 @@ impl Layout<'_, '_> {
         let mut kw = self.tok(Self::first_tok(&ts[*pos]));
         *pos += 1;
         let mut lines: Vec<P> = Vec::new();
+        let mut kept = false;
         loop {
             let cond = self.expr(ts, pos, &arrow_or, false);
             let head = self.join(&[kw, cond]).expect("non-empty");
@@ -787,6 +841,9 @@ impl Layout<'_, '_> {
             let Some(else_kw) = self.expect(ts, pos, |t| matches!(t.kind, Kind::Else)) else {
                 break;
             };
+            if lines.len() == 1 {
+                kept = self.multiline(lines[0].last, else_kw.last);
+            }
             let Some(if_kw) = self.expect(ts, pos, |t| matches!(t.kind, Kind::If)) else {
                 let body = self.expr(ts, pos, halt, false);
                 lines.push(self.under(else_kw, body));
@@ -799,7 +856,7 @@ impl Layout<'_, '_> {
             acc = self.line_join(acc, l, Node::Line);
         }
         let commented = (acc.first..=acc.last).any(|i| matches!(self.toks[i].kind, Kind::Comment));
-        let g = self.docs.group(acc.d, commented);
+        let g = self.kept_group(None, acc.d, commented, kept);
         P { d: g, ..acc }
     }
 
@@ -873,15 +930,15 @@ impl Layout<'_, '_> {
     /// `\ | p => a | q => b`: on one line, or the `\` where it stands and the
     /// arms one per line, one level under it, with their `=>` lined up.
     fn arms_under(&mut self, head: P, ts: &[Tree], pos: &mut usize, halt: &dyn Fn(&Tok) -> bool) -> P {
-        self.arms_laid(head, ts, pos, halt, true, true)
+        self.arms_laid(head, ts, pos, halt, true, Under::Always)
     }
 
     fn arms(&mut self, head: P, ts: &[Tree], pos: &mut usize, halt: &dyn Fn(&Tok) -> bool, clauses_end: bool) -> P {
-        self.arms_laid(head, ts, pos, halt, clauses_end, false)
+        self.arms_laid(head, ts, pos, halt, clauses_end, Under::Never)
     }
 
     /// [`Self::arms`], the arms either after the head on its line's level, or
-    /// (`under`) nested one level below it.
+    /// nested one level below it, as `under` says.
     fn arms_laid(
         &mut self,
         head: P,
@@ -889,7 +946,7 @@ impl Layout<'_, '_> {
         pos: &mut usize,
         halt: &dyn Fn(&Tok) -> bool,
         clauses_end: bool,
-        under: bool,
+        under: Under,
     ) -> P {
         let group = self.docs.reserve();
         // Per arm: its patterns and guard, then `=>` with the body.
@@ -952,15 +1009,22 @@ impl Layout<'_, '_> {
             });
         }
         let Some(acc) = acc else { return head };
-        let d = if under {
-            let line = self.docs.add(Node::Line);
-            let inner = self.docs.cat(vec![line, acc.d]);
-            let nested = self.docs.nest(inner);
-            self.docs.cat(vec![head.d, nested])
-        } else {
-            self.line_join(head, acc, Node::Line).d
+        let line = self.docs.add(Node::Line);
+        let inner = self.docs.cat(vec![line, acc.d]);
+        let nested = self.docs.nest(inner);
+        let d = match under {
+            Under::Always => self.docs.cat(vec![head.d, nested]),
+            Under::Never => self.line_join(head, acc, Node::Line).d,
+            Under::UnlessBroken(g) => {
+                // Decided once the head is printed, so only the arms are conditional.
+                let line = self.docs.add(Node::Line);
+                let broken = self.docs.cat(vec![line, acc.d]);
+                let arms = self.docs.add(Node::Cond { group: g, flat: nested, broken });
+                self.docs.cat(vec![head.d, arms])
+            }
         };
-        self.docs.fill_group(group, d, arms.len() > MAX_FLAT_ARMS);
+        let kept = self.broken_after(head.last);
+        self.kept_group(Some(group), d, false, kept);
         P { d: group, first: head.first, last: acc.last }
     }
 

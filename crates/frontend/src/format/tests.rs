@@ -20,7 +20,7 @@ fn spacing_is_normalized_within_a_line() {
 #[test]
 fn a_long_match_breaks_its_arms_under_the_head() {
     let src = "$ @mod M\n$ go : Light -> @Int = \\l =>\n\tl |> \\ | Light.Red => 0\n\t       | Light.Yellow => 1\n";
-    let three = "$ @mod M\n$ go = \\l => l |> \\ | A => 0 | B => 1 | C => 2\n";
+    let three = "$ @mod M\n$ go = \\l => l |> \\\n| A => 0 | B => 1 | C => 2\n";
     assert_eq!(fmt(three), "$ @mod M\n$ go = \\l =>\n    l |> \\\n        | A => 0\n        | B => 1\n        | C => 2\n");
     assert_eq!(
         narrow(src, 40),
@@ -122,8 +122,8 @@ fn a_comment_block_keeps_its_blank_line_before_the_item() {
 }
 
 #[test]
-fn a_handler_puts_ctl_on_its_own_line() {
-    let src = "$ @mod M\n$ s = \\g => do g {} ctl k | Y.y v => v + k {} | _ => 0\n";
+fn a_broken_handler_puts_ctl_on_its_own_line() {
+    let src = "$ @mod M\n$ s = \\g => do g {}\nctl k | Y.y v => v + k {} | _ => 0\n";
     assert_eq!(fmt(src), "$ @mod M\n$ s = \\g =>\n    do g {}\n    ctl k | Y.y v => v + k {} | _ => 0\n");
 }
 
@@ -174,10 +174,10 @@ fn a_braced_body_opens_on_its_heads_line() {
 
 #[test]
 fn an_is_inside_a_handler_clause_ends_at_the_next_clause() {
-    let src = "$ @mod M\n$ h = \\g => do g {} ctl k | Y.y v => (v |> \\ | 0 => 1 | _ => 2) | X.x u => u |> \\ | 0 => 1 | _ => 2 | Z.z w => 3\n";
+    let src = "$ @mod M\n$ h = \\g => do g {} ctl k\n| Y.y v => (v |> \\ | 0 => 1 | _ => 2) | X.x u => u |> \\ | 0 => 1 | _ => 2 | Z.z w => 3\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ h = \\g =>\n    do g {}\n    ctl k\n    | Y.y v => (v |> \\ | 0 => 1 | _ => 2)\n    | X.x u => u |> \\ | 0 => 1 | _ => 2\n    | Z.z w => 3\n"
+        "$ @mod M\n$ h = \\g =>\n    do g {} ctl k\n        | Y.y v => (v |> \\ | 0 => 1 | _ => 2)\n        | X.x u => u |> \\ | 0 => 1 | _ => 2\n        | Z.z w => 3\n"
     );
 }
 
@@ -189,10 +189,10 @@ fn trailing_comments_of_neighbouring_lines_line_up() {
 
 #[test]
 fn a_value_that_cannot_share_the_line_goes_under_its_equals() {
-    let src = "$ @mod M\n$ f = \\g => let h = do g {} ctl k | Y.y v => v | X.x u => 1 | _ => 0 in h\n";
+    let src = "$ @mod M\n$ f = \\g => let h = do g {} ctl k\n| Y.y v => v | X.x u => 1 | _ => 0 in h\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ f = \\g =>\n    let h =\n        do g {}\n        ctl k\n        | Y.y v => v\n        | X.x u => 1\n        | _     => 0\n    in\n    h\n"
+        "$ @mod M\n$ f = \\g =>\n    let h =\n        do g {} ctl k\n            | Y.y v => v\n            | X.x u => 1\n            | _     => 0\n    in\n    h\n"
     );
 }
 
@@ -233,18 +233,18 @@ fn an_import_stays_on_one_line() {
 fn a_multi_arm_lambda_keeps_its_backslash_on_the_head_line() {
     assert_eq!(fmt("$ @mod M\n$ f = \\ | 0 => 1 | _ => 2\n"), "$ @mod M\n$ f = \\ | 0 => 1 | _ => 2\n");
     assert_eq!(
-        fmt("$ @mod M\n$ f : @Int -> @Str = \\|0=>\"zero\"|1=>\"one\"|_=>\"many\"\n"),
+        fmt("$ @mod M\n$ f : @Int -> @Str = \\\n|0=>\"zero\"|1=>\"one\"|_=>\"many\"\n"),
         "$ @mod M\n$ f : @Int -> @Str = \\\n    | 0 => \"zero\"\n    | 1 => \"one\"\n    | _ => \"many\"\n"
     );
     assert_eq!(
-        fmt("$ @mod M\n$ f = \\s => s |> \\ | \"yes\" => 1 | \"no\" => 0 | _ => 99\n"),
+        fmt("$ @mod M\n$ f = \\s => s |> \\\n | \"yes\" => 1 | \"no\" => 0 | _ => 99\n"),
         "$ @mod M\n$ f = \\s =>\n    s |> \\\n        | \"yes\" => 1\n        | \"no\"  => 0\n        | _     => 99\n"
     );
 }
 
 #[test]
 fn a_comma_in_an_arm_separates_its_arguments() {
-    let src = "$ @mod M\n$ f : @Int -> @Int -> @Int = \\ | 0,_ => 0 | n , x :: xs => n | _, _ => 1\n";
+    let src = "$ @mod M\n$ f : @Int -> @Int -> @Int = \\\n | 0,_ => 0 | n , x :: xs => n | _, _ => 1\n";
     assert_eq!(
         fmt(src),
         "$ @mod M\n$ f : @Int -> @Int -> @Int = \\\n    | 0, _       => 0\n    | n, x :: xs => n\n    | _, _       => 1\n"
@@ -252,4 +252,51 @@ fn a_comma_in_an_arm_separates_its_arguments() {
     // Inside a list, the comma after an arm's body still ends the element.
     let rec = "$ @mod M\n$ r = { .f = \\ | 0, _ => 0 | _, _ => 1, .g = 2 }\n";
     assert_eq!(fmt(rec), rec);
+}
+
+#[test]
+fn a_break_at_a_forms_chosen_point_keeps_it_a_block() {
+    // Arms: a break before the first `|`; none keeps a fitting match on one line.
+    let flat = "$ @mod M\n$ f = \\ | A => 0 | B => 1 | C => 2\n";
+    assert_eq!(fmt(flat), flat);
+    let arms = "$ @mod M\n$ f = \\\n| A => 0 | B => 1\n";
+    assert_eq!(fmt(arms), "$ @mod M\n$ f = \\\n    | A => 0\n    | B => 1\n");
+    // A break before a later arm does not count.
+    let later = "$ @mod M\n$ f = \\ | A => 0\n| B => 1\n";
+    assert_eq!(fmt(later), "$ @mod M\n$ f = \\ | A => 0 | B => 1\n");
+    // Sequences: a break after the first `;`.
+    let seq = "$ @mod M\n$ f = \\x => print a; print b\n";
+    assert_eq!(fmt(seq), seq);
+    let block = "$ @mod M\n$ f = \\x => print a;\nprint b; print c\n";
+    assert_eq!(fmt(block), "$ @mod M\n$ f = \\x =>\n    print a;\n    print b;\n    print c\n");
+    // `let`: a break after `in`.
+    let let_flat = "$ @mod M\n$ f = \\x => let a = x in a\n";
+    assert_eq!(fmt(let_flat), let_flat);
+    let let_block = "$ @mod M\n$ f = \\x => let a = x in\na\n";
+    assert_eq!(fmt(let_block), "$ @mod M\n$ f = \\x =>\n    let a = x in\n    a\n");
+    // `if`: a break before the first `else`.
+    let if_flat = "$ @mod M\n$ f = \\x => if x => 1 else 2\n";
+    assert_eq!(fmt(if_flat), if_flat);
+    let if_block = "$ @mod M\n$ f = \\x => if x => 1\nelse 2\n";
+    assert_eq!(fmt(if_block), "$ @mod M\n$ f = \\x =>\n    if x =>\n        1\n    else\n        2\n");
+    // A handler: a break before `ctl`, and before the first `|` after `ctl k`.
+    let handler = "$ @mod M\n$ h = \\g => do g {} ctl k | X.x u => 1 | Y.y v => 2 | _ => 0\n";
+    assert_eq!(fmt(handler), handler);
+    let ctl = "$ @mod M\n$ h = \\g => do g {}\nctl k | X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(ctl), "$ @mod M\n$ h = \\g =>\n    do g {}\n    ctl k | X.x u => 1 | _ => 0\n");
+    let clauses = "$ @mod M\n$ h = \\g => do g {} ctl k\n| X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(clauses), "$ @mod M\n$ h = \\g =>\n    do g {} ctl k\n        | X.x u => 1\n        | _     => 0\n");
+    let both = "$ @mod M\n$ h = \\g => do g {}\nctl k\n| X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(both), "$ @mod M\n$ h = \\g =>\n    do g {}\n    ctl k\n    | X.x u => 1\n    | _     => 0\n");
+    // A `do .. ctl k` too long for its line breaks before `ctl`, the clauses then at its level.
+    let long = "$ @mod M\n$ h = \\g => do ffffffffff aaaaaaaaaa bbbbbbbbbb cccccccccc ctl k\n| X.x u => 1 | _ => 0\n";
+    assert_eq!(
+        narrow(long, 40),
+        "$ @mod M\n$ h = \\g =>\n    do\n        ffffffffff aaaaaaaaaa bbbbbbbbbb\n            cccccccccc\n    ctl k\n    | X.x u => 1\n    | _     => 0\n"
+    );
+    assert_eq!(narrow(&narrow(long, 40), 40), narrow(long, 40));
+    // Every result is a fixed point.
+    for src in [arms, block, let_block, if_block, ctl, clauses, both] {
+        assert_eq!(fmt(&fmt(src)), fmt(src));
+    }
 }

@@ -185,10 +185,13 @@ their arms) is read off the token stream, and a Wadler-style printer fits each
 group into `width` or breaks it. Indentation is 4 spaces.
 
 The rules, in short: a group fits on one line or breaks at every one of its
-line points; a multi-arm lambda or handler with more than two arms puts each
-arm on its own line, a multi-arm lambda's one level under the line its `\`
-ends; `let ... in` ends its line with `in` and the body starts the next line
-at the `let`'s level, so a chain of lets reads as a sequence (a value too long
+line points; a form the author broke at its chosen point stays broken even
+when it would fit: a `;` sequence after its first `;`, arms before their first
+`|` (a handler's clauses too), `let ... in` after `in`, `if` before its first
+`else`, `do ... ctl` before `ctl`; broken arms go one per line, a multi-arm
+lambda's one level under the line its `\` ends, a handler's one level under
+`do ... ctl k` when that shares a line and at `ctl`'s level otherwise; a broken `let ... in` ends its
+line with `in` and the body starts the next line at the `let`'s level, so a chain of lets reads as a sequence (a value too long
 for the line goes one level under `=`, with `in` alone below it); `else if`
 chains stay flat; a list written across lines with a trailing comma stays one entry
 per line; blank lines between items collapse to one; comments stay where they

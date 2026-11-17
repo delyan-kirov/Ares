@@ -10,9 +10,12 @@
 //! a group is printed on one line when it fits in the width, and broken at its
 //! line points otherwise.
 //!
-//! Two rules keep it honest. A bracket group or declaration body that ends in a
-//! trailing comma is always broken one entry per line (the comma says the
-//! author wants it exploded). And the output is re-lexed before it is returned.
+//! Three rules keep it honest. A bracket group or declaration body that ends
+//! in a trailing comma is always broken one entry per line (the comma says the
+//! author wants it exploded). A form the author broke at its chosen point stays
+//! broken.
+//! See Note [Kept line breaks].
+//! And the output is re-lexed before it is returned.
 //! See Note [Formatter re-lex check].
 //!
 //! The printer is `wadler`; the rules that map syntax onto it are `layout`.
@@ -227,6 +230,29 @@ fn align_comments(out: &str, width: usize) -> String {
 // same number of items. If either fails, the file is left as it was, with an
 // error naming where. A layout bug can make the formatter decline a file; it
 // cannot make it change one.
+
+// Note [Kept line breaks]
+//
+// `let`, `if`, `;` sequences, arms and handlers read either as one line or as
+// a block, and only the author knows which: a run of effects or a list of
+// cases reads better as a block even when it would fit. So each form has one
+// point where a line break in the source keeps it broken:
+//
+//   `a; b`          after the first `;`
+//   `\ | p => e`    before the first `|` (a handler's `ctl k | ..` too)
+//   `let .. in e`   after `in`
+//   `if .. else`    before the first `else`
+//   `do .. ctl k`   before `ctl`
+//
+// A form with no break there goes on one line when it fits. Only that one
+// point counts, so a stray break elsewhere does not freeze a layout, and the
+// choice is all or nothing: a kept form breaks every line point of its group,
+// the forms inside it still choosing for themselves.
+//
+// The formatter cannot tell its own breaks from the author's, so a form it
+// broke for width stays broken once shortened, until the author joins the
+// line again. Output is still a fixed point: a form printed broken has a break
+// at its point, and one printed flat has none.
 
 /// Refuse output that is not the input's token sequence, or that stops parsing.
 /// See Note [Formatter re-lex check].

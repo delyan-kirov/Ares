@@ -56,7 +56,7 @@ fn configured(name: &str, body: &str) -> PathBuf {
     dir
 }
 
-const LONG: &str = "$ @mod F\n\n$ f : @Int -> @Int = \\x => x |> \\ | 0 => 1 | 1 => 2 | 2 => 3 | _ => x\n";
+const LONG: &str = "$ @mod F\n\n$ f : @Int -> @Int = \\x => x |> \\\n| 0 => 1 | 1 => 2 | 2 => 3 | _ => x\n";
 
 #[test]
 fn fmt_takes_its_style_from_the_build_script() {
