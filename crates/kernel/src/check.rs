@@ -27,7 +27,7 @@ use crate::conversion::ConversionChecker;
 use crate::level::Level;
 use crate::nbe::{apply, eval, fst, global_type, quote, BindingVal, Closure, Env, Lvl, Neutral, QuotVal, Val};
 use crate::observational::{cast, eq, native_pi, relation_type};
-use crate::inductive::{constructor_type, ford, projection_type, recursor_type};
+use crate::inductive::{constructor_type, ford, projection_type, recursive_shape, recursor_type};
 use crate::signature::{ConstructorDecl, DataDecl, DataId, Global, GlobalId, GlobalKind, Param, Signature};
 use crate::syntax::{error, parse_script, Item, ItemBody, LevelArg, Primitive, Raw, RawConstructor, RawKind, RawLevel};
 use crate::term::{mentions, mentions_global, Binding, Name, Term, TermDisplay};
@@ -290,12 +290,12 @@ impl Checker<'_> {
             let ty_val = self.eval(&ctx, &ty);
             // Rule [Positivity-Restricted]
             // See Note [Strict positivity, restricted].
-            let is_self = is_data_at_own_params(&ty_val, data, np, u) && !spine(&ty)[u..].iter().any(|a| mentions_global(a, decl.global));
+            let is_self = is_recursive_field(&ty, decl.global, np, u, (u + i) as u32);
             if !is_self && mentions_global(&ty, decl.global) {
                 return Err(self.error(
                     Code::Unsupported,
                     raw.span,
-                    format!("`{data_name}` may only occur as a whole field, applied to its own parameters"),
+                    format!("`{data_name}` may only occur as the result of a field's type, applied to its own parameters"),
                 ));
             }
             surface.push(Param {
@@ -430,6 +430,25 @@ pub(crate) fn is_data_at_own_params(ty: &Val, data: DataId, params: usize, unifo
     d.data == data && d.params.len() == params && d.params[..uniform].iter().enumerate().all(own)
 }
 
+// Rule [Positivity-Branching]
+/// Whether a field's type `ty`, over the uniform parameters and the fields
+/// before it (`depth` binders in all), is a recursive occurrence of the
+/// inductive type `global`: `(a_1: A_1) -> ... -> (a_k: A_k) -> D params ys`,
+/// with the uniform parameters passed through as themselves and `D` in no
+/// `A_i` and no index `y`. The check is syntactic, so it agrees with what
+/// the recursor's generator reads off the field.
+pub(crate) fn is_recursive_field(ty: &Term, global: GlobalId, params: usize, uniform: usize, depth: u32) -> bool {
+    let (binders, body) = recursive_shape(ty);
+    let k = binders.len() as u32;
+    let args = spine(body);
+    let own = |(p, a): (usize, &&Term)| matches!(a, Term::Var(v) if *v == depth + k - 1 - p as u32);
+    head(body) == Some(global)
+        && args.len() == params
+        && args[..uniform].iter().enumerate().all(own)
+        && !args[uniform..].iter().any(|a| mentions_global(a, global))
+        && !binders.iter().any(|b| mentions_global(&b.dom, global))
+}
+
 /// The arguments of an application spine.
 pub(crate) fn spine(t: &Term) -> Vec<&Term> {
     let mut args = Vec::new();
@@ -476,12 +495,16 @@ fn uniform_params(params: &[Param], ctors: &[RawConstructor]) -> usize {
 // Note [Strict positivity, restricted]
 //
 // An inductive type may appear in its own constructors only where its
-// recursor can recurse: as a whole field `D params ys`, with exactly the
-// declaration's parameters and any indices `ys` that do not mention `D`. Strict positivity proper also allows
-// `A -> D params` (infinitely branching trees) and nested occurrences such as
-// `List (D params)`; both need more of the recursor's machinery and are
-// rejected for now. Anything that is not positive must be rejected for
-// consistency: a negative occurrence gives a fixpoint combinator.
+// recursor can recurse: as the result of a field's type,
+// `(a: A) -> D params ys`, with exactly the declaration's parameters and
+// with `D` neither in the domains `A` nor in the indices `ys`. With no Pi in
+// front this is a whole field `D params ys`; with one it is an infinitely
+// branching node, whose induction hypothesis is a function
+// `(a: A) -> P ys (f a)`. Strict positivity proper also allows nested
+// occurrences such as `List (D params)`; they need a nested recursor or a
+// translation to a mutual family, and are rejected for now (#467). Anything
+// that is not positive must be rejected for consistency: a negative
+// occurrence gives a fixpoint combinator.
 
 // ## Bidirectional checking
 

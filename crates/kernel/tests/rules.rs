@@ -415,8 +415,43 @@ fn data_iota() {
 #[test]
 fn positivity_restricted() {
     applies("$ Rose : @Type 1 = @data | leaf | node Rose Rose\n");
-    blocked("$ Bad : @Type 1 = @data | mk (Bad -> Bad)\n", "may only occur as a whole field");
-    blocked("$ Fn : @Type 1 = @data | mk (Nat -> Fn)\n", "may only occur as a whole field");
+    blocked("$ Bad : @Type 1 = @data | mk (Bad -> Bad)\n", "may only occur as the result of a field");
+    blocked("$ Nest : @Type 1 = @data | mk (List @ctx {.u = 0} Nest)\n", "may only occur as the result of a field");
+}
+
+// Test [Positivity-Branching]
+#[test]
+fn positivity_branching() {
+    // A countable ordinal and the length of its leftmost branch.
+    let ord = r"
+$ Ord : @Type 1 = @data | oz | os Ord | lim (f: Nat -> Ord)
+$ left : Ord -> Nat = \o => Ord.elim @ctx {.m = 1} (\_ => Nat) zero (\_ r => succ r) (\_ r => succ (r zero)) o
+$ n : Nat = left (lim (\k => Nat.elim @ctx {.m = 1} (\_ => Ord) oz (\_ r => os r) k))
+";
+    let sig = applies(ord);
+    assert_eq!(normal(&sig, "n"), "succ zero");
+    // A W-type: the branching depends on an earlier field.
+    let w = r"
+$ W : (A: @Type 1) -> (B: A -> @Type 1) -> @Type 1 = @data | sup (a: A) (f: B a -> W A B)
+$ size : (A: @Type 1) -> (B: A -> @Type 1) -> W A B -> Nat =
+    \A B w => W.elim @ctx {.m = 1} A B (\_ => Nat) (\a f r => succ zero) w
+";
+    applies(w);
+    // An index that depends on the branch.
+    let indexed = r"
+$ T : (n: Nat) -> @Type 1 = @data | tl (m: Nat) : T m | tn (f: (k: Nat) -> T k) : T zero
+$ depth : (n: Nat) -> T n -> Nat = \n t => T.elim @ctx {.m = 1} (\_ _ => Nat) (\_ => zero) (\f r => succ (r two)) n t
+$ d : Nat = depth zero (tn (\k => tl k))
+";
+    let sig = applies(indexed);
+    assert_eq!(normal(&sig, "d"), "succ zero");
+    // The hypothesis is a function, not a value.
+    blocked(
+        &format!("{ord}$ bad : Ord -> Nat = \\o => Ord.elim @ctx {{.m = 1}} (\\_ => Nat) zero (\\_ r => succ r) (\\_ r => succ r) o\n"),
+        "expected `Nat`, found `Nat -> Nat`",
+    );
+    blocked("$ Bad : @Type 1 = @data | mk ((Bad -> Nat) -> Bad)\n", "may only occur as the result of a field");
+    blocked("$ Bad : @Type 1 = @data | mk (Nat -> List @ctx {.u = 0} Bad)\n", "may only occur as the result of a field");
 }
 
 // ## Quotients

@@ -42,5 +42,6 @@ precondition (#477). The `eq_c` projections are in too, as the globals
 computes to the equality of their parameters; it stays stuck, with CIC^obs's
 `eq_c` projections as the way to use it (#477).** Eq-Ctor stays: it is
 TT^obs's published rule for ℕ, generalised, and its status remains
-`published-uncovered`. Strict positivity grows to infinitely branching fields
-(allowed by PLT25 §4.1), and nested types are translated as Lean does (#467).
+`published-uncovered`. Strict positivity has grown to infinitely branching
+fields (allowed by PLT25 §4.1, Rule [Positivity-Branching]); nested types are
+to be translated as Lean does (#467).

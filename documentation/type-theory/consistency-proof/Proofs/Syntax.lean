@@ -15,6 +15,9 @@ Differences from the Rust, all because the rules here are declarative:
 * A global of an inductive declaration is used applied to all its arguments:
   the kernel's partial application is a lambda (`inductive::curry`), so it is
   the eta-expansion of a full one.
+* A recursive field is a whole field `D params ys`. The kernel also admits
+  `(a: A) -> D params ys` (Rule [Positivity-Branching]), which the model's
+  `ω` stages do not reach (#467).
 
 Proofs follow the kernel: every term checked against a proposition elaborates
 to `irr`, the kernel's `Irrelevant` (see Rule [Proof-Witness]).

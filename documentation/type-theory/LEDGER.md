@@ -50,7 +50,7 @@ The design questions behind the rules, compared across systems, are the
 | `conjecture` | no source; names an issue |
 
 Each published theorem covers its own fragment. Lean Consistency covers every
-rule at once: it is the kernel's rules together, proved consistent in Lean
+rule that names it at once (all but Positivity-Branching): it is the kernel's rules together, proved consistent in Lean
 (#481). It proves consistency only; normalisation and decidability of the
 whole kernel are not proved, and the published theorems that give them each
 cover a fragment.
@@ -112,7 +112,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | PLT25 Decidability | PLT25 | Theorem 5.6 | CIC^obs restricted to Π, N and universes, with Cast-Refl in conversion | Agda |
 | PLT25 Consistency | PLT25 | Theorem 6.5 | CIC^obs with its scheme of parameterised inductive types (Section 4.1) | paper |
 | Puj22 Cast-Refl decidability | Puj22 | Theorem 5.1.2, Section 5.1.4 | CC^obs with Cast-Refl decided during conversion | Agda |
-| Lean Consistency | - | `consistency-proof/Proofs/Consistency.lean`, `consistent₁` to `consistent₄` and `consistent_poly` | every rule below at once, as `Deriv` in `consistency-proof/Proofs/Typing.lean`, over any signature of inductive declarations (`SigOk`), for each bound on the universes with a model (four are built); levels are numbers, and a level-polymorphic derivation is its instances; the differences from the kernel are listed in `consistency-proof/Proofs/Syntax.lean` | Lean |
+| Lean Consistency | - | `consistency-proof/Proofs/Consistency.lean`, `consistent₁` to `consistent₄` and `consistent_poly` | every rule below that names it, at once, as `Deriv` in `consistency-proof/Proofs/Typing.lean`, over any signature of inductive declarations (`SigOk`), for each bound on the universes with a model (four are built); levels are numbers, and a level-polymorphic derivation is its instances; the differences from the kernel are listed in `consistency-proof/Proofs/Syntax.lean` | Lean |
 | Lean Level comparison soundness | - | `consistency-proof/Proofs/Levels.lean`, `Lvl.leq_sound` | Algorithm [Level comparison by case split], with fuel bounding its depth: a yes holds under every assignment | Lean |
 | AC20 Non-normalisation | AC20 | Introduction and Section 2 | an impredicative Prop, proof-irrelevant equality, and a cast that reduces when its two types are definitionally equal: normalisation fails for open terms | paper |
 
@@ -186,7 +186,8 @@ those edges complete.
 | Data-Ctor | Dyb94, PLT25 | PLT25 Section 4.1; Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Elim | Dyb94 | not checked: not vendored | published | Lean Consistency | - | yes |
 | Data-Iota | Dyb94 | not checked: not vendored | published | Lean Consistency | - | yes |
-| Positivity-Restricted | Dyb94 | not checked: not vendored; the kernel admits only whole recursive fields | deviation | Lean Consistency | #467 | yes |
+| Positivity-Restricted | Dyb94 | not checked: not vendored; the kernel admits no nested occurrences | deviation | Lean Consistency | #467 | yes |
+| Positivity-Branching | PLT25, Dyb94 | PLT25 Section 4.1, recursive calls in strictly positive positions, and Section 6.2, the initial algebra of a strictly positive definition; Dyb94 not checked | published | PLT25 Consistency | #467 | yes |
 | Quot-Form | PT22 | Section 4.1, A/(R, Rr, Rs, Rt) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Intro | PT22 | Section 4.1, π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Elim | PT22, PLT25 | PT22 Section 4.1, Q-elim; the respect premise in PLT25 Section 7.6's direction | published | PT22 Quotients, Lean Consistency | - | yes |
@@ -209,7 +210,12 @@ How the deviations differ from their sources:
   rules would build (the components of an equality a cast passes through)
   are that witness too.
 - **Positivity-Restricted.** A restriction of the schema, not an extension:
-  no `A -> D params` fields and no nested occurrences.
+  no nested occurrences such as `List (D params)`.
+
+Positivity-Branching admits a recursive field `(a: A) -> D params ys`, whose
+induction hypothesis is `(a: A) -> P ys (f a)`. PLT25's model covers it, but
+the Lean model does not yet: its family is built in `ω` stages, which reach
+only finitely branching values (#467).
 
 ## Assumptions
 

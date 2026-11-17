@@ -45,8 +45,8 @@ fn no_field_is_as_large_as_its_type() {
 /// anything (the standard counterexample to dropping strict positivity).
 #[test]
 fn no_negative_occurrence() {
-    rejects("negative", "$ Bad : @Type 1 = @data | mk (Bad -> @Bottom)\n", "may only occur as a whole field");
-    rejects("negative-nested", "$ Bad : @Type 1 = @data | mk ((Bad -> @Top) -> @Top)\n", "may only occur as a whole field");
+    rejects("negative", "$ Bad : @Type 1 = @data | mk (Bad -> @Bottom)\n", "may only occur as the result of a field");
+    rejects("negative-nested", "$ Bad : @Type 1 = @data | mk ((Bad -> @Top) -> @Top)\n", "may only occur as the result of a field");
 }
 
 /// An inductive proposition with two constructors and large elimination
