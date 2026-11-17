@@ -25,7 +25,7 @@
 use std::fmt;
 use std::rc::Rc;
 
-use crate::check::{equivalence_laws, is_data_at_own_params, respect_type, spine};
+use crate::check::{equivalence_laws, is_recursive_field, respect_type};
 use crate::conversion::ConversionChecker;
 use crate::inductive::{constructor_type, ford, projection_type, recursor_type};
 use crate::level::Level;
@@ -233,7 +233,7 @@ impl Rechecker<'_> {
             ctx.bind(p.name.clone(), ty);
         }
         let mut recursive = Vec::new();
-        for field in &ctor.surface {
+        for (f, field) in ctor.surface.iter().enumerate() {
             let level = self.check_type(ctx, &field.ty)?;
             if !level.equal(&field.level) || !level.leq(&decl.level) {
                 return Err(format!("has a field `{}` too large for its type's universe", field.name));
@@ -241,9 +241,9 @@ impl Rechecker<'_> {
             let ty = self.eval(ctx, &field.ty);
             // Rule [Positivity-Restricted]
             // See Note [Strict positivity, restricted].
-            let is_self = is_data_at_own_params(&ty, data, np, u) && !spine(&field.ty)[u..].iter().any(|a| mentions_global(a, decl.global));
+            let is_self = is_recursive_field(&field.ty, decl.global, np, u, (u + f) as u32);
             if !is_self && mentions_global(&field.ty, decl.global) {
-                return Err(format!("has a field `{}` where its type occurs other than as a whole field", field.name));
+                return Err(format!("has a field `{}` where its type occurs other than as a field's result", field.name));
             }
             recursive.push(is_self);
             ctx.bind(field.name.clone(), ty);

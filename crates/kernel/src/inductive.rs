@@ -3,10 +3,10 @@
 //!
 //! An inductive declaration `D (params) (indices) : @Type l` lists
 //! constructors whose fields may mention the parameters, earlier fields, and
-//! `D params ys` itself as a whole field (strict positivity, in the
-//! restricted form with no recursive occurrence under a Pi). A constructor of
-//! an indexed family states its result, `: D params ys`. Indexed families are
-//! not primitive: they are stored forded.
+//! `D params ys` itself as the result of a field's type,
+//! `(a: A) -> D params ys` (strict positivity without nested occurrences).
+//! A constructor of an indexed family states its result, `: D params ys`.
+//! Indexed families are not primitive: they are stored forded.
 //! See Note [Indexed families are forded].
 //!
 //! The recursor follows Dybjer's schema ("Inductive families", FAC 1994), in
@@ -18,10 +18,11 @@
 //! ```
 //!
 //! where the method for `c (f1: A1) ... (fn: An)` takes the fields, then one
-//! induction hypothesis `P fi` for each recursive field, and returns
-//! `P (c params f1 ... fn)`. Iota reduction applies the method of a
-//! constructor value to its fields and to the recursor's results on the
-//! recursive ones.
+//! induction hypothesis for each recursive field, and returns
+//! `P (c params f1 ... fn)`. The hypothesis for `fi: (a: B) -> D params ys`
+//! is `(a: B) -> P ys (fi a)`, which for a whole field is `P ys fi`. Iota
+//! reduction applies the method of a constructor value to its fields and to
+//! the recursor's results on the recursive ones.
 //!
 //! Input: a checked [`DataDecl`]. Output: core types for its globals, and
 //! values for their applications.
@@ -133,11 +134,23 @@ pub fn constructor_type(decl: &DataDecl, levels: usize, index: usize) -> Term {
     pis(&telescope(&decl.params[..decl.uniform]), fields, sort).0
 }
 
+/// A field's type `(a_1: A_1) -> ... -> (a_k: A_k) -> body`, as its leading
+/// Pi binders and the rest. A recursive field's `body` is `D params ys`.
+pub fn recursive_shape(ty: &Term) -> (Vec<&Binding>, &Term) {
+    let mut binders = Vec::new();
+    let mut t = ty;
+    while let Term::Pi(b) = t {
+        binders.push(&**b);
+        t = &b.cod;
+    }
+    (binders, t)
+}
+
 /// The arguments after the uniform parameters in the type of recursive
-/// field `field`: the indices it is at.
+/// field `field`: the indices it is at, under its Pi binders.
 fn recursive_indices(decl: &DataDecl, ctor: &ConstructorDecl, field: usize) -> Vec<Term> {
     let mut args = Vec::new();
-    let mut t = &*ctor.surface[field].ty;
+    let mut t = recursive_shape(&ctor.surface[field].ty).1;
     while let Term::App(f, a) = t {
         args.push((**a).clone());
         t = f;
@@ -147,9 +160,10 @@ fn recursive_indices(decl: &DataDecl, ctor: &ConstructorDecl, field: usize) -> V
 }
 
 /// Move `t`, a term over the uniform parameters and the first `fields`
-/// fields, to depth `depth`, where the fields start at level `base`.
-fn relocate(t: &Term, uniform: u32, fields: u32, base: u32, depth: u32) -> Term {
-    rename(t, 0, &|v| {
+/// fields, to depth `depth`, where the fields start at level `base`. The
+/// `under` innermost variables are binders inside `t`'s context, and stay.
+fn relocate(t: &Term, uniform: u32, fields: u32, base: u32, depth: u32, under: u32) -> Term {
+    rename(t, under, &|v| {
         let level = if v < fields { base + fields - 1 - v } else { uniform - 1 - (v - fields) };
         depth - 1 - level
     })
@@ -282,16 +296,25 @@ fn method_type(decl: &DataDecl, levels: usize, index: usize, m: &Level) -> (Term
     }
     let nf = ctor.surface.len() as u32;
     for (f, _) in ctor.recursive.iter().take(ctor.surface.len()).enumerate().filter(|(_, r)| **r) {
+        // `(a: A) -> P ys (f a)`, under the field's own Pi binders `a`.
         let depth = base + binders.len() as u32;
-        let ys = recursive_indices(decl, ctor, f).into_iter().map(|y| relocate(&y, u, f as u32, base, depth));
-        let hypothesis = Term::app(apply_all(var(depth, p_level), ys), var(depth, base + f as u32));
-        binders.push((format!("ih_{}", ctor.surface[f].name).into(), hypothesis, m.clone()));
+        let branches = recursive_shape(&ctor.surface[f].ty).0;
+        let k = branches.len() as u32;
+        let doms: Vec<(Name, Term, Level)> = branches
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (b.name.clone(), relocate(&b.dom, u, f as u32, base, depth, i as u32), b.dom_level.clone()))
+            .collect();
+        let ys = recursive_indices(decl, ctor, f).into_iter().map(|y| relocate(&y, u, f as u32, base, depth, k));
+        let branch = apply_all(var(depth + k, base + f as u32), (0..k).map(|i| Term::Var(k - 1 - i)));
+        let (hypothesis, level) = pis(&doms, Term::app(apply_all(var(depth + k, p_level), ys), branch), m.clone());
+        binders.push((format!("ih_{}", ctor.surface[f].name).into(), hypothesis, level));
     }
     let depth = base + binders.len() as u32;
     let params = (0..u).map(|p| var(depth, p));
     let fields = (0..nf).map(|f| var(depth, base + f));
     let value = apply_all(Term::Global(ctor.global, own_levels(levels)), params.chain(fields));
-    let ys = ctor.indices.iter().map(|y| relocate(y, u, nf, base, depth));
+    let ys = ctor.indices.iter().map(|y| relocate(y, u, nf, base, depth, 0));
     let result = Term::app(apply_all(var(depth, p_level), ys), value);
     pis(&binders, result, m.clone())
 }
@@ -437,13 +460,7 @@ pub fn iota(sig: &Signature, rec: Rc<RecursorArgs>, major: Val) -> Val {
             let method = rec.args[u + 1 + c.index].clone();
             let applied = fields.iter().fold(method, |f, a| apply(sig, f, a.clone()));
             let methods = &rec.args[..u + 1 + decl.constructors.len()];
-            let result = (0..nf).filter(|f| ctor.recursive[*f]).fold(applied, |f, r| {
-                let env = c.params[..u].iter().chain(&fields[..r]).fold(Env::with_levels(c.levels.clone()), |env, v| env.extend(v.clone()));
-                let mut args = methods.to_vec();
-                args.extend(recursive_indices(decl, ctor, r).iter().map(|y| eval(sig, &env, y)));
-                let inner = RecursorArgs { data: rec.data, levels: rec.levels.clone(), args };
-                apply(sig, f, iota(sig, Rc::new(inner), fields[r].clone()))
-            });
+            let result = (0..nf).filter(|f| ctor.recursive[*f]).fold(applied, |f, r| apply(sig, f, hypothesis(sig, &rec, &c, r)));
             if decl.uniform == decl.params.len() {
                 return result;
             }
@@ -457,6 +474,29 @@ pub fn iota(sig: &Signature, rec: Rc<RecursorArgs>, major: Val) -> Val {
         Val::Neutral(n) => Val::neutral(Neutral::Recursor(rec, n)),
         _ => unreachable!("the recursor's major premise is not a value of its type"),
     }
+}
+
+/// The induction hypothesis for recursive field `field` of `c`: the
+/// recursor on it, or for `f: (a: A) -> D params ys` the function
+/// `\a => D.elim ... ys (f a)`.
+fn hypothesis(sig: &Signature, rec: &Rc<RecursorArgs>, c: &Rc<ConstructorVal>, field: usize) -> Val {
+    let decl = sig.data(rec.data);
+    let ctor = &decl.constructors[c.index];
+    let names: Rc<[Name]> = recursive_shape(&ctor.surface[field].ty).0.iter().map(|b| b.name.clone()).collect();
+    let ys = Rc::new(recursive_indices(decl, ctor, field));
+    let (rec, c) = (rec.clone(), c.clone());
+    let done = Rc::new(move |sig: &Signature, branch: Vec<Val>| {
+        let decl = sig.data(rec.data);
+        let u = decl.uniform;
+        let env = c.params[..u].iter().chain(&c.fields[..field]).chain(&branch);
+        let env = env.fold(Env::with_levels(c.levels.clone()), |env, v| env.extend(v.clone()));
+        let mut args = rec.args[..u + 1 + decl.constructors.len()].to_vec();
+        args.extend(ys.iter().map(|y| eval(sig, &env, y)));
+        let inner = RecursorArgs { data: rec.data, levels: rec.levels.clone(), args };
+        let major = branch.into_iter().fold(c.fields[field].clone(), |f, a| apply(sig, f, a));
+        iota(sig, Rc::new(inner), major)
+    });
+    curry(names, Vec::new(), done, sig)
 }
 
 /// The type of field `index` of a constructor, given the parameters and the

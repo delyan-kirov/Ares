@@ -289,7 +289,7 @@ $ q : P (succ n) = p
 
 #[test]
 fn inductive_declarations_are_checked() {
-    reject("$ Bad : @Type 1 = @data | mk (Bad -> Bad)\n", "may only occur as a whole field");
+    reject("$ Bad : @Type 1 = @data | mk (Bad -> Bad)\n", "may only occur as the result of a field");
     reject("$ Prop : @Type 0 = @data | yes\n", "inductive propositions are not supported");
     reject("$ Big : @Type 1 = @data | mk (@Type 1)\n", "too large");
     reject("$ Idx : @Type 1 -> @Type 2 = @data | mk\n$ I : @Type 1 = @data | a | a\n", "`a` is already defined");
