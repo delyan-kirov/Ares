@@ -11,6 +11,11 @@
 # associativity, cancelling a positive factor) are proved, through unary
 # naturals, so the script rests on no postulate.
 #
+# The endpoints of equality steps are `_`, and the motive level of a
+# recursor is left out: the checker infers both. A middle endpoint is
+# written where a step proves `a ~ b` and is used as `nsucc a ~ nsucc b`,
+# which computes to it but does not show it.
+#
 # A `# axioms:` line above a declaration would name the postulates it rests
 # on, transitively and through proofs, and tests/scripts.rs checks it. No
 # declaration here rests on one.
@@ -23,31 +28,31 @@ $ Pos : @Type 1 = @data | one | bit0 Pos | bit1 Pos
 
 # Case analysis: the recursor with the induction hypotheses ignored.
 $ pcase : (A: @Type 1) -> A -> (Pos -> A) -> (Pos -> A) -> Pos -> A =
-    \A a f g p => Pos.elim @ctx {.m = 1} (\_ => A) a (\q _ => f q) (\q _ => g q) p
+    \A a f g p => Pos.elim (\_ => A) a (\q _ => f q) (\q _ => g q) p
 
 $ psucc : Pos -> Pos =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Pos) (bit0 one) (\q _ => bit1 q) (\_ r => bit0 r) p
+    \p => Pos.elim (\_ => Pos) (bit0 one) (\q _ => bit1 q) (\_ r => bit0 r) p
 
 $ padd : Pos -> Pos -> Pos =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Pos -> Pos)
+    \p => Pos.elim (\_ => Pos -> Pos)
         (\q => pcase Pos (bit0 one) (\q' => bit1 q') (\q' => bit0 (psucc q')) q)
         (\p' r q => pcase Pos (bit1 p') (\q' => bit0 (r q')) (\q' => bit1 (r q')) q)
         (\p' r q => pcase Pos (bit0 (psucc p')) (\q' => bit1 (r q')) (\q' => bit0 (psucc (r q'))) q)
         p
 
 $ pmul : Pos -> Pos -> Pos =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Pos -> Pos) (\q => q) (\_ r q => bit0 (r q)) (\_ r q => padd q (bit0 (r q))) p
+    \p => Pos.elim (\_ => Pos -> Pos) (\q => q) (\_ r q => bit0 (r q)) (\_ r q => padd q (bit0 (r q))) p
 
 # `2p - 1`.
 $ pdouble_pred : Pos -> Pos =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Pos) one (\_ r => bit1 r) (\q _ => bit1 (bit0 q)) p
+    \p => Pos.elim (\_ => Pos) one (\_ r => bit1 r) (\q _ => bit1 (bit0 q)) p
 
 # ## Binary integers
 
 $ Integer : @Type 1 = @data | zero | pos Pos | neg Pos
 
 $ icase : (A: @Type 1) -> A -> (Pos -> A) -> (Pos -> A) -> Integer -> A =
-    \A a f g z => Integer.elim @ctx {.m = 1} (\_ => A) a f g z
+    \A a f g z => Integer.elim (\_ => A) a f g z
 
 $ ineg : Integer -> Integer = icase Integer zero (\p => neg p) (\p => pos p)
 
@@ -57,7 +62,7 @@ $ ipred_double : Integer -> Integer = icase Integer (neg one) (\p => pos (pdoubl
 
 # `p - q`, by recursion on `p` and cases on `q`.
 $ psub : Pos -> Pos -> Integer =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Pos -> Integer)
+    \p => Pos.elim (\_ => Pos -> Integer)
         (\q => pcase Integer zero (\q' => neg (pdouble_pred q')) (\q' => neg (bit0 q')) q)
         (\p' r q => pcase Integer (pos (pdouble_pred p')) (\q' => idouble (r q')) (\q' => ipred_double (r q')) q)
         (\p' r q => pcase Integer (pos (bit0 p')) (\q' => isucc_double (r q')) (\q' => idouble (r q')) q)
@@ -100,9 +105,9 @@ $ iap : (f: Integer -> Integer) -> (x y: Integer) -> x ~ y -> f x ~ f y =
 
 $ Nat : @Type 1 = @data | nzero | nsucc Nat
 
-$ nadd : Nat -> Nat -> Nat = \n m => Nat.elim @ctx {.m = 1} (\_ => Nat) m (\_ r => nsucc r) n
-$ nmul : Nat -> Nat -> Nat = \n m => Nat.elim @ctx {.m = 1} (\_ => Nat) nzero (\_ r => nadd m r) n
-$ ndouble : Nat -> Nat = \n => Nat.elim @ctx {.m = 1} (\_ => Nat) nzero (\_ r => nsucc (nsucc r)) n
+$ nadd : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) m (\_ r => nsucc r) n
+$ nmul : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) nzero (\_ r => nadd m r) n
+$ ndouble : Nat -> Nat = \n => Nat.elim (\_ => Nat) nzero (\_ r => nsucc (nsucc r)) n
 
 $ nsym : (x y: Nat) -> x ~ y -> y ~ x =
     \x y e => @transp x (\z => z ~ x) (@refl x) y e
@@ -112,284 +117,284 @@ $ nap : (f: Nat -> Nat) -> (x y: Nat) -> x ~ y -> f x ~ f y =
     \f x y e => @transp x (\z => f x ~ f z) (@refl (f x)) y e
 
 $ nadd_zero_r : (n: Nat) -> nadd n nzero ~ n =
-    \n => Nat.elim @ctx {.m = 0} (\n => nadd n nzero ~ n) @tt (\_ ih => ih) n
+    \n => Nat.elim (\n => nadd n nzero ~ n) @tt (\_ ih => ih) n
 
 $ nadd_one_r : (n: Nat) -> nadd n (nsucc nzero) ~ nsucc n =
-    \n => Nat.elim @ctx {.m = 0} (\n => nadd n (nsucc nzero) ~ nsucc n) @tt (\_ ih => ih) n
+    \n => Nat.elim (\n => nadd n (nsucc nzero) ~ nsucc n) @tt (\_ ih => ih) n
 
 $ nadd_succ_r : (n m: Nat) -> nadd n (nsucc m) ~ nsucc (nadd n m) =
-    \n m => Nat.elim @ctx {.m = 0} (\n => nadd n (nsucc m) ~ nsucc (nadd n m)) (@refl m) (\_ ih => ih) n
+    \n m => Nat.elim (\n => nadd n (nsucc m) ~ nsucc (nadd n m)) (@refl m) (\_ ih => ih) n
 
 $ nadd_comm : (n m: Nat) -> nadd n m ~ nadd m n =
-    \n m => Nat.elim @ctx {.m = 0} (\n => nadd n m ~ nadd m n)
-        (nsym (nadd m nzero) m (nadd_zero_r m))
-        (\k ih => ntrans (nsucc (nadd k m)) (nsucc (nadd m k)) (nadd m (nsucc k))
+    \n m => Nat.elim (\n => nadd n m ~ nadd m n)
+        (nsym _ _ (nadd_zero_r m))
+        (\k ih => ntrans _ _ _
             ih
-            (nsym (nadd m (nsucc k)) (nsucc (nadd m k)) (nadd_succ_r m k)))
+            (nsym _ _ (nadd_succ_r m k)))
         n
 
 $ nadd_assoc : (a b c: Nat) -> nadd (nadd a b) c ~ nadd a (nadd b c) =
-    \a b c => Nat.elim @ctx {.m = 0} (\a => nadd (nadd a b) c ~ nadd a (nadd b c))
+    \a b c => Nat.elim (\a => nadd (nadd a b) c ~ nadd a (nadd b c))
         (@refl (nadd b c)) (\_ ih => ih) a
 
 # `a + (b + c) ~ b + (a + c)`.
 $ nadd_swap : (a b c: Nat) -> nadd a (nadd b c) ~ nadd b (nadd a c) =
-    \a b c => ntrans (nadd a (nadd b c)) (nadd (nadd a b) c) (nadd b (nadd a c))
-        (nsym (nadd (nadd a b) c) (nadd a (nadd b c)) (nadd_assoc a b c))
-        (ntrans (nadd (nadd a b) c) (nadd (nadd b a) c) (nadd b (nadd a c))
-            (nap (\t => nadd t c) (nadd a b) (nadd b a) (nadd_comm a b))
+    \a b c => ntrans _ _ _
+        (nsym _ _ (nadd_assoc a b c))
+        (ntrans _ _ _
+            (nap (\t => nadd t c) _ _ (nadd_comm a b))
             (nadd_assoc b a c))
 
 $ nadd_cancel_l : (a b c: Nat) -> nadd a b ~ nadd a c -> b ~ c =
-    \a b c => Nat.elim @ctx {.m = 0} (\a => nadd a b ~ nadd a c -> b ~ c) (\h => h) (\_ ih h => ih h) a
+    \a b c => Nat.elim (\a => nadd a b ~ nadd a c -> b ~ c) (\h => h) (\_ ih h => ih h) a
 
 $ ndouble_add : (a b: Nat) -> ndouble (nadd a b) ~ nadd (ndouble a) (ndouble b) =
-    \a b => Nat.elim @ctx {.m = 0} (\a => ndouble (nadd a b) ~ nadd (ndouble a) (ndouble b))
+    \a b => Nat.elim (\a => ndouble (nadd a b) ~ nadd (ndouble a) (ndouble b))
         (@refl (ndouble b)) (\_ ih => ih) a
 
 # `2a + c ~ a + (a + c)`.
 $ ndouble_add_l : (a c: Nat) -> nadd (ndouble a) c ~ nadd a (nadd a c) =
-    \a c => Nat.elim @ctx {.m = 0} (\a => nadd (ndouble a) c ~ nadd a (nadd a c))
+    \a c => Nat.elim (\a => nadd (ndouble a) c ~ nadd a (nadd a c))
         (@refl c)
-        (\k ih => ntrans (nsucc (nadd (ndouble k) c)) (nsucc (nadd k (nadd k c))) (nadd k (nsucc (nadd k c)))
+        (\k ih => ntrans _ (nsucc (nadd k (nadd k c))) _
             ih
-            (nsym (nadd k (nsucc (nadd k c))) (nsucc (nadd k (nadd k c))) (nadd_succ_r k (nadd k c))))
+            (nsym _ _ (nadd_succ_r k (nadd k c))))
         a
 
 $ nmul_zero_r : (n: Nat) -> nmul n nzero ~ nzero =
-    \n => Nat.elim @ctx {.m = 0} (\n => nmul n nzero ~ nzero) @tt (\_ ih => ih) n
+    \n => Nat.elim (\n => nmul n nzero ~ nzero) @tt (\_ ih => ih) n
 
 $ nmul_succ_r : (n m: Nat) -> nmul n (nsucc m) ~ nadd n (nmul n m) =
-    \n m => Nat.elim @ctx {.m = 0} (\n => nmul n (nsucc m) ~ nadd n (nmul n m))
+    \n m => Nat.elim (\n => nmul n (nsucc m) ~ nadd n (nmul n m))
         @tt
-        (\k ih => ntrans (nadd m (nmul k (nsucc m))) (nadd m (nadd k (nmul k m))) (nadd k (nadd m (nmul k m)))
-            (nap (nadd m) (nmul k (nsucc m)) (nadd k (nmul k m)) ih)
+        (\k ih => ntrans _ _ _
+            (nap (nadd m) _ _ ih)
             (nadd_swap m k (nmul k m)))
         n
 
 $ nmul_comm : (n m: Nat) -> nmul n m ~ nmul m n =
-    \n m => Nat.elim @ctx {.m = 0} (\n => nmul n m ~ nmul m n)
-        (nsym (nmul m nzero) nzero (nmul_zero_r m))
-        (\k ih => ntrans (nadd m (nmul k m)) (nadd m (nmul m k)) (nmul m (nsucc k))
-            (nap (nadd m) (nmul k m) (nmul m k) ih)
-            (nsym (nmul m (nsucc k)) (nadd m (nmul m k)) (nmul_succ_r m k)))
+    \n m => Nat.elim (\n => nmul n m ~ nmul m n)
+        (nsym _ _ (nmul_zero_r m))
+        (\k ih => ntrans _ _ _
+            (nap (nadd m) _ _ ih)
+            (nsym _ _ (nmul_succ_r m k)))
         n
 
 $ nmul_add_r : (a b c: Nat) -> nmul (nadd a b) c ~ nadd (nmul a c) (nmul b c) =
-    \a b c => Nat.elim @ctx {.m = 0} (\a => nmul (nadd a b) c ~ nadd (nmul a c) (nmul b c))
+    \a b c => Nat.elim (\a => nmul (nadd a b) c ~ nadd (nmul a c) (nmul b c))
         (@refl (nmul b c))
-        (\k ih => ntrans (nadd c (nmul (nadd k b) c)) (nadd c (nadd (nmul k c) (nmul b c))) (nadd (nadd c (nmul k c)) (nmul b c))
-            (nap (nadd c) (nmul (nadd k b) c) (nadd (nmul k c) (nmul b c)) ih)
-            (nsym (nadd (nadd c (nmul k c)) (nmul b c)) (nadd c (nadd (nmul k c) (nmul b c))) (nadd_assoc c (nmul k c) (nmul b c))))
+        (\k ih => ntrans _ _ _
+            (nap (nadd c) _ _ ih)
+            (nsym _ _ (nadd_assoc c (nmul k c) (nmul b c))))
         a
 
 $ nmul_assoc : (a b c: Nat) -> nmul (nmul a b) c ~ nmul a (nmul b c) =
-    \a b c => Nat.elim @ctx {.m = 0} (\a => nmul (nmul a b) c ~ nmul a (nmul b c))
+    \a b c => Nat.elim (\a => nmul (nmul a b) c ~ nmul a (nmul b c))
         @tt
-        (\k ih => ntrans (nmul (nadd b (nmul k b)) c) (nadd (nmul b c) (nmul (nmul k b) c)) (nadd (nmul b c) (nmul k (nmul b c)))
+        (\k ih => ntrans _ _ _
             (nmul_add_r b (nmul k b) c)
-            (nap (nadd (nmul b c)) (nmul (nmul k b) c) (nmul k (nmul b c)) ih))
+            (nap (nadd (nmul b c)) _ _ ih))
         a
 
 $ nmul_double_l : (n m: Nat) -> nmul (ndouble n) m ~ ndouble (nmul n m) =
-    \n m => Nat.elim @ctx {.m = 0} (\n => nmul (ndouble n) m ~ ndouble (nmul n m))
+    \n m => Nat.elim (\n => nmul (ndouble n) m ~ ndouble (nmul n m))
         @tt
         (\k ih =>
             let b = nadd m (nadd m (ndouble (nmul k m))) in
             let c = ndouble (nadd m (nmul k m)) in
             let d = nadd (ndouble m) (ndouble (nmul k m)) in
-            ntrans (nadd m (nadd m (nmul (ndouble k) m))) b c
-                (nap (\t => nadd m (nadd m t)) (nmul (ndouble k) m) (ndouble (nmul k m)) ih)
-                (ntrans b d c
-                    (nsym d b (ndouble_add_l m (ndouble (nmul k m))))
-                    (nsym c d (ndouble_add m (nmul k m)))))
+            ntrans _ _ _
+                (nap (\t => nadd m (nadd m t)) _ _ ih)
+                (ntrans _ _ _
+                    (nsym _ _ (ndouble_add_l m (ndouble (nmul k m))))
+                    (nsym _ _ (ndouble_add m (nmul k m)))))
         n
 
 # Cancelling a successor: `a (p + 1) ~ b (p + 1)` gives `a ~ b`.
 $ nmul_cancel_succ : (p a b: Nat) -> nmul a (nsucc p) ~ nmul b (nsucc p) -> a ~ b =
-    \p a => Nat.elim @ctx {.m = 0} (\a => (b: Nat) -> nmul a (nsucc p) ~ nmul b (nsucc p) -> a ~ b)
-        (\b => Nat.elim @ctx {.m = 0} (\b => nmul nzero (nsucc p) ~ nmul b (nsucc p) -> nzero ~ b)
+    \p a => Nat.elim (\a => (b: Nat) -> nmul a (nsucc p) ~ nmul b (nsucc p) -> a ~ b)
+        (\b => Nat.elim (\b => nmul nzero (nsucc p) ~ nmul b (nsucc p) -> nzero ~ b)
             (\h => @tt) (\_ _ h => h) b)
-        (\k ih b => Nat.elim @ctx {.m = 0} (\b => nmul (nsucc k) (nsucc p) ~ nmul b (nsucc p) -> nsucc k ~ b)
+        (\k ih b => Nat.elim (\b => nmul (nsucc k) (nsucc p) ~ nmul b (nsucc p) -> nsucc k ~ b)
             (\h => h)
             (\j _ h => ih j (nadd_cancel_l (nsucc p) (nmul k (nsucc p)) (nmul j (nsucc p)) h))
             b)
         a
 
 $ nmul_cancel_r : (c: Nat) -> (c ~ nzero -> @Bottom) -> (a b: Nat) -> nmul a c ~ nmul b c -> a ~ b =
-    \c => Nat.elim @ctx {.m = 0} (\c => (c ~ nzero -> @Bottom) -> (a b: Nat) -> nmul a c ~ nmul b c -> a ~ b)
+    \c => Nat.elim (\c => (c ~ nzero -> @Bottom) -> (a b: Nat) -> nmul a c ~ nmul b c -> a ~ b)
         (\nz a b h => @absurd (a ~ b) (nz @tt))
         (\p _ nz => nmul_cancel_succ p)
         c
 
 $ ndouble_inj : (a b: Nat) -> ndouble a ~ ndouble b -> a ~ b =
-    \a => Nat.elim @ctx {.m = 0} (\a => (b: Nat) -> ndouble a ~ ndouble b -> a ~ b)
-        (\b => Nat.elim @ctx {.m = 0} (\b => ndouble nzero ~ ndouble b -> nzero ~ b) (\h => @tt) (\_ _ h => h) b)
-        (\k ih b => Nat.elim @ctx {.m = 0} (\b => ndouble (nsucc k) ~ ndouble b -> nsucc k ~ b)
+    \a => Nat.elim (\a => (b: Nat) -> ndouble a ~ ndouble b -> a ~ b)
+        (\b => Nat.elim (\b => ndouble nzero ~ ndouble b -> nzero ~ b) (\h => @tt) (\_ _ h => h) b)
+        (\k ih b => Nat.elim (\b => ndouble (nsucc k) ~ ndouble b -> nsucc k ~ b)
             (\h => h) (\j _ h => ih j h) b)
         a
 
 # An even number is not odd.
 $ ndouble_odd : (a b: Nat) -> ndouble a ~ nsucc (ndouble b) -> @Bottom =
-    \a => Nat.elim @ctx {.m = 0} (\a => (b: Nat) -> ndouble a ~ nsucc (ndouble b) -> @Bottom)
+    \a => Nat.elim (\a => (b: Nat) -> ndouble a ~ nsucc (ndouble b) -> @Bottom)
         (\b h => h)
-        (\k ih b => Nat.elim @ctx {.m = 0} (\b => ndouble (nsucc k) ~ nsucc (ndouble b) -> @Bottom)
+        (\k ih b => Nat.elim (\b => ndouble (nsucc k) ~ nsucc (ndouble b) -> @Bottom)
             (\h => h) (\j _ h => ih j h) b)
         a
 
 # ## Positive numbers as naturals
 
 $ nat_of : Pos -> Nat =
-    \p => Pos.elim @ctx {.m = 1} (\_ => Nat) (nsucc nzero) (\_ r => ndouble r) (\_ r => nsucc (ndouble r)) p
+    \p => Pos.elim (\_ => Nat) (nsucc nzero) (\_ r => ndouble r) (\_ r => nsucc (ndouble r)) p
 
 $ nat_of_succ : (p: Pos) -> nat_of (psucc p) ~ nsucc (nat_of p) =
-    \p => Pos.elim @ctx {.m = 0} (\p => nat_of (psucc p) ~ nsucc (nat_of p))
+    \p => Pos.elim (\p => nat_of (psucc p) ~ nsucc (nat_of p))
         @tt
         (\q _ => @refl (nat_of (bit1 q)))
-        (\q ih => nap ndouble (nat_of (psucc q)) (nsucc (nat_of q)) ih)
+        (\q ih => nap ndouble _ _ ih)
         p
 
 $ nat_of_nonzero : (p: Pos) -> nat_of p ~ nzero -> @Bottom =
-    \p => Pos.elim @ctx {.m = 0} (\p => nat_of p ~ nzero -> @Bottom)
+    \p => Pos.elim (\p => nat_of p ~ nzero -> @Bottom)
         (\h => h) (\q ih h => ih (ndouble_inj (nat_of q) nzero h)) (\_ _ h => h) p
 
 $ nat_of_inj : (p q: Pos) -> nat_of p ~ nat_of q -> p ~ q =
-    \p => Pos.elim @ctx {.m = 0} (\p => (q: Pos) -> nat_of p ~ nat_of q -> p ~ q)
-        (\q => Pos.elim @ctx {.m = 0} (\q => nat_of one ~ nat_of q -> one ~ q)
+    \p => Pos.elim (\p => (q: Pos) -> nat_of p ~ nat_of q -> p ~ q)
+        (\q => Pos.elim (\q => nat_of one ~ nat_of q -> one ~ q)
             (\h => @tt)
-            (\q' _ h => ndouble_odd (nat_of q') nzero (nsym (nsucc nzero) (ndouble (nat_of q')) h))
-            (\q' _ h => nat_of_nonzero q' (ndouble_inj (nat_of q') nzero (nsym nzero (ndouble (nat_of q')) h)))
+            (\q' _ h => ndouble_odd (nat_of q') nzero (nsym _ _ h))
+            (\q' _ h => nat_of_nonzero q' (ndouble_inj (nat_of q') nzero (nsym _ _ h)))
             q)
-        (\p' ih q => Pos.elim @ctx {.m = 0} (\q => nat_of (bit0 p') ~ nat_of q -> bit0 p' ~ q)
+        (\p' ih q => Pos.elim (\q => nat_of (bit0 p') ~ nat_of q -> bit0 p' ~ q)
             (\h => ndouble_odd (nat_of p') nzero h)
             (\q' _ h => ih q' (ndouble_inj (nat_of p') (nat_of q') h))
             (\q' _ h => ndouble_odd (nat_of p') (nat_of q') h)
             q)
-        (\p' ih q => Pos.elim @ctx {.m = 0} (\q => nat_of (bit1 p') ~ nat_of q -> bit1 p' ~ q)
+        (\p' ih q => Pos.elim (\q => nat_of (bit1 p') ~ nat_of q -> bit1 p' ~ q)
             (\h => nat_of_nonzero p' (ndouble_inj (nat_of p') nzero h))
-            (\q' _ h => ndouble_odd (nat_of q') (nat_of p') (nsym (nsucc (ndouble (nat_of p'))) (ndouble (nat_of q')) h))
+            (\q' _ h => ndouble_odd (nat_of q') (nat_of p') (nsym _ _ h))
             (\q' _ h => ih q' (ndouble_inj (nat_of p') (nat_of q') h))
             q)
         p
 
 $ nat_of_add : (p q: Pos) -> nat_of (padd p q) ~ nadd (nat_of p) (nat_of q) =
-    \p => Pos.elim @ctx {.m = 0} (\p => (q: Pos) -> nat_of (padd p q) ~ nadd (nat_of p) (nat_of q))
-        (\q => Pos.elim @ctx {.m = 0} (\q => nat_of (padd one q) ~ nadd (nat_of one) (nat_of q))
+    \p => Pos.elim (\p => (q: Pos) -> nat_of (padd p q) ~ nadd (nat_of p) (nat_of q))
+        (\q => Pos.elim (\q => nat_of (padd one q) ~ nadd (nat_of one) (nat_of q))
             @tt
             (\q' _ => @refl (nat_of (bit1 q')))
-            (\q' _ => nap ndouble (nat_of (psucc q')) (nsucc (nat_of q')) (nat_of_succ q'))
+            (\q' _ => nap ndouble _ _ (nat_of_succ q'))
             q)
-        (\p' ih q => Pos.elim @ctx {.m = 0} (\q => nat_of (padd (bit0 p') q) ~ nadd (nat_of (bit0 p')) (nat_of q))
-            (nsym (nadd (ndouble (nat_of p')) (nsucc nzero)) (nsucc (ndouble (nat_of p'))) (nadd_one_r (ndouble (nat_of p'))))
-            (\q' _ => ntrans (ndouble (nat_of (padd p' q'))) (ndouble (nadd (nat_of p') (nat_of q'))) (nadd (ndouble (nat_of p')) (ndouble (nat_of q')))
-                (nap ndouble (nat_of (padd p' q')) (nadd (nat_of p') (nat_of q')) (ih q'))
+        (\p' ih q => Pos.elim (\q => nat_of (padd (bit0 p') q) ~ nadd (nat_of (bit0 p')) (nat_of q))
+            (nsym _ _ (nadd_one_r (ndouble (nat_of p'))))
+            (\q' _ => ntrans _ _ _
+                (nap ndouble _ _ (ih q'))
                 (ndouble_add (nat_of p') (nat_of q')))
             (\q' _ =>
                 let dp = ndouble (nat_of p') in let dq = ndouble (nat_of q') in
-                ntrans (nsucc (ndouble (nat_of (padd p' q')))) (nsucc (nadd dp dq)) (nadd dp (nsucc dq))
-                    (ntrans (ndouble (nat_of (padd p' q'))) (ndouble (nadd (nat_of p') (nat_of q'))) (nadd dp dq)
-                        (nap ndouble (nat_of (padd p' q')) (nadd (nat_of p') (nat_of q')) (ih q'))
+                ntrans _ (nsucc (nadd dp dq)) _
+                    (ntrans _ _ _
+                        (nap ndouble _ _ (ih q'))
                         (ndouble_add (nat_of p') (nat_of q')))
-                    (nsym (nadd dp (nsucc dq)) (nsucc (nadd dp dq)) (nadd_succ_r dp dq)))
+                    (nsym _ _ (nadd_succ_r dp dq)))
             q)
-        (\p' ih q => Pos.elim @ctx {.m = 0} (\q => nat_of (padd (bit1 p') q) ~ nadd (nat_of (bit1 p')) (nat_of q))
+        (\p' ih q => Pos.elim (\q => nat_of (padd (bit1 p') q) ~ nadd (nat_of (bit1 p')) (nat_of q))
             (let dp = ndouble (nat_of p') in
-                ntrans (ndouble (nat_of (psucc p'))) (nsucc (nsucc dp)) (nsucc (nadd dp (nsucc nzero)))
-                    (nap ndouble (nat_of (psucc p')) (nsucc (nat_of p')) (nat_of_succ p'))
-                    (nsym (nadd dp (nsucc nzero)) (nsucc dp) (nadd_one_r dp)))
-            (\q' _ => ntrans (ndouble (nat_of (padd p' q'))) (ndouble (nadd (nat_of p') (nat_of q'))) (nadd (ndouble (nat_of p')) (ndouble (nat_of q')))
-                (nap ndouble (nat_of (padd p' q')) (nadd (nat_of p') (nat_of q')) (ih q'))
+                ntrans _ _ _
+                    (nap ndouble _ _ (nat_of_succ p'))
+                    (nsym _ _ (nadd_one_r dp)))
+            (\q' _ => ntrans _ _ _
+                (nap ndouble _ _ (ih q'))
                 (ndouble_add (nat_of p') (nat_of q')))
             (\q' _ =>
                 let dp = ndouble (nat_of p') in let dq = ndouble (nat_of q') in
                 let x = padd p' q' in
-                ntrans (ndouble (nat_of (psucc x))) (nsucc (nsucc (ndouble (nat_of x)))) (nsucc (nadd dp (nsucc dq)))
-                    (nap ndouble (nat_of (psucc x)) (nsucc (nat_of x)) (nat_of_succ x))
-                    (ntrans (nsucc (ndouble (nat_of x))) (nsucc (nadd dp dq)) (nadd dp (nsucc dq))
-                        (ntrans (ndouble (nat_of x)) (ndouble (nadd (nat_of p') (nat_of q'))) (nadd dp dq)
-                            (nap ndouble (nat_of x) (nadd (nat_of p') (nat_of q')) (ih q'))
+                ntrans _ _ _
+                    (nap ndouble _ _ (nat_of_succ x))
+                    (ntrans (nsucc (ndouble (nat_of x))) (nsucc (nadd dp dq)) _
+                        (ntrans _ _ _
+                            (nap ndouble _ _ (ih q'))
                             (ndouble_add (nat_of p') (nat_of q')))
-                        (nsym (nadd dp (nsucc dq)) (nsucc (nadd dp dq)) (nadd_succ_r dp dq))))
+                        (nsym _ _ (nadd_succ_r dp dq))))
             q)
         p
 
 $ nat_of_mul : (p q: Pos) -> nat_of (pmul p q) ~ nmul (nat_of p) (nat_of q) =
-    \p q => Pos.elim @ctx {.m = 0} (\p => nat_of (pmul p q) ~ nmul (nat_of p) (nat_of q))
-        (nsym (nadd (nat_of q) nzero) (nat_of q) (nadd_zero_r (nat_of q)))
-        (\p' ih => ntrans (ndouble (nat_of (pmul p' q))) (ndouble (nmul (nat_of p') (nat_of q))) (nmul (ndouble (nat_of p')) (nat_of q))
-            (nap ndouble (nat_of (pmul p' q)) (nmul (nat_of p') (nat_of q)) ih)
-            (nsym (nmul (ndouble (nat_of p')) (nat_of q)) (ndouble (nmul (nat_of p') (nat_of q))) (nmul_double_l (nat_of p') (nat_of q))))
+    \p q => Pos.elim (\p => nat_of (pmul p q) ~ nmul (nat_of p) (nat_of q))
+        (nsym _ _ (nadd_zero_r (nat_of q)))
+        (\p' ih => ntrans _ _ _
+            (nap ndouble _ _ ih)
+            (nsym _ _ (nmul_double_l (nat_of p') (nat_of q))))
         (\p' ih =>
             let y = nat_of q in
-            ntrans (nat_of (padd q (bit0 (pmul p' q)))) (nadd y (ndouble (nat_of (pmul p' q)))) (nadd y (nmul (ndouble (nat_of p')) y))
+            ntrans _ _ _
                 (nat_of_add q (bit0 (pmul p' q)))
-                (nap (nadd y) (ndouble (nat_of (pmul p' q))) (nmul (ndouble (nat_of p')) y)
-                    (ntrans (ndouble (nat_of (pmul p' q))) (ndouble (nmul (nat_of p') y)) (nmul (ndouble (nat_of p')) y)
-                        (nap ndouble (nat_of (pmul p' q)) (nmul (nat_of p') y) ih)
-                        (nsym (nmul (ndouble (nat_of p')) y) (ndouble (nmul (nat_of p') y)) (nmul_double_l (nat_of p') y)))))
+                (nap (nadd y) _ _
+                    (ntrans _ _ _
+                        (nap ndouble _ _ ih)
+                        (nsym _ _ (nmul_double_l (nat_of p') y)))))
         p
 
 # ## Ring laws
 
 $ pmul_comm : (p q: Pos) -> pmul p q ~ pmul q p =
     \p q => nat_of_inj (pmul p q) (pmul q p)
-        (ntrans (nat_of (pmul p q)) (nmul (nat_of p) (nat_of q)) (nat_of (pmul q p))
+        (ntrans _ _ _
             (nat_of_mul p q)
-            (ntrans (nmul (nat_of p) (nat_of q)) (nmul (nat_of q) (nat_of p)) (nat_of (pmul q p))
+            (ntrans _ _ _
                 (nmul_comm (nat_of p) (nat_of q))
-                (nsym (nat_of (pmul q p)) (nmul (nat_of q) (nat_of p)) (nat_of_mul q p))))
+                (nsym _ _ (nat_of_mul q p))))
 
 $ pmul_assoc : (p q r: Pos) -> pmul (pmul p q) r ~ pmul p (pmul q r) =
     \p q r =>
         let x = nat_of p in let y = nat_of q in let z = nat_of r in
         let l = nat_of (pmul (pmul p q) r) in let rr = nat_of (pmul p (pmul q r)) in
         nat_of_inj (pmul (pmul p q) r) (pmul p (pmul q r))
-            (ntrans l (nmul (nat_of (pmul p q)) z) rr
+            (ntrans _ _ _
                 (nat_of_mul (pmul p q) r)
-                (ntrans (nmul (nat_of (pmul p q)) z) (nmul (nmul x y) z) rr
-                    (nap (\t => nmul t z) (nat_of (pmul p q)) (nmul x y) (nat_of_mul p q))
-                    (ntrans (nmul (nmul x y) z) (nmul x (nmul y z)) rr
+                (ntrans _ _ _
+                    (nap (\t => nmul t z) _ _ (nat_of_mul p q))
+                    (ntrans _ _ _
                         (nmul_assoc x y z)
-                        (ntrans (nmul x (nmul y z)) (nmul x (nat_of (pmul q r))) rr
-                            (nap (nmul x) (nmul y z) (nat_of (pmul q r)) (nsym (nat_of (pmul q r)) (nmul y z) (nat_of_mul q r)))
-                            (nsym rr (nmul x (nat_of (pmul q r))) (nat_of_mul p (pmul q r)))))))
+                        (ntrans _ _ _
+                            (nap (nmul x) _ _ (nsym _ _ (nat_of_mul q r)))
+                            (nsym _ _ (nat_of_mul p (pmul q r)))))))
 
 $ pmul_cancel : (a b p: Pos) -> pmul a p ~ pmul b p -> a ~ b =
     \a b p h =>
         let x = nat_of a in let y = nat_of b in let z = nat_of p in
         nat_of_inj a b (nmul_cancel_r z (nat_of_nonzero p) x y
-            (ntrans (nmul x z) (nat_of (pmul a p)) (nmul y z)
-                (nsym (nat_of (pmul a p)) (nmul x z) (nat_of_mul a p))
-                (ntrans (nat_of (pmul a p)) (nat_of (pmul b p)) (nmul y z)
+            (ntrans _ _ _
+                (nsym _ _ (nat_of_mul a p))
+                (ntrans _ _ _
                     (@transp (pmul a p) (\w => nat_of (pmul a p) ~ nat_of w) (@refl (nat_of (pmul a p))) (pmul b p) h)
                     (nat_of_mul b p))))
 
 $ mul_comm : (a b: Integer) -> imul a b ~ imul b a =
-    \a b => Integer.elim @ctx {.m = 0} (\a => imul a b ~ imul b a)
-        (Integer.elim @ctx {.m = 0} (\b => imul zero b ~ imul b zero) @tt (\_ => @tt) (\_ => @tt) b)
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (pos p) b ~ imul b (pos p))
+    \a b => Integer.elim (\a => imul a b ~ imul b a)
+        (Integer.elim (\b => imul zero b ~ imul b zero) @tt (\_ => @tt) (\_ => @tt) b)
+        (\p => Integer.elim (\b => imul (pos p) b ~ imul b (pos p))
             @tt (\q => pmul_comm p q) (\q => pmul_comm p q) b)
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (neg p) b ~ imul b (neg p))
+        (\p => Integer.elim (\b => imul (neg p) b ~ imul b (neg p))
             @tt (\q => pmul_comm p q) (\q => pmul_comm p q) b)
         a
 
 # Cases on the signs: a zero anywhere makes both sides zero, and otherwise
 # both sides have the same sign and `pmul_assoc` relates the magnitudes.
 $ mul_assoc : (a b c: Integer) -> imul (imul a b) c ~ imul a (imul b c) =
-    \a b c => Integer.elim @ctx {.m = 0} (\a => imul (imul a b) c ~ imul a (imul b c))
+    \a b c => Integer.elim (\a => imul (imul a b) c ~ imul a (imul b c))
         @tt
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (imul (pos p) b) c ~ imul (pos p) (imul b c))
+        (\p => Integer.elim (\b => imul (imul (pos p) b) c ~ imul (pos p) (imul b c))
             @tt
-            (\q => Integer.elim @ctx {.m = 0} (\c => imul (imul (pos p) (pos q)) c ~ imul (pos p) (imul (pos q) c))
+            (\q => Integer.elim (\c => imul (imul (pos p) (pos q)) c ~ imul (pos p) (imul (pos q) c))
                 @tt (\r => pmul_assoc p q r) (\r => pmul_assoc p q r) c)
-            (\q => Integer.elim @ctx {.m = 0} (\c => imul (imul (pos p) (neg q)) c ~ imul (pos p) (imul (neg q) c))
+            (\q => Integer.elim (\c => imul (imul (pos p) (neg q)) c ~ imul (pos p) (imul (neg q) c))
                 @tt (\r => pmul_assoc p q r) (\r => pmul_assoc p q r) c)
             b)
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (imul (neg p) b) c ~ imul (neg p) (imul b c))
+        (\p => Integer.elim (\b => imul (imul (neg p) b) c ~ imul (neg p) (imul b c))
             @tt
-            (\q => Integer.elim @ctx {.m = 0} (\c => imul (imul (neg p) (pos q)) c ~ imul (neg p) (imul (pos q) c))
+            (\q => Integer.elim (\c => imul (imul (neg p) (pos q)) c ~ imul (neg p) (imul (pos q) c))
                 @tt (\r => pmul_assoc p q r) (\r => pmul_assoc p q r) c)
-            (\q => Integer.elim @ctx {.m = 0} (\c => imul (imul (neg p) (neg q)) c ~ imul (neg p) (imul (neg q) c))
+            (\q => Integer.elim (\c => imul (imul (neg p) (neg q)) c ~ imul (neg p) (imul (neg q) c))
                 @tt (\r => pmul_assoc p q r) (\r => pmul_assoc p q r) c)
             b)
         a
@@ -397,29 +402,29 @@ $ mul_assoc : (a b c: Integer) -> imul (imul a b) c ~ imul a (imul b c) =
 # When `a` and `b` differ in sign, the hypothesis and the conclusion both
 # compute to `@Bottom`.
 $ mul_cancel : (a b: Integer) -> (p: Pos) -> imul a (pos p) ~ imul b (pos p) -> a ~ b =
-    \a b p => Integer.elim @ctx {.m = 0} (\a => imul a (pos p) ~ imul b (pos p) -> a ~ b)
-        (Integer.elim @ctx {.m = 0} (\b => imul zero (pos p) ~ imul b (pos p) -> zero ~ b)
+    \a b p => Integer.elim (\a => imul a (pos p) ~ imul b (pos p) -> a ~ b)
+        (Integer.elim (\b => imul zero (pos p) ~ imul b (pos p) -> zero ~ b)
             (\h => @tt) (\_ h => h) (\_ h => h) b)
-        (\a' => Integer.elim @ctx {.m = 0} (\b => imul (pos a') (pos p) ~ imul b (pos p) -> pos a' ~ b)
+        (\a' => Integer.elim (\b => imul (pos a') (pos p) ~ imul b (pos p) -> pos a' ~ b)
             (\h => h) (\b' h => pmul_cancel a' b' p h) (\_ h => h) b)
-        (\a' => Integer.elim @ctx {.m = 0} (\b => imul (neg a') (pos p) ~ imul b (pos p) -> neg a' ~ b)
+        (\a' => Integer.elim (\b => imul (neg a') (pos p) ~ imul b (pos p) -> neg a' ~ b)
             (\h => h) (\_ h => h) (\b' h => pmul_cancel a' b' p h) b)
         a
 
 # `(a b) c ~ (a c) b`.
 $ swap_right : (a b c: Integer) -> imul (imul a b) c ~ imul (imul a c) b =
-    \a b c => itrans (imul (imul a b) c) (imul a (imul b c)) (imul (imul a c) b)
+    \a b c => itrans _ _ _
         (mul_assoc a b c)
-        (itrans (imul a (imul b c)) (imul a (imul c b)) (imul (imul a c) b)
-            (iap (imul a) (imul b c) (imul c b) (mul_comm b c))
-            (isym (imul (imul a c) b) (imul a (imul c b)) (mul_assoc a c b)))
+        (itrans _ _ _
+            (iap (imul a) _ _ (mul_comm b c))
+            (isym _ _ (mul_assoc a c b)))
 
 # `(a b) (c d) ~ (a c) (b d)`.
 $ swap_middle : (a b c d: Integer) -> imul (imul a b) (imul c d) ~ imul (imul a c) (imul b d) =
-    \a b c d => itrans (imul (imul a b) (imul c d)) (imul (imul (imul a b) c) d) (imul (imul a c) (imul b d))
-        (isym (imul (imul (imul a b) c) d) (imul (imul a b) (imul c d)) (mul_assoc (imul a b) c d))
-        (itrans (imul (imul (imul a b) c) d) (imul (imul (imul a c) b) d) (imul (imul a c) (imul b d))
-            (iap (\t => imul t d) (imul (imul a b) c) (imul (imul a c) b) (swap_right a b c))
+    \a b c d => itrans _ _ _
+        (isym _ _ (mul_assoc (imul a b) c d))
+        (itrans _ _ _
+            (iap (\t => imul t d) _ _ (swap_right a b c))
             (mul_assoc (imul a c) b d))
 
 # ## Fractions and the relation
@@ -431,7 +436,7 @@ $ same : Frac -> Frac -> @Type 0 = \x y => imul x.1 (pos y.2) ~ imul y.1 (pos x.
 $ same_refl : (x: Frac) -> same x x = \x => @refl (imul x.1 (pos x.2))
 
 $ same_sym : (x y: Frac) -> same x y -> same y x =
-    \x y e => isym (imul x.1 (pos y.2)) (imul y.1 (pos x.2)) e
+    \x y e => isym _ _ e
 
 # From `a d ~ c b` and `c f ~ e d`: `(a f) d ~ (e b) d`, then cancel `d`.
 $ same_trans : (x y z: Frac) -> same x y -> same y z -> same x z =
@@ -440,14 +445,14 @@ $ same_trans : (x y z: Frac) -> same x y -> same y z -> same x z =
         let c = y.1 in let d = pos y.2 in
         let e = z.1 in let f = pos z.2 in
         mul_cancel (imul a f) (imul e b) y.2
-            (itrans (imul (imul a f) d) (imul (imul a d) f) (imul (imul e b) d)
+            (itrans _ _ _
                 (swap_right a f d)
-                (itrans (imul (imul a d) f) (imul (imul c b) f) (imul (imul e b) d)
-                    (iap (\t => imul t f) (imul a d) (imul c b) h1)
-                    (itrans (imul (imul c b) f) (imul (imul c f) b) (imul (imul e b) d)
+                (itrans _ _ _
+                    (iap (\t => imul t f) _ _ h1)
+                    (itrans _ _ _
                         (swap_right c b f)
-                        (itrans (imul (imul c f) b) (imul (imul e d) b) (imul (imul e b) d)
-                            (iap (\t => imul t b) (imul c f) (imul e d) h2)
+                        (itrans _ _ _
+                            (iap (\t => imul t b) _ _ h2)
                             (swap_right e d b)))))
 
 # ## Rationals
@@ -465,22 +470,22 @@ $ half_is_not_a_third : half ~ frac (pos one) three -> @Bottom = \e => e
 # Negation respects the relation because `(-a) d ~ -(a d)` holds by
 # computation on each sign of `a` and `d`.
 $ neg_mul : (a b: Integer) -> imul (ineg a) b ~ ineg (imul a b) =
-    \a b => Integer.elim @ctx {.m = 0} (\a => imul (ineg a) b ~ ineg (imul a b))
+    \a b => Integer.elim (\a => imul (ineg a) b ~ ineg (imul a b))
         @tt
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (neg p) b ~ ineg (imul (pos p) b))
+        (\p => Integer.elim (\b => imul (neg p) b ~ ineg (imul (pos p) b))
             @tt (\q => @refl (pmul p q)) (\q => @refl (pmul p q)) b)
-        (\p => Integer.elim @ctx {.m = 0} (\b => imul (pos p) b ~ ineg (imul (neg p) b))
+        (\p => Integer.elim (\b => imul (pos p) b ~ ineg (imul (neg p) b))
             @tt (\q => @refl (pmul p q)) (\q => @refl (pmul p q)) b)
         a
 
 $ qneg : Q -> Q =
     \q => @qelim (\_ => Q) (\x => @qin (ineg x.1, x.2))
         (\x y e =>
-            itrans (imul (ineg x.1) (pos y.2)) (ineg (imul x.1 (pos y.2))) (imul (ineg y.1) (pos x.2))
+            itrans _ _ _
                 (neg_mul x.1 (pos y.2))
-                (itrans (ineg (imul x.1 (pos y.2))) (ineg (imul y.1 (pos x.2))) (imul (ineg y.1) (pos x.2))
-                    (iap ineg (imul x.1 (pos y.2)) (imul y.1 (pos x.2)) e)
-                    (isym (imul (ineg y.1) (pos x.2)) (ineg (imul y.1 (pos x.2))) (neg_mul y.1 (pos x.2)))))
+                (itrans _ _ _
+                    (iap ineg _ _ e)
+                    (isym _ _ (neg_mul y.1 (pos x.2)))))
         q
 
 $ neg_half : qneg half ~ frac (neg one) (bit0 one) = @tt
@@ -489,13 +494,13 @@ $ neg_half : qneg half ~ frac (neg one) (bit0 one) = @tt
 # `a d ~ c b` with `b`, `d` positive, then `a` and `c` are both zero or both
 # not.
 $ zero_iff : (p q: Pos) -> (a c: Integer) -> imul a (pos p) ~ imul c (pos q) -> is_zero a ~ is_zero c =
-    \p q a => Integer.elim @ctx {.m = 0}
+    \p q a => Integer.elim
         (\a => (c: Integer) -> imul a (pos p) ~ imul c (pos q) -> is_zero a ~ is_zero c)
-        (\c => Integer.elim @ctx {.m = 0} (\c => imul zero (pos p) ~ imul c (pos q) -> is_zero zero ~ is_zero c)
+        (\c => Integer.elim (\c => imul zero (pos p) ~ imul c (pos q) -> is_zero zero ~ is_zero c)
             (\h => @tt) (\c' h => h) (\c' h => h) c)
-        (\a' c => Integer.elim @ctx {.m = 0} (\c => imul (pos a') (pos p) ~ imul c (pos q) -> is_zero (pos a') ~ is_zero c)
+        (\a' c => Integer.elim (\c => imul (pos a') (pos p) ~ imul c (pos q) -> is_zero (pos a') ~ is_zero c)
             (\h => h) (\c' h => @tt) (\c' h => @tt) c)
-        (\a' c => Integer.elim @ctx {.m = 0} (\c => imul (neg a') (pos p) ~ imul c (pos q) -> is_zero (neg a') ~ is_zero c)
+        (\a' c => Integer.elim (\c => imul (neg a') (pos p) ~ imul c (pos q) -> is_zero (neg a') ~ is_zero c)
             (\h => h) (\c' h => @tt) (\c' h => @tt) c)
         a
 
@@ -515,11 +520,11 @@ $ qmul_right : Frac -> Q -> Q =
     \x q => @qelim (\_ => Q) (\y => @qin (fmul x y))
         (\y y' e =>
             let a = x.1 in let b = pos x.2 in
-            itrans (imul (imul a y.1) (imul b (pos y'.2))) (imul (imul a b) (imul y.1 (pos y'.2))) (imul (imul a y'.1) (imul b (pos y.2)))
+            itrans _ _ _
                 (swap_middle a y.1 b (pos y'.2))
-                (itrans (imul (imul a b) (imul y.1 (pos y'.2))) (imul (imul a b) (imul y'.1 (pos y.2))) (imul (imul a y'.1) (imul b (pos y.2)))
-                    (iap (imul (imul a b)) (imul y.1 (pos y'.2)) (imul y'.1 (pos y.2)) e)
-                    (isym (imul (imul a y'.1) (imul b (pos y.2))) (imul (imul a b) (imul y'.1 (pos y.2))) (swap_middle a y'.1 b (pos y.2)))))
+                (itrans _ _ _
+                    (iap (imul (imul a b)) _ _ e)
+                    (isym _ _ (swap_middle a y'.1 b (pos y.2)))))
         q
 
 $ qmul : Q -> Q -> Q =
@@ -527,11 +532,11 @@ $ qmul : Q -> Q -> Q =
         (\x x' h q => @qelim (\q => qmul_right x q ~ qmul_right x' q)
             (\y =>
                 let c = y.1 in let d = pos y.2 in
-                itrans (imul (imul x.1 c) (imul (pos x'.2) d)) (imul (imul x.1 (pos x'.2)) (imul c d)) (imul (imul x'.1 c) (imul (pos x.2) d))
+                itrans _ _ _
                     (swap_middle x.1 c (pos x'.2) d)
-                    (itrans (imul (imul x.1 (pos x'.2)) (imul c d)) (imul (imul x'.1 (pos x.2)) (imul c d)) (imul (imul x'.1 c) (imul (pos x.2) d))
-                        (iap (\t => imul t (imul c d)) (imul x.1 (pos x'.2)) (imul x'.1 (pos x.2)) h)
-                        (isym (imul (imul x'.1 c) (imul (pos x.2) d)) (imul (imul x'.1 (pos x.2)) (imul c d)) (swap_middle x'.1 c (pos x.2) d))))
+                    (itrans _ _ _
+                        (iap (\t => imul t (imul c d)) _ _ h)
+                        (isym _ _ (swap_middle x'.1 c (pos x.2) d))))
             (\y y' e => @tt)
             q)
         p

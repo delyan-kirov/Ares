@@ -127,6 +127,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Level comparison by case split | nanoda-level | level.rs:158-173, leq_imax_by_cases, the same split on a parameter being zero or not; soundness is Lean Level comparison soundness | published-uncovered | #479 | yes |
 | Recursor generation | Dyb94 | not checked: not vendored | published-uncovered | - | yes |
 | Transitive axioms | - | - | conjecture | #480 | yes |
+| Local argument synthesis | PTu00 | not checked: not vendored | published-uncovered | - | yes |
 
 Glued evaluation changes no rule. Unfolding a definition is its definitional
 equation, done later than before, and two applications of one definition to
@@ -141,6 +142,12 @@ syntactic check, sound but incomplete. nanoda_lib, an independent Lean kernel
 in Rust, does split (`nanoda/level.rs:158-173`), which is the kernel's
 algorithm; neither has a proof. Its soundness is proved in Lean
 (`consistency-proof/Proofs/Levels.lean`); completeness is open (#479).
+Local argument synthesis fills in an argument written `_` and a level left
+out of a kernel script (#470) by first-order matching against the expected
+type and the types of the other arguments, as Pierce and Turner synthesise
+type arguments. It changes no rule: the application is then checked again
+with the solutions, each solution by the re-checker and each argument by
+conversion, so a wrong guess can only reject a script.
 Transitive axioms is graph reachability over the globals each global's type
 and body name, proofs included; it is a conjecture only in that nothing proves
 those edges complete.

@@ -61,6 +61,24 @@ pub fn recheck(sig: &Signature) -> std::result::Result<(), RecheckError> {
     Ok(())
 }
 
+/// Check `t` against `expected` in a context the elaborator built, with every
+/// global of `sig` in scope: the elaborator's guesses (the solution of a `_`)
+/// pass the re-checker's rules, not its own.
+pub(crate) fn check_in(sig: &Signature, scope: (&[Name], &[Val], &Env), level_names: &[Name], t: &Term, expected: &Val) -> Result<()> {
+    let checker = Rechecker {
+        sig,
+        current: sig.len() as GlobalId,
+    };
+    let (names, types, env) = scope;
+    let mut ctx = Context {
+        names: names.to_vec(),
+        types: types.to_vec(),
+        env: env.clone(),
+        level_names: level_names.to_vec(),
+    };
+    checker.check(&mut ctx, t, expected)
+}
+
 struct Rechecker<'s> {
     sig: &'s Signature,
     /// The global being re-checked: it may name only the globals before it.

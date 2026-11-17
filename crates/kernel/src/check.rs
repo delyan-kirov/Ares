@@ -635,6 +635,7 @@ impl Checker<'_> {
                 ctx.env = env;
                 Ok(Term::Let(name.clone(), Rc::new(ty), Rc::new(val), Rc::new(body?)))
             }
+            _ if self.is_open_spine(ctx, raw) => Ok(self.spine(ctx, raw, Some(expected))?.0),
             _ => {
                 let (t, found) = self.infer(ctx, raw)?;
                 if self.conversion(ctx).conv_type(&found, expected) {
@@ -647,7 +648,15 @@ impl Checker<'_> {
     }
 
     fn infer(&self, ctx: &mut Context, raw: &Raw) -> Result<(Term, Val)> {
+        if self.is_open_spine(ctx, raw) {
+            return self.spine(ctx, raw, None);
+        }
         match &raw.kind {
+            RawKind::Hole => Err(self.error(
+                Code::TypeAnnotationRequired,
+                raw.span,
+                "cannot infer this `_`: it stands only for an argument of an application whose type fixes it",
+            )),
             RawKind::Var(name, level_args) => self.infer_var(ctx, raw.span, name, level_args),
             // Rule [Univ]
             RawKind::Sort(l) => {
@@ -992,6 +1001,17 @@ impl Checker<'_> {
             }
             return Err(err);
         };
+        // A global with a level left out is an open spine, which infers it.
+        let levels = self.level_args(ctx, name, id, level_args)?;
+        // Rule [Level-Polymorphism]
+        let levels: Rc<[Level]> = levels.into_iter().map(|l| l.expect("every level is given")).collect();
+        let ty = global_type(&self.sig, id, levels.clone());
+        Ok((Term::Global(id, levels), ty))
+    }
+
+    /// The levels `@ctx {.u = l}` gives global `id`, by parameter, `None`
+    /// where left out.
+    fn level_args(&self, ctx: &Context, name: &str, id: GlobalId, level_args: &[LevelArg]) -> Result<Vec<Option<Level>>> {
         let params = &self.sig.global(id).level_params;
         let mut levels: Vec<Option<Level>> = vec![None; params.len()];
         for arg in level_args {
@@ -1003,17 +1023,7 @@ impl Checker<'_> {
             }
             levels[i] = Some(self.level(ctx, &arg.level)?);
         }
-        if let Some(i) = levels.iter().position(Option::is_none) {
-            return Err(self.error(
-                Code::TypeAnnotationRequired,
-                span,
-                format!("`{name}` needs its level `{}`: write `{name} @ctx {{.{} = ...}}`", params[i], params[i]),
-            ));
-        }
-        // Rule [Level-Polymorphism]
-        let levels: Rc<[Level]> = levels.into_iter().map(Option::unwrap).collect();
-        let ty = global_type(&self.sig, id, levels.clone());
-        Ok((Term::Global(id, levels), ty))
+        Ok(levels)
     }
 
     fn level(&self, ctx: &Context, raw: &RawLevel) -> Result<Level> {
@@ -1046,6 +1056,8 @@ impl Checker<'_> {
 // data, as the second component of a pair or a field of a constructor; there
 // it is `{}`, as for a Box type.
 // See Rule [Eq-Box].
+
+mod spine;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -117,7 +117,7 @@ fn universes_are_not_cumulative() {
 
 #[test]
 fn levels_must_be_given_and_bound() {
-    reject("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ f : @Type 1 = id\n", "needs its level `u`");
+    reject("$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\t x => x\n$ f : @Type 1 = id\n", "cannot infer level `u` of `id`");
     reject("$ A : @Type v\n", "unknown level `v`");
 }
 
@@ -393,4 +393,54 @@ fn indexed_families_are_restricted() {
         "may depend on the parameters, not on earlier indices",
     );
     reject("$ V : (p: @Top) -> @Type 1 = @data | mk : V @tt\n", "must be data");
+}
+
+const EQUALITY: &str = r"
+$ trans : (x y z: Nat) -> x ~ y -> y ~ z -> x ~ z = \x y z e f => @transp y (\w => x ~ w) e z f
+$ sym : (x y: Nat) -> x ~ y -> y ~ x = \x y e => @transp x (\w => w ~ x) (@refl x) y e
+$ a : Nat
+$ b : Nat
+$ c : Nat
+$ ab : a ~ b
+$ bc : b ~ c
+";
+
+#[test]
+fn holes_are_solved_from_the_expected_type_and_the_arguments() {
+    // `x` and `z` from the expected type, `y` from `ab`.
+    accept(&format!("{NAT}{EQUALITY}$ ac : a ~ c = trans _ _ _ ab bc\n"));
+    // With no expected type, from the arguments alone.
+    accept(&format!("{NAT}{EQUALITY}$ ca : c ~ a = sym _ _ (trans _ _ _ ab bc)\n"));
+    // The solutions are in the elaborated term, which re-checks.
+    let sig = accept(&format!("{NAT}{EQUALITY}$ ba : b ~ a = sym _ _ ab\n"));
+    crate::recheck(&sig).unwrap();
+}
+
+#[test]
+fn a_motive_level_left_out_is_inferred() {
+    let sig = accept(&format!(
+        "{NAT}$ double : Nat -> Nat = \\n => Nat.elim (\\_ => Nat) zero (\\_ r => succ (succ r)) n
+$ add_zero : (n: Nat) -> add n zero ~ n = \\n => Nat.elim (\\n => add n zero ~ n) @tt (\\_ ih => ih) n
+"
+    ));
+    assert_eq!(normal_form(&sig, "double").unwrap(), r"\n => Nat.elim @ctx {.m = 1} (\_ => Nat) zero (\_ => \r => succ (succ r)) n");
+}
+
+#[test]
+fn holes_that_nothing_fixes_are_rejected() {
+    reject(&format!("{NAT}{EQUALITY}$ f : (x: Nat) -> a ~ x -> a ~ x = \\x e => trans _ _ _ e (@refl _)\n"), "cannot infer this `_`");
+    reject(&format!("{NAT}{EQUALITY}$ t : Nat -> Nat -> @Type 0 = \\x y => trans x _ y\n"), "cannot infer this argument");
+    reject(&format!("{NAT}$ n : @Type 1 = Nat.elim\n"), "cannot infer level `m` of `Nat.elim`");
+    reject(&format!("{NAT}$ n : Nat = _\n"), "cannot infer this `_`");
+}
+
+#[test]
+fn a_wrong_proof_is_rejected_with_holes_as_without() {
+    reject(&format!("{NAT}{EQUALITY}$ ac : a ~ c = trans _ _ _ bc ab\n"), "TYPE_MISMATCH");
+    reject(&format!("{NAT}{EQUALITY}$ ac : a ~ b = trans _ _ _ ab bc\n"), "TYPE_MISMATCH");
+}
+
+#[test]
+fn a_level_left_out_of_a_declaration_is_inferred() {
+    accept("$ List : @ctx {u: @l} -> (a: @Type (u + 1)) -> @Type (u + 1) = @data | nil | cons (h: a) (t: List a)\n");
 }
