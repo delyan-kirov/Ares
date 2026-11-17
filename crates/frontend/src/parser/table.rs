@@ -19,6 +19,10 @@ const fn bp(left: u8, right: u8) -> Bp {
     Bp { left, right }
 }
 
+/// The function arrow `A -> B`: types are expressions (#406), and the arrow is
+/// the loosest binary form, right-associative.
+pub const ARROW: Bp = bp(1, 1);
+
 /// Application by juxtaposition, the tightest binary form.
 pub const APP: Bp = bp(50, 51);
 

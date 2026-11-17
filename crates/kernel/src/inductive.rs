@@ -5,7 +5,7 @@
 //! constructors whose fields may mention the parameters, earlier fields, and
 //! `D params ys` itself as the result of a field's type,
 //! `(a: A) -> D params ys` (strict positivity without nested occurrences).
-//! A constructor of an indexed family states its result, `: D params ys`.
+//! A constructor of an indexed family states its result, `Tag: {fields} -> D params ys`.
 //! Indexed families are not primitive: they are stored forded.
 //! See Note [Indexed families are forded].
 //!
@@ -13,14 +13,14 @@
 //! Lean's argument order:
 //!
 //! ```text
-//! D.elim : @ctx {..., m: @l} -> (params) -> (P: D params -> @Type m)
-//!        -> (method for each constructor) -> (x: D params) -> P x
+//! D.elim : @ctx {..., m: @l} -> (params) -> (motive: D params -> @Type m)
+//!        -> (method for each constructor) -> (x: D params) -> motive x
 //! ```
 //!
-//! where the method for `c (f1: A1) ... (fn: An)` takes the fields, then one
-//! induction hypothesis for each recursive field, and returns
-//! `P (c params f1 ... fn)`. The hypothesis for `fi: (a: B) -> D params ys`
-//! is `(a: B) -> P ys (fi a)`, which for a whole field is `P ys fi`. Iota
+//! where the method for `Tag: {f1: A1, ..., fn: An}` takes the fields, then
+//! one induction hypothesis for each recursive field, and returns
+//! `motive D.Tag.{ f1, ..., fn }`. The hypothesis for `fi: (a: B) -> D params ys`
+//! is `(a: B) -> motive ys (fi a)`, which for a whole field is `motive ys fi`. Iota
 //! reduction applies the method of a constructor value to its fields and to
 //! the recursor's results on the recursive ones.
 //!
@@ -228,8 +228,8 @@ pub fn projection_type(decl: &DataDecl, levels: usize, index: usize, field: usiz
 /// parameters, and the motive's sort is parameter `levels`.
 ///
 /// ```text
-/// (params) -> (P: (indices) -> D params indices -> @Type m) -> (methods)
-///   -> (indices) -> (x: D params indices) -> P indices x
+/// (params) -> (motive: (indices) -> D params indices -> @Type m) -> (methods)
+///   -> (indices) -> (x: D params indices) -> motive indices x
 /// ```
 pub fn recursor_type(decl: &DataDecl, levels: usize) -> Term {
     let u = decl.uniform as u32;
@@ -240,11 +240,11 @@ pub fn recursor_type(decl: &DataDecl, levels: usize) -> Term {
     // type prints unambiguously.
     let mut x: Name = "x".into();
     while decl.params.iter().any(|p| p.name == x) {
-        x = format!("{x}'").into();
+        x = format!("{x}2").into();
     }
     let indices = &decl.params[decl.uniform..];
 
-    // `(indices) -> (x: D params indices) -> P indices x`, under the
+    // `(indices) -> (x: D params indices) -> motive indices x`, under the
     // parameters, the motive and the methods.
     let outside = 1 + k;
     let base = u + outside;
@@ -275,13 +275,13 @@ pub fn recursor_type(decl: &DataDecl, levels: usize) -> Term {
     let motive_target = pi(&x, data_applied(decl, levels, u + ni), decl.level.clone(), Term::Sort(m.clone()), m.succ());
     let (motive_ty, motive_level) = pis(&telescope(indices), motive_target, Level::imax(&decl.level, &m.succ()));
     let sort = Level::imax(&motive_level, &rest.1);
-    let with_motive = (pi(&"P".into(), motive_ty, motive_level, rest.0, rest.1), sort);
+    let with_motive = (pi(&"motive".into(), motive_ty, motive_level, rest.0, rest.1), sort);
     pis(&telescope(&decl.params[..decl.uniform]), with_motive.0, with_motive.1).0
 }
 
 /// The method for constructor `index`, in the context of the parameters,
 /// the motive and the methods before it:
-/// `(fields) -> (P ys f for each recursive field f: D params ys) -> P indices (c params fields)`.
+/// `(fields) -> (motive ys f for each recursive field f: D params ys) -> motive indices D.Tag.{ fields }`.
 fn method_type(decl: &DataDecl, levels: usize, index: usize, m: &Level) -> (Term, Level) {
     let ctor = &decl.constructors[index];
     let u = decl.uniform as u32;
@@ -428,7 +428,7 @@ pub fn canonical(sig: &Signature, data: DataId, index: usize, levels: Rc<[Level]
 pub fn recursor_value(sig: &Signature, data: DataId, levels: Rc<[Level]>) -> Val {
     let decl = sig.data(data);
     let mut names: Vec<Name> = decl.params[..decl.uniform].iter().map(|p| p.name.clone()).collect();
-    names.push("P".into());
+    names.push("motive".into());
     names.extend(decl.constructors.iter().map(|c| Name::from(format!("case_{}", c.name))));
     names.extend(decl.params[decl.uniform..].iter().map(|p| p.name.clone()));
     names.push("x".into());
@@ -526,15 +526,15 @@ pub fn data_level(sig: &Signature, d: &DataVal) -> Level {
 // Tabareau, TOPLAS 2025, Section 4.2): its indices become parameters that
 // the constructors do not fix, and each constructor gets one more field per
 // index, the equality of the index its result states with the actual one.
-// `cons (m: Nat) (h: a) (t: Vec a m) : Vec a (succ m)` is stored as
-// `cons (m: Nat) (h: a) (t: Vec a m) (n_eq: succ m ~ n)` of `Vec a n`.
+// `Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }` is stored as
+// `Cons: {m: Nat, h: a, t: Vec a m, n_eq: Nat.Succ.{ m } ~ n}` of `Vec a n`.
 //
 // The user sees the family as written. The constructor global takes the
 // fields as written and fills in the index its result states, with the
 // irrelevant witness for the equality (`canonical`). The recursor has the
 // indexed motive `(indices) -> D params indices -> @Type m`, and its method
-// for a constructor returns `P ys (c params fields)` at the constructor's own
-// indices `ys`; iota casts that to `P xs v` at the value's indices `xs`.
+// for a constructor returns `motive ys D.Tag.{ fields }` at the constructor's
+// own indices `ys`; iota casts that to `motive xs v` at the value's indices `xs`.
 // For a canonical value the two types are convertible, so Cast-Refl makes
 // the cast invisible, which is why CIC^obs needs Cast-Refl in conversion
 // before fording computes. A value cast to indices that are only

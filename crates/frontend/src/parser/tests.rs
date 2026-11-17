@@ -25,10 +25,11 @@ fn value_and_function_names_must_be_lowercase() {
         Err(e) => e.to_string(),
         Ok(_) => panic!("expected a parse error for {src:?}"),
     };
-    // A capitalized value or function name is a type/constructor spelling, rejected.
-    assert!(err("$ @mod M\n$ Foo : @Int = 3").contains("lowercase letter"));
+    // A capitalized name without a signature is a type/constructor spelling,
+    // rejected. With one it defines a type as a term (#406): it parses, and
+    // the checker rejects it until it takes types as terms.
     assert!(err("$ @mod M\n$ Bar = 3").contains("lowercase letter"));
-    assert!(err("$ @mod M\n$ GetRandomValue : @Int -> @Int = \\x => x").contains("lowercase letter"));
+    assert!(parse("$ @mod M\n$ Foo : @Int = 3").is_ok());
     // Lowercase values/functions parse; capitalized names stay for type decls.
     assert!(parse("$ @mod M\n$ foo : @Int = 3").is_ok());
     assert!(parse("$ @mod M\n$ Point : @struct = a: @Int,").is_ok());
@@ -217,7 +218,6 @@ fn tensor_of_tensor_nests() {
 #[test]
 fn removed_and_ambiguous_type_forms_are_rejected() {
     for bad in [
-        "$ v : [3] @Int = [1, 2, 3]",            // the old `[n]T`
         "$ v : List @Tensor 3 @Int = []",        // `@Tensor` is only a head
         "$ v : @Tensor (@co 2) @Int = [1, 2]",   // axis variance is gone (#366)
         "$ v : @Vec &f @Int = []",               // a splice is never an argument
@@ -981,4 +981,44 @@ fn a_ctx_parameter_fixes_to_a_named_use_field() {
     assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d0: IEq t, d1: IOrd t} -> ...`")), "{help:?}");
     let help = fixed(&format!("{m}$ eq : @ctx IEq t -> t -> @Bool = eq_impl\n"));
     assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d: IEq t} -> ...`")), "{help:?}");
+}
+
+#[test]
+fn types_are_expressions() {
+    // A type position reads an expression (#406): a named parameter the
+    // result mentions, a level binder, and `~`, which no `Ty` spells.
+    let p = prog("$ @mod M\n$ refl : @ctx {u: @l} -> (t: @Type u) -> (x: t) -> x ~ x = @axiom");
+    let Item::Def { sig: Some(sig), .. } = &p.ast.slice(p.program.items)[0] else { panic!("expected a def") };
+    let levels = p.ast.level_params.get(*sig).expect("level parameters");
+    assert_eq!(p.ast.slice(*levels).iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["u"]);
+    let Ty::Arrow { binder: Some(t), to, .. } = p.ast.ty(*sig) else { panic!("expected `(t: ..) ->`") };
+    assert_eq!(t.as_str(), "t");
+    let Ty::Arrow { binder: Some(x), to, .. } = p.ast.ty(*to) else { panic!("expected `(x: t) ->`") };
+    assert_eq!(x.as_str(), "x");
+    let Ty::Term(eq) = p.ast.ty(*to) else { panic!("expected a term") };
+    assert!(matches!(p.ast.expr(*eq), Expr::BinOp { op, .. } if op.as_str() == "~"));
+    // A function type stands in a term, and level arguments in a call.
+    let p = prog("$ @mod M\n$ f = \\x => g @ctx {.u = 1} (x -> x)");
+    let Expr::Lambda { body, .. } = p.ast.expr(only_def_body(&p)) else { panic!("expected a lambda") };
+    let Expr::App(head, arrow) = p.ast.expr(*body) else { panic!("expected an application") };
+    assert!(matches!(p.ast.expr(*arrow), Expr::Type(_)));
+    let Expr::App(_, levels) = p.ast.expr(*head) else { panic!("expected an application") };
+    assert!(matches!(p.ast.expr(*levels), Expr::CtxArg(_)));
+}
+
+#[test]
+fn a_union_may_state_its_signature_and_results() {
+    let p = prog(
+        "$ @mod M\n$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, \
+         Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }",
+    );
+    let Item::Union { sig: Some(_), variants, .. } = &p.ast.slice(p.program.items)[0] else {
+        panic!("expected a union with a signature")
+    };
+    let variants = p.ast.slice(*variants);
+    assert_eq!(variants.len(), 2);
+    assert!(variants.iter().all(|v| v.result.is_some()));
+    // A capitalized name with a signature defines a type as a term.
+    let p = prog("$ @mod M\n$ Frac : @Type 1 = {Integer, Pos}");
+    assert!(matches!(&p.ast.slice(p.program.items)[0], Item::Def { .. }));
 }

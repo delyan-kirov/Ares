@@ -62,6 +62,7 @@ impl<'a> Checker<'a> {
 
 impl<'a> Checker<'a> {
     pub(super) fn register_types(&mut self, program: &Program) -> Result<()> {
+        self.reject_dependent_defs(program)?;
         for item in self.ast.slice(program.items).iter() {
             match item {
                 Item::Struct {
@@ -125,10 +126,16 @@ impl<'a> Checker<'a> {
                 }
                 Item::Union {
                     name,
+                    sig,
                     params,
                     splices,
                     variants,
                 } => {
+                    let stated = self.ast.slice(*variants).iter().find_map(|v| v.result);
+                    if let Some(at) = sig.or(stated) {
+                        let what = if sig.is_some() { "a union with a signature" } else { "a constructor with a stated result" };
+                        return Err(dependent_only(self.ast.ty_span(at), what));
+                    }
                     let (params, splices, variants) = (
                         self.ast.slice(*params),
                         self.ast.slice(*splices),
@@ -178,6 +185,29 @@ impl<'a> Checker<'a> {
         }
         self.check_alias_cycles()?;
         self.compute_lazy_slots();
+        Ok(())
+    }
+
+    /// A definition only the kernel reads yet (#406): a capitalized one, which
+    /// defines a type as a term, or one whose signature binds levels.
+    fn reject_dependent_defs(&self, program: &Program) -> Result<()> {
+        let items = self.ast.slice(program.items);
+        let spans = self.ast.slice(program.spans);
+        for (item, at) in items.iter().zip(spans) {
+            let Item::Def { name, sig, .. } = item else { continue };
+            let span = at.name.unwrap_or(at.full);
+            if name.as_str().starts_with(|c: char| c.is_ascii_uppercase()) {
+                return Err(diag!(
+                    Code::UnexpectedToken, span, 0,
+                    "a value or function name must start with a lowercase letter (a capitalized name is a type or constructor)";
+                    note: "a type defined as a term needs dependent types, which only the kernel checks so far (#406)"
+                ));
+            }
+            if let Some(levels) = sig.and_then(|s| self.ast.level_params.get(s)) {
+                let span = self.ast.slice(*levels).first().map_or(span, |l| l.span);
+                return Err(dependent_only(Some(span), "a level parameter"));
+            }
+        }
         Ok(())
     }
 
@@ -790,7 +820,7 @@ pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
         }
         // A `&X` type splice contributes no type variables: its type is unknown
         // until the driver expands it, after which this node no longer exists.
-        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) => {}
+        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
     }
 }
 
@@ -823,7 +853,7 @@ pub(super) fn collect_tycons(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
         Ty::Record { fields, .. } => {
             ast.slice(*fields).iter().for_each(|f| collect_tycons(ast, f.ty, out))
         }
-        Ty::Arrow { .. } | Ty::Var(_) | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) => {}
+        Ty::Arrow { .. } | Ty::Var(_) | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
     }
 }
 

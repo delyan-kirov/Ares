@@ -1129,6 +1129,8 @@ impl<'a> Checker<'a> {
                 Code::TypeMismatch, self.ast.expr_span(e).unwrap_or(Span::at(0)), 0,
                 "a `@use {{...}}` argument stands only among a call's arguments"
             )),
+            Expr::CtxArg(_) => Err(dependent_only(self.ast.expr_span(e), "a level argument `@ctx {.u = l}`")),
+            Expr::Type(_) => Err(dependent_only(self.ast.expr_span(e), "a type in term position")),
         }
     }
 
@@ -2552,7 +2554,7 @@ pub(super) fn sig_var_sites(
             sig_var_sites(ast, *size, span, out, tails);
             sig_var_sites(ast, *elem, span, out, tails);
         }
-        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) => {}
+        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
     }
 }
 
@@ -2591,6 +2593,16 @@ pub(super) fn variant_field_ty(payload: &VariantPayload, name: Option<StrId>, in
             .map(|(_, t)| *t),
         None => payload.get(index).map(|(_, t)| *t),
     }
+}
+
+/// A dependent form (#406) the parser reads and only the kernel checks so far:
+/// the elaborator takes types as terms in step 3.
+pub(super) fn dependent_only(span: Option<Span>, what: &str) -> Diagnostic {
+    diag!(
+        Code::Unsupported, span.unwrap_or(Span::at(0)), 0,
+        "{what} needs dependent types, which only the kernel checks so far";
+        note: "the checker takes types as terms with the elaborator of #406"
+    )
 }
 
 pub(super) fn unbound(name: impl Display) -> Diagnostic {

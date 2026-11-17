@@ -51,4 +51,4 @@ case-split comparison is proved sound there; its completeness is still #479.
 Update (2026-11-11): cumulativity is removed (#475). A synthesised type
 fits an expected one only when the two are convertible, and equality between
 two type formers is `@Bottom` when the levels of corresponding components
-differ. No explicit lift was needed: `rationals.ott` checks unchanged.
+differ. No explicit lift was needed: `RATIONALS.ares` checks unchanged.

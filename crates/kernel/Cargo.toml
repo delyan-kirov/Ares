@@ -9,3 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 utilities = { path = "../utilities" }
+frontend = { path = "../frontend" }

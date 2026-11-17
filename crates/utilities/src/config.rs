@@ -45,6 +45,10 @@ pub const KEYS: &[Key] = &[
           doc: "Spaces per indentation level." },
     Key { section: "check", name: "max_errors", kind: Kind::Int { min: 1, max: 10_000 }, default: "20",
           doc: "The most errors `ares check` prints." },
+    Key { section: "check", name: "checker", kind: Kind::Choice(&["frontend", "kernel"]), default: "frontend",
+          doc: "What checks a module. `frontend`: the compiler's checker. `kernel`: the observational \
+                kernel (#406), for modules in the dependent language that only it reads so far; \
+                they are checked, not compiled." },
     Key { section: "lsp", name: "check", kind: Kind::Choice(&["type", "save"]), default: "type",
           doc: "When the editor checks: as you type (`type`), or only when a file is saved (`save`). \
                 Compile-time code (`&` splices) always runs on save only." },

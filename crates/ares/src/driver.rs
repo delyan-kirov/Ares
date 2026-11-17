@@ -2250,7 +2250,49 @@ fn is_stdlib_module(name: &str) -> bool {
     stdlib::source(name).is_some()
 }
 
+/// Whether the project around `path` has the kernel check its modules
+/// (`check.checker` is `kernel`).
+pub fn kernel_checked(path: &Path) -> bool {
+    project_options(path.parent().unwrap_or(Path::new(""))).word("check", "checker") == "kernel"
+}
+
+/// Check `src` with the kernel, then check the signature it elaborated again
+/// from its terms alone.
+pub fn kernel_check(src: &str) -> Result<kernel::Signature, utilities::Diagnostic> {
+    let sig = kernel::check_script(src)?;
+    kernel::recheck(&sig).map_err(|e| {
+        utilities::Diagnostic::error(utilities::Code::TypeMismatch, utilities::Span::at(0), 0, format!("the kernel's own re-check fails: {e}"))
+    })?;
+    Ok(sig)
+}
+
+/// `ares check` on a kernel module: every global with its type.
+fn cmd_check_kernel(path: &str) -> ExitCode {
+    let src = match std::fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(e) => {
+            eprintln!("ares: cannot read {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match kernel_check(&src) {
+        Ok(sig) => {
+            for name in sig.names() {
+                println!("{name} : {}", kernel::type_of(&sig, name).expect("a declared name"));
+            }
+            ExitCode::SUCCESS
+        }
+        Err(d) => {
+            eprint!("{}", d.render(&src, path));
+            ExitCode::FAILURE
+        }
+    }
+}
+
 pub fn cmd_check(path: &str) -> ExitCode {
+    if kernel_checked(Path::new(path)) {
+        return cmd_check_kernel(path);
+    }
     start_progress(1);
     // Expanding first means the printed types are the ones the program really has
     // (a `&`-injected definition included), and that every `$ &` directive has

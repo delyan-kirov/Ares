@@ -183,16 +183,18 @@ impl Checker<'_> {
         }
         let recursor_name: Name = format!("{}.elim", item.name).into();
         let mut taken = vec![item.name.clone(), recursor_name.clone()];
+        // Constructor `Tag` of `D` is the global `D.Tag`.
+        let ctor_name = |c: &RawConstructor| -> Name { format!("{}.{}", item.name, c.name).into() };
         for c in ctors {
-            self.fresh_global(&c.name, c.span, &taken)?;
-            taken.push(c.name.clone());
+            self.fresh_global(&ctor_name(c), c.span, &taken)?;
+            taken.push(ctor_name(c));
         }
-        // `D.eq.c.f` for field `f` of constructor `c`, or `D.eq.c.argN` for the
-        // unnamed `N`th field.
+        // `D.eq_Tag_f` for field `f` of constructor `Tag`, or `D.eq_Tag_argN`
+        // for the unnamed `N`th field.
         let projection_name = |c: &RawConstructor, j: usize| -> Name {
             match &*c.fields[j].0 {
-                "_" => format!("{}.eq.{}.arg{}", item.name, c.name, j + 1).into(),
-                field => format!("{}.eq.{}.{field}", item.name, c.name).into(),
+                "_" => format!("{}.eq_{}_arg{}", item.name, c.name, j + 1).into(),
+                field => format!("{}.eq_{}_{field}", item.name, c.name).into(),
             }
         };
         let has_params = matches!(ty, Term::Pi(_));
@@ -225,7 +227,7 @@ impl Checker<'_> {
             self.sig.data_mut(data).constructors.push(decl);
             let ty = constructor_type(self.sig.data(data), level_names.len(), index);
             self.sig.add(Global {
-                name: c.name.clone(),
+                name: ctor_name(c),
                 level_params: level_names.clone(),
                 ty: Rc::new(ty),
                 kind: GlobalKind::Constructor(data, index),
@@ -248,7 +250,7 @@ impl Checker<'_> {
         let mut recursor_levels = level_names.clone();
         let mut motive: Name = "m".into();
         while recursor_levels.contains(&motive) {
-            motive = format!("{motive}'").into();
+            motive = format!("{motive}2").into();
         }
         recursor_levels.push(motive);
         let ty = recursor_type(self.sig.data(data), level_names.len());
@@ -311,7 +313,7 @@ impl Checker<'_> {
                 return Err(self.error(
                     Code::Unsupported,
                     c.span,
-                    format!("a constructor of the indexed family `{data_name}` must state its result: `| {} fields : {data_name} ...`", c.name),
+                    format!("a constructor of the indexed family `{data_name}` must state its result: `{}: {{fields}} -> {data_name} ...`", c.name),
                 ));
             }
             None => Vec::new(),
@@ -611,12 +613,22 @@ impl Checker<'_> {
                 })?;
                 Ok(Term::Lam(name.clone(), dom, Rc::new(body)))
             }
+            (RawKind::Ctor { .. }, _) => {
+                let spine = self.constructor_spine(raw)?;
+                self.check_relevant(ctx, &spine, expected)
+            }
             // Rule [Sigma-Pair]
-            (RawKind::Pair(a, b), Val::Sigma(sigma)) => {
+            (RawKind::Tuple(a, b), Val::Sigma(sigma)) => {
                 let a = self.check(ctx, a, &sigma.dom)?;
                 let cod = sigma.cod.apply(&self.sig, self.eval(ctx, &a));
                 let b = self.check(ctx, b, &cod)?;
                 Ok(Term::Pair(Rc::new(a), Rc::new(b)))
+            }
+            // `x |> @absurd`: at the type expected.
+            (RawKind::Prim(Primitive::Absurd, args), _) if matches!(args[0].kind, RawKind::Hole) => {
+                let proof = self.check(ctx, &args[1], &Val::Bottom)?;
+                let ty = quote(&self.sig, ctx.depth(), expected);
+                Ok(Term::Absurd(Rc::new(ty), Rc::new(proof)))
             }
             // Rule [Quot-Intro]
             (RawKind::Prim(Primitive::QIn, args), Val::Quot(q)) => {
@@ -675,11 +687,16 @@ impl Checker<'_> {
                 let sort = Level::max(&binding.dom_level, &binding.cod_level);
                 Ok((Term::Sigma(Rc::new(binding)), Val::Sort(sort)))
             }
-            RawKind::Pair(..) => Err(self.error(
-                Code::TypeAnnotationRequired,
-                raw.span,
-                "cannot infer the type of a pair; annotate it as `(e : (x: A) * B)`",
-            )),
+            // A pair whose type is not given is the type of pairs, `{A, B}`.
+            RawKind::Tuple(a, b) => {
+                let binding = self.binding(ctx, &"_".into(), a, b)?;
+                let sort = Level::max(&binding.dom_level, &binding.cod_level);
+                Ok((Term::Sigma(Rc::new(binding)), Val::Sort(sort)))
+            }
+            RawKind::Ctor { .. } => {
+                let spine = self.constructor_spine(raw)?;
+                self.infer(ctx, &spine)
+            }
             RawKind::Fst(e) | RawKind::Snd(e) => {
                 let (t, ty) = self.infer(ctx, e)?;
                 let Val::Sigma(sigma) = ty.force(&self.sig) else {
@@ -983,6 +1000,65 @@ impl Checker<'_> {
                 Ok((quote(&self.sig, ctx.depth(), &ty), val))
             }
         }
+    }
+
+    /// `D.Tag.{ fields }` as the application it stands for: the global
+    /// `D.Tag` applied to `_` for each uniform parameter of `D`, which the
+    /// spine infers, then to the fields in order. `.Tag` names the one
+    /// constructor so tagged.
+    fn constructor_spine(&self, raw: &Raw) -> Result<Raw> {
+        let RawKind::Ctor { data, tag, fields } = &raw.kind else { unreachable!("a constructor") };
+        let is_ctor = |id: &GlobalId| matches!(self.sig.global(*id).kind, GlobalKind::Constructor(..));
+        let id = match data {
+            Some(d) => self.sig.lookup(&format!("{d}.{tag}")).filter(is_ctor).ok_or_else(|| {
+                self.error(Code::UnknownSymbol, raw.span, format!("`{d}` has no constructor `{tag}`"))
+            })?,
+            None => {
+                let suffix = format!(".{tag}");
+                let found: Vec<GlobalId> = (0..self.sig.len() as GlobalId)
+                    .filter(|id| is_ctor(id) && self.sig.global(*id).name.ends_with(&suffix))
+                    .collect();
+                match found.as_slice() {
+                    [id] => *id,
+                    [] => return Err(self.error(Code::UnknownSymbol, raw.span, format!("no constructor is tagged `{tag}`"))),
+                    [a, b, ..] => {
+                        return Err(self.error(
+                            Code::AmbiguousName,
+                            raw.span,
+                            format!("`.{tag}` names both `{}` and `{}`; write the type, as in `{}`", self.sig.global(*a).name, self.sig.global(*b).name, self.sig.global(*a).name),
+                        ))
+                    }
+                }
+            }
+        };
+        let GlobalKind::Constructor(data_id, index) = self.sig.global(id).kind else { unreachable!("a constructor") };
+        let decl = self.sig.data(data_id);
+        let surface = &decl.constructors[index].surface;
+        let name = &self.sig.global(id).name;
+        if fields.len() != surface.len() {
+            return Err(self.error(
+                Code::TypeMismatch,
+                raw.span,
+                format!("`{name}` has {} field(s), given {}", surface.len(), fields.len()),
+            ));
+        }
+        let mut ordered: Vec<Option<&Raw>> = vec![None; surface.len()];
+        for (i, (field, value)) in fields.iter().enumerate() {
+            let at = match field {
+                None => i,
+                Some(f) => surface.iter().position(|p| p.name == *f).ok_or_else(|| {
+                    self.error(Code::UnknownSymbol, value.span, format!("`{name}` has no field `{f}`"))
+                })?,
+            };
+            if ordered[at].replace(value).is_some() {
+                return Err(self.error(Code::DuplicateSymbol, value.span, format!("field `{}` of `{name}` is given twice", surface[at].name)));
+            }
+        }
+        let span = raw.span;
+        let head = Raw { kind: RawKind::Var(name.clone(), Vec::new()), span };
+        let holes = (0..decl.uniform).map(|_| Raw { kind: RawKind::Hole, span });
+        let args = holes.chain(ordered.into_iter().map(|f| f.expect("every field is given").clone()));
+        Ok(args.fold(head, |f, a| Raw { kind: RawKind::App(Box::new(f), Box::new(a)), span }))
     }
 
     fn infer_var(&self, ctx: &mut Context, span: Span, name: &Name, level_args: &[LevelArg]) -> Result<(Term, Val)> {

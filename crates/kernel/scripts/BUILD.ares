@@ -1,0 +1,8 @@
+$ @mod BUILD
+
+# \file BUILD.ares
+# \info Kernel scripts: dependent Ares (#406) that only the observational
+#       kernel checks so far, so `ares check` and the language server hand
+#       them to it instead of the compiler's checker.
+
+$ @build : {} -> <@Meta, @IO> @Code = @option "check.checker" "kernel"; ""

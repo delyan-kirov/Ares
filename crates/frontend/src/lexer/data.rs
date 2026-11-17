@@ -233,6 +233,12 @@ pub const OPERATORS: &[OpDef] = &[
         lexeme: ">=",
         role: OpRole::Infix(10, 11),
     },
+    // Observational equality `a ~ b`, a type (#406): the kernel computes it by
+    // the type of `a` and `b`.
+    OpDef {
+        lexeme: "~",
+        role: OpRole::Infix(10, 11),
+    },
     // Effect-row delimiters and their coalesced forms.
     OpDef {
         lexeme: "|",

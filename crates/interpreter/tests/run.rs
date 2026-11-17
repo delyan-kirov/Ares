@@ -1611,6 +1611,9 @@ fn operator_table_every_entry() {
             "<" => ("$ a : @Int = if 3 < 5 => 1 else 0", "1"),
             "<=" => ("$ a : @Int = if 3 <= 3 => 1 else 0", "1"),
             ">=" => ("$ a : @Int = if 5 >= 4 => 1 else 0", "1"),
+            // Observational equality is the kernel's (#406); CORE binds no `~`,
+            // so a program that uses it defines it.
+            "~" => ("$ (~) : @Int -> @Int -> @Int = \\l r => l - r\n$ a : @Int = 5 ~ 3", "2"),
             // Effect rows. `<` and `>` double as the row delimiters, but they are
             // tested above as the comparisons they also are; `<>` is the pure row.
             "<>" => ("$ f : @Int -> <> @Int = \\x => x\n$ a : @Int = f 5", "5"),

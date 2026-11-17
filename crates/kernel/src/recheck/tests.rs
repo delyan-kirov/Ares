@@ -5,12 +5,7 @@ use crate::recheck;
 use crate::signature::{GlobalKind, Signature};
 use crate::term::Term;
 
-const NAT: &str = "
-$ Nat : @Type 1 = @data | zero | succ Nat
-$ ok : zero ~ zero = @refl zero
-$ bad : zero ~ succ zero
-$ two : Nat = succ (succ zero)
-";
+const NAT: &str = "\n$ Nat : @union = Zero: {}, Succ: Nat\n$ ok : Nat.Zero ~ Nat.Zero = @refl Nat.Zero\n$ bad : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom\n$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }\n";
 
 /// `name`'s definition body.
 fn body(sig: &Signature, name: &str) -> Rc<Term> {
@@ -71,10 +66,10 @@ fn a_global_names_only_earlier_ones() {
 #[test]
 fn a_generated_type_is_the_declarations() {
     let mut sig = accept(NAT);
-    let succ = sig.lookup("succ").unwrap();
-    let zero = sig.lookup("zero").unwrap();
+    let succ = sig.lookup("Nat.Succ").unwrap();
+    let zero = sig.lookup("Nat.Zero").unwrap();
     sig.global_mut(succ).ty = sig.global(zero).ty.clone();
     let e = recheck(&sig).unwrap_err();
-    assert_eq!(e.global, "succ");
+    assert_eq!(e.global, "Nat.Succ");
     assert!(e.message.contains("does not give"), "{e}");
 }

@@ -581,7 +581,7 @@ pub(super) fn collect_ty_nodes(ast: &Ast, ty: Aol<Ty>, out: &mut HashSet<Aol<Ty>
         }
     };
     match ast.ty(ty) {
-        Ty::Con { .. } | Ty::Var(_) | Ty::Nat(_) | Ty::MetaE(_) | Ty::Unit => {}
+        Ty::Con { .. } | Ty::Var(_) | Ty::Nat(_) | Ty::MetaE(_) | Ty::Unit | Ty::Term(_) => {}
         Ty::App(a, b) | Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => {
             collect_ty_nodes(ast, *a, out);
             collect_ty_nodes(ast, *b, out);

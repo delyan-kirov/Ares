@@ -1,27 +1,39 @@
-//! The kernel's script language: a lexer and a recursive-descent parser.
+//! The kernel's input: an Ares module, parsed by the frontend's parser and
+//! lowered to named, unresolved [`Raw`] terms.
 //!
-//! A script is a list of globals in the spelling of the language's dependent
-//! design (issue #406), so kernel tests read like the programs the frontend
-//! will one day elaborate:
+//! A script is an ordinary module. Types are expressions (#406), so kernel
+//! tests read like the programs the frontend will one day elaborate:
 //!
 //! ```text
-//! $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \t x => x
+//! $ @mod ID
+//! $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
 //! $ two : @Type 1 -> @Type 1 = id @ctx {.u = 2} (@Type 1 -> @Type 1) (\a => a)
 //! ```
 //!
-//! Every argument is explicit except levels, which a reference to a
-//! level-polymorphic global supplies with `@ctx {.u = l}`. The checker
-//! infers left-out levels and an argument written `_` from the types around
-//! the application (see `check::spine`). A global without a
-//! body is an axiom, and one whose body is `@data | c fields | ...` an
-//! inductive type. Primitive forms are `@name` followed by a fixed number
-//! of arguments, read from the [`PRIMITIVES`] table.
+//! A signature's leading named parameters are bound by the signature, as in
+//! every Ares definition (#437): `id`'s body binds only `x`. Every other
+//! argument is explicit except levels, which a reference to a
+//! level-polymorphic global supplies with `@ctx {.u = l}`. The checker infers
+//! left-out levels and an argument written `_` from the types around the
+//! application (see `check::spine`).
+//!
+//! A global whose body is `@axiom` is an axiom. An inductive type is a union:
+//! `$ Nat : @union = Zero: {}, Succ: Nat` in `@Type 1`, or with its parameters,
+//! indices and universe stated, `$ Vec : (a: @Type 1) -> Nat -> @Type 1 =
+//! @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a
+//! Nat.Succ.{ m }`. A constructor is the global `D.Tag`, written `D.Tag.{
+//! fields }` or `.Tag.{ fields }` with its parameters inferred. Primitive
+//! forms are `@name` applied to a fixed number of arguments, read from the
+//! [`PRIMITIVES`] table; `x |> @absurd` eliminates a proof of `@Bottom`.
+//! `{a, b}` is a pair, or the type of pairs where a type is expected, and
+//! `{x: A, y: B x}` a dependent pair type; `.0` and `.1` project.
 //!
 //! Input: source text. Output: [`Item`]s of named, unresolved [`Raw`] terms.
 //!
 //! Entry point: [`parse_script`].
 
-use utilities::{Code, Diagnostic, Result, Span};
+use frontend::{Ast, Expr, FieldInit, Item as AstItem, LamParam, Pattern, Payload, Ty};
+use utilities::{Aol, Code, Diagnostic, Result, Span};
 
 use crate::term::Name;
 
@@ -46,14 +58,23 @@ pub enum RawKind {
     /// `(e : T)`.
     Ann(Box<Raw>, Box<Raw>),
     Prim(Primitive, Vec<Raw>),
-    /// `(x: A) * B`.
+    /// `{x: A, y: B}`, a dependent pair type.
     Sigma(Name, Box<Raw>, Box<Raw>),
-    Pair(Box<Raw>, Box<Raw>),
-    /// `e.1`, `e.2`.
+    /// `{a, b}`: a pair checked against a pair type, otherwise the type of
+    /// pairs `{A, B}`.
+    Tuple(Box<Raw>, Box<Raw>),
+    /// `e.0`, `e.1`.
     Fst(Box<Raw>),
     Snd(Box<Raw>),
     /// `a ~ b`.
     Eq(Box<Raw>, Box<Raw>),
+    /// `D.Tag.{ fields }` or `.Tag.{ fields }`: a constructor applied to its
+    /// fields, positional or `.name = e`, its parameters inferred.
+    Ctor {
+        data: Option<Name>,
+        tag: Name,
+        fields: Vec<(Option<Name>, Raw)>,
+    },
     /// `_`, an argument the checker infers.
     Hole,
 }
@@ -80,12 +101,14 @@ pub enum Primitive {
     Top,
     Tt,
     Bottom,
+    /// `x |> @absurd`, from a proof `x` of `@Bottom`, at the type expected.
+    /// Its first argument is that type, a `_` the checker fills.
     Absurd,
     /// `@Eq A a b`, the equality with its type given.
     Eq,
     Refl,
-    /// `@transp t B u t' e`: from `u : B t` and `e : t ~ t'`, a proof of
-    /// `B t'` (transport into a proposition).
+    /// `@transp t B u t2 e`: from `u : B t` and `e : t ~ t2`, a proof of
+    /// `B t2` (transport into a proposition).
     Transp,
     Cast,
     /// `@Quot A R rr rs rt`: `A` quotiented by `R`, with proofs that `R` is
@@ -96,19 +119,19 @@ pub enum Primitive {
     QElim,
 }
 
-/// Every primitive's spelling and argument count.
+/// Every primitive's spelling and argument count. `@absurd` is not here: in
+/// Ares it is the empty match, `x |> @absurd`.
 pub const PRIMITIVES: &[(&str, Primitive, usize)] = &[
-    ("Top", Primitive::Top, 0),
-    ("tt", Primitive::Tt, 0),
-    ("Bottom", Primitive::Bottom, 0),
-    ("absurd", Primitive::Absurd, 2),
-    ("Eq", Primitive::Eq, 3),
-    ("refl", Primitive::Refl, 1),
-    ("transp", Primitive::Transp, 5),
-    ("cast", Primitive::Cast, 4),
-    ("Quot", Primitive::Quot, 5),
-    ("qin", Primitive::QIn, 1),
-    ("qelim", Primitive::QElim, 4),
+    ("@Top", Primitive::Top, 0),
+    ("@tt", Primitive::Tt, 0),
+    ("@Bottom", Primitive::Bottom, 0),
+    ("@Eq", Primitive::Eq, 3),
+    ("@refl", Primitive::Refl, 1),
+    ("@transp", Primitive::Transp, 5),
+    ("@cast", Primitive::Cast, 4),
+    ("@Quot", Primitive::Quot, 5),
+    ("@qin", Primitive::QIn, 1),
+    ("@qelim", Primitive::QElim, 4),
 ];
 
 #[derive(Clone, Debug)]
@@ -123,82 +146,22 @@ pub struct Item {
 #[derive(Clone, Debug)]
 pub enum ItemBody {
     Definition(Raw),
+    /// `= @axiom`.
     Axiom,
-    /// `@data | c (x: A) B | ...`.
+    /// `@union Tag: fields, ...`.
     Data(Vec<RawConstructor>),
 }
 
 #[derive(Clone, Debug)]
 pub struct RawConstructor {
+    /// The tag; the constructor is the global `D.Tag`.
     pub name: Name,
     pub span: Span,
     /// Each field's name (`_` when unnamed) and type.
     pub fields: Vec<(Name, Raw)>,
-    /// The stated result type, `: D params indices`, which an indexed
+    /// The stated result type, `-> D params indices`, which an indexed
     /// family's constructors need.
     pub result: Option<Raw>,
-}
-
-// ## Lexer
-
-#[derive(Clone, PartialEq, Debug)]
-enum Tok {
-    Ident(Name),
-    Num(u32),
-    /// `@word`.
-    At(Name),
-    Dollar,
-    Colon,
-    Equals,
-    FatArrow,
-    Arrow,
-    Backslash,
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
-    Comma,
-    Dot,
-    Pipe,
-    Plus,
-    Star,
-    Tilde,
-    Let,
-    In,
-    Eof,
-}
-
-fn describe(t: &Tok) -> String {
-    match t {
-        Tok::Ident(n) => format!("`{n}`"),
-        Tok::Num(n) => format!("`{n}`"),
-        Tok::At(n) => format!("`@{n}`"),
-        Tok::Eof => "the end of the script".to_string(),
-        other => {
-            let s = match other {
-                Tok::Dollar => "$",
-                Tok::Colon => ":",
-                Tok::Equals => "=",
-                Tok::FatArrow => "=>",
-                Tok::Arrow => "->",
-                Tok::Backslash => "\\",
-                Tok::LParen => "(",
-                Tok::RParen => ")",
-                Tok::LBrace => "{",
-                Tok::RBrace => "}",
-                Tok::Comma => ",",
-                Tok::Dot => ".",
-                Tok::Pipe => "|",
-                Tok::Plus => "+",
-                Tok::Star => "*",
-                Tok::Tilde => "~",
-                Tok::Let => "let",
-                Tok::In => "in",
-                _ => unreachable!(),
-            };
-            format!("`{s}`")
-        }
-    }
 }
 
 /// The 1-based line of a byte offset.
@@ -210,581 +173,441 @@ pub fn error(src: &str, code: Code, span: Span, msg: impl Into<String>) -> Diagn
     Diagnostic::error(code, span, line_of(src, span.start), msg)
 }
 
-fn is_ident_start(c: u8) -> bool {
-    c.is_ascii_alphabetic() || c == b'_'
-}
+// ## Lowering
 
-fn is_ident_char(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_' || c == b'\''
-}
-
-fn lex(src: &str) -> Result<Vec<(Tok, Span)>> {
-    let bytes = src.as_bytes();
-    let mut toks = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        if c == b'#' {
-            while i < bytes.len() && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        let start = i;
-        let tok = if is_ident_start(c) {
-            // A dot followed by a letter continues the name (`Nat.elim`); a
-            // dot followed by a digit is a projection.
-            while i < bytes.len()
-                && (is_ident_char(bytes[i])
-                    || (bytes[i] == b'.' && i + 1 < bytes.len() && is_ident_start(bytes[i + 1])))
-            {
-                i += 1;
-            }
-            match &src[start..i] {
-                "let" => Tok::Let,
-                "in" => Tok::In,
-                word => Tok::Ident(word.into()),
-            }
-        } else if c.is_ascii_digit() {
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            let n = src[start..i].parse().map_err(|_| {
-                error(src, Code::NumberParsingFailure, Span::new(start, i), "number is too large")
-            })?;
-            Tok::Num(n)
-        } else if c == b'@' {
-            i += 1;
-            while i < bytes.len() && is_ident_char(bytes[i]) {
-                i += 1;
-            }
-            if i == start + 1 {
-                return Err(error(src, Code::UnknownSymbol, Span::new(start, i), "`@` must start a word"));
-            }
-            Tok::At(src[start + 1..i].into())
-        } else {
-            let two = src.get(i..i + 2).unwrap_or("");
-            let (tok, len) = match two {
-                "=>" => (Tok::FatArrow, 2),
-                "->" => (Tok::Arrow, 2),
-                _ => (
-                    match c {
-                        b'$' => Tok::Dollar,
-                        b':' => Tok::Colon,
-                        b'=' => Tok::Equals,
-                        b'\\' => Tok::Backslash,
-                        b'(' => Tok::LParen,
-                        b')' => Tok::RParen,
-                        b'{' => Tok::LBrace,
-                        b'}' => Tok::RBrace,
-                        b',' => Tok::Comma,
-                        b'.' => Tok::Dot,
-                        b'|' => Tok::Pipe,
-                        b'+' => Tok::Plus,
-                        b'*' => Tok::Star,
-                        b'~' => Tok::Tilde,
-                        _ => {
-                            let end = start + src[start..].chars().next().map_or(1, char::len_utf8);
-                            return Err(error(src, Code::UnknownSymbol, Span::new(start, end), "unexpected character"));
-                        }
-                    },
-                    1,
-                ),
-            };
-            i += len;
-            tok
-        };
-        toks.push((tok, Span::new(start, i)));
-    }
-    toks.push((Tok::Eof, Span::at(src.len())));
-    Ok(toks)
-}
-
-// ## Parser
-
-struct Parser<'s> {
-    src: &'s str,
-    toks: Vec<(Tok, Span)>,
-    pos: usize,
-}
-
+/// Parse an Ares module and lower its items to the kernel's input.
 pub fn parse_script(src: &str) -> Result<Vec<Item>> {
-    let mut p = Parser {
-        src,
-        toks: lex(src)?,
-        pos: 0,
-    };
-    let mut items = Vec::new();
-    while p.peek(0) != &Tok::Eof {
-        items.push(p.item()?);
-    }
-    Ok(items)
+    let parsed = frontend::parse(src)?;
+    let lower = Lower { src, ast: &parsed.ast };
+    let items = parsed.ast.slice(parsed.program.items);
+    let spans = parsed.ast.slice(parsed.program.spans);
+    items.iter().zip(spans).map(|(item, at)| lower.item(item, at.name.unwrap_or(at.full))).collect()
 }
 
-impl Parser<'_> {
-    fn peek(&self, n: usize) -> &Tok {
-        &self.toks[(self.pos + n).min(self.toks.len() - 1)].0
+struct Lower<'a> {
+    src: &'a str,
+    ast: &'a Ast,
+}
+
+fn raw(kind: RawKind, span: Span) -> Raw {
+    Raw { kind, span }
+}
+
+impl Lower<'_> {
+    fn error(&self, span: Span, msg: impl Into<String>) -> Diagnostic {
+        error(self.src, Code::Unsupported, span, msg)
     }
 
-    fn span(&self) -> Span {
-        self.toks[self.pos].1
+    fn ty_span(&self, ty: Aol<Ty>) -> Span {
+        self.ast.ty_span(ty).unwrap_or(Span::at(0))
     }
 
-    fn last_end(&self) -> usize {
-        self.toks[self.pos.saturating_sub(1)].1.end
+    fn expr_span(&self, e: Aol<Expr>) -> Span {
+        self.ast.expr_span(e).unwrap_or(Span::at(0))
     }
 
-    fn next(&mut self) -> Tok {
-        let t = self.toks[self.pos].0.clone();
-        if t != Tok::Eof {
-            self.pos += 1;
+    fn item(&self, item: &AstItem, span: Span) -> Result<Item> {
+        match item {
+            AstItem::Def { name, sig: Some(sig), body, .. } => {
+                if self.ast.use_params.get(*sig).is_some() {
+                    return Err(self.error(span, "a kernel global takes no `@use` parameter"));
+                }
+                let body = match self.ast.expr(*body) {
+                    Expr::Var { module: None, name } if name.as_str() == "@axiom" => ItemBody::Axiom,
+                    _ => ItemBody::Definition(self.expr(*body)?),
+                };
+                Ok(Item {
+                    name: name.as_str().into(),
+                    span,
+                    level_params: self.level_params(*sig),
+                    ty: self.ty(*sig)?,
+                    body,
+                })
+            }
+            AstItem::Def { name, sig: None, .. } => {
+                Err(self.error(span, format!("a kernel global needs its type: `$ {name} : T = ...`")))
+            }
+            AstItem::Union { name, sig, params, variants, splices } => {
+                if !self.ast.slice(*splices).is_empty() {
+                    return Err(self.error(span, "a kernel union is written out, without `&` entries"));
+                }
+                let (ty, level_params) = match sig {
+                    Some(sig) => (self.ty(*sig)?, self.level_params(*sig)),
+                    None => (self.classic_union_type(self.ast.slice(*params), span), Vec::new()),
+                };
+                let ctors = self.ast.slice(*variants).iter().map(|v| self.constructor(v, span)).collect::<Result<_>>()?;
+                Ok(Item { name: name.as_str().into(), span, level_params, ty, body: ItemBody::Data(ctors) })
+            }
+            _ => Err(self.error(
+                span,
+                "a kernel script holds definitions (`$ x : T = e`, `= @axiom`) and unions, nothing else",
+            )),
         }
-        t
     }
 
-    fn unexpected(&self, wanted: &str) -> Diagnostic {
-        error(
-            self.src,
-            Code::UnexpectedToken,
-            self.span(),
-            format!("expected {wanted}, found {}", describe(self.peek(0))),
-        )
+    fn level_params(&self, sig: Aol<Ty>) -> Vec<(Name, Span)> {
+        let Some(levels) = self.ast.level_params.get(sig) else { return Vec::new() };
+        self.ast.slice(*levels).iter().map(|l| (l.name.as_str().into(), l.span)).collect()
     }
 
-    fn expect(&mut self, t: Tok) -> Result<Span> {
-        if *self.peek(0) == t {
-            let span = self.span();
-            self.next();
-            Ok(span)
-        } else {
-            Err(self.unexpected(&describe(&t)))
-        }
+    /// `$ D : @union a b = ...`: each parameter in `@Type 1`, and so the type.
+    fn classic_union_type(&self, params: &[utilities::StrId], span: Span) -> Raw {
+        let ty1 = || raw(RawKind::Sort(RawLevel::Num(1)), span);
+        params.iter().rev().fold(ty1(), |cod, p| raw(RawKind::Pi(p.as_str().into(), Box::new(ty1()), Box::new(cod)), span))
     }
 
-    fn eat(&mut self, t: &Tok) -> bool {
-        if self.peek(0) == t {
-            self.next();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn ident(&mut self) -> Result<(Name, Span)> {
-        let span = self.span();
-        match self.next() {
-            Tok::Ident(n) => Ok((n, span)),
-            _ => {
-                self.pos -= 1;
-                Err(self.unexpected("a name"))
+    fn constructor(&self, v: &frontend::VariantDecl, item_span: Span) -> Result<RawConstructor> {
+        let mut fields = Vec::new();
+        match &v.payload {
+            Payload::None => {}
+            Payload::Bare(ty) => fields.push(("_".into(), self.ty(*ty)?)),
+            Payload::Fields(fs) => {
+                for f in self.ast.slice(*fs) {
+                    let name: Name = f.name.map_or("_".into(), |n| n.as_str().into());
+                    fields.push((name, self.ty(f.ty)?));
+                }
             }
         }
+        let span = fields.first().map_or(item_span, |(_, r): &(Name, Raw)| r.span);
+        let result = v.result.map(|r| self.ty(r)).transpose()?;
+        Ok(RawConstructor { name: v.tag.as_str().into(), span, fields, result })
     }
 
-    fn at_keyword(&self, word: &str) -> bool {
-        matches!(self.peek(0), Tok::At(w) if &**w == word)
-    }
+    // ### Types
 
-    fn raw(&self, kind: RawKind, start: usize) -> Raw {
-        Raw {
-            kind,
-            span: Span::new(start, self.last_end().max(start)),
-        }
-    }
-
-    // ## Items
-
-    fn item(&mut self) -> Result<Item> {
-        self.expect(Tok::Dollar)?;
-        let (name, span) = self.ident()?;
-        self.expect(Tok::Colon)?;
-        let level_params = self.level_params()?;
-        let ty = self.expr()?;
-        let body = if self.eat(&Tok::Equals) {
-            if self.at_keyword("data") {
-                self.next();
-                ItemBody::Data(self.constructors()?)
-            } else {
-                ItemBody::Definition(self.expr()?)
+    fn ty(&self, ty: Aol<Ty>) -> Result<Raw> {
+        let span = self.ty_span(ty);
+        let kind = match self.ast.ty(ty) {
+            Ty::Term(e) => return self.expr(*e),
+            Ty::Con { module: None, name } | Ty::Var(name) => return self.name(name.as_str(), span),
+            Ty::Con { module: Some(m), name } => RawKind::Var(format!("{m}.{name}").into(), Vec::new()),
+            Ty::App(..) => return self.ty_spine(ty),
+            Ty::Arrow { binder, from, effect, to } => {
+                if effect.is_some() {
+                    return Err(self.error(span, "a kernel function type carries no effect row"));
+                }
+                let name: Name = binder.map_or("_".into(), |b| b.as_str().into());
+                RawKind::Pi(name, Box::new(self.ty(*from)?), Box::new(self.ty(*to)?))
             }
-        } else {
-            ItemBody::Axiom
+            Ty::Tuple(items) => {
+                let items: Vec<Raw> = self.ast.slice(*items).iter().map(|t| self.ty(*t)).collect::<Result<_>>()?;
+                return self.tuple(items, span);
+            }
+            Ty::Record { fields, tail: None } => {
+                let fields = self.ast.slice(*fields);
+                let mut fields: Vec<(Name, Raw)> =
+                    fields.iter().map(|f| Ok((f.name.as_str().into(), self.ty(f.ty)?))).collect::<Result<_>>()?;
+                let Some((_, mut acc)) = fields.pop() else { unreachable!("a record type has a field") };
+                if fields.is_empty() {
+                    return Err(self.error(span, "a dependent pair type has two fields or more"));
+                }
+                for (name, dom) in fields.into_iter().rev() {
+                    acc = raw(RawKind::Sigma(name, Box::new(dom), Box::new(acc)), span);
+                }
+                return Ok(acc);
+            }
+            Ty::Nat(_) | Ty::SizeAdd(..) | Ty::SizeMul(..) => {
+                return Err(self.error(span, "a number stands only for a level, as in `@Type 1`"))
+            }
+            Ty::Record { .. } | Ty::Unit | Ty::Sized { .. } | Ty::MetaE(_) => {
+                return Err(self.error(span, "not a type of the kernel"))
+            }
         };
-        Ok(Item {
-            name,
-            span,
-            level_params,
-            ty,
-            body,
+        Ok(raw(kind, span))
+    }
+
+    fn ty_spine(&self, ty: Aol<Ty>) -> Result<Raw> {
+        let mut args = Vec::new();
+        let mut head = ty;
+        while let Ty::App(f, a) = self.ast.ty(head) {
+            args.push(Arg::Ty(*a));
+            head = *f;
+        }
+        args.reverse();
+        let head = match self.ast.ty(head) {
+            Ty::Con { module: None, name } | Ty::Var(name) => Head::Name(*name, self.ty_span(head)),
+            Ty::Con { module: Some(m), name } => Head::Name(utilities::StrId::intern(&format!("{m}.{name}")), self.ty_span(head)),
+            _ => Head::Raw(self.ty(head)?),
+        };
+        self.spine(head, args, self.ty_span(ty))
+    }
+
+    // ### Terms
+
+    fn expr(&self, e: Aol<Expr>) -> Result<Raw> {
+        let span = self.expr_span(e);
+        let kind = match self.ast.expr(e) {
+            Expr::Type(ty) => return self.ty(*ty),
+            Expr::Var { module: None, name } => return self.name(name.as_str(), span),
+            Expr::Var { module: Some(m), name } => RawKind::Var(format!("{m}.{name}").into(), Vec::new()),
+            Expr::App(..) => {
+                let mut args = Vec::new();
+                let mut head = e;
+                while let Expr::App(f, a) = self.ast.expr(head) {
+                    args.push(Arg::Expr(*a));
+                    head = *f;
+                }
+                args.reverse();
+                let head = match self.ast.expr(head) {
+                    Expr::Var { module: None, name } => Head::Name(*name, self.expr_span(head)),
+                    Expr::Var { module: Some(m), name } => {
+                        Head::Name(utilities::StrId::intern(&format!("{m}.{name}")), self.expr_span(head))
+                    }
+                    _ => Head::Raw(self.expr(head)?),
+                };
+                return self.spine(head, args, span);
+            }
+            Expr::BinOp { op, lhs, rhs } => match op.as_str() {
+                "~" => RawKind::Eq(Box::new(self.expr(*lhs)?), Box::new(self.expr(*rhs)?)),
+                "|>" => return self.apply(*rhs, *lhs, span),
+                "<|" => return self.apply(*lhs, *rhs, span),
+                other => return Err(self.error(span, format!("`{other}` is not an operator of the kernel"))),
+            },
+            Expr::Lambda { params, body } => return self.lambda(self.ast.slice(*params), *body, span),
+            Expr::Let { binding, body } => {
+                let name = self.binder(binding.pat)?;
+                let ann = binding.sig.map(|t| self.ty(t).map(Box::new)).transpose()?;
+                RawKind::Let(name, ann, Box::new(self.expr(binding.value)?), Box::new(self.expr(*body)?))
+            }
+            Expr::Ascribe { expr, ty } => RawKind::Ann(Box::new(self.expr(*expr)?), Box::new(self.ty(*ty)?)),
+            Expr::Tuple(items) => {
+                let items: Vec<Raw> = self.ast.slice(*items).iter().map(|t| self.expr(*t)).collect::<Result<_>>()?;
+                return self.tuple(items, span);
+            }
+            Expr::Field { record, name } => match name.as_str() {
+                "0" => RawKind::Fst(Box::new(self.expr(*record)?)),
+                "1" => RawKind::Snd(Box::new(self.expr(*record)?)),
+                _ => return Err(self.error(span, "a pair projects by position, `.0` or `.1`")),
+            },
+            Expr::Variant { module: None, ty, tag, fields } => {
+                let fields = self
+                    .ast
+                    .slice(*fields)
+                    .iter()
+                    .map(|f| match f {
+                        FieldInit::Named { name, value } => Ok((Some(name.as_str().into()), self.expr(*value)?)),
+                        FieldInit::Positional(value) => Ok((None, self.expr(*value)?)),
+                    })
+                    .collect::<Result<_>>()?;
+                RawKind::Ctor { data: ty.map(|t| t.as_str().into()), tag: tag.as_str().into(), fields }
+            }
+            Expr::Int(_) => return Err(self.error(span, "a number stands only for a level, as in `@Type 1`")),
+            _ => return Err(self.error(span, "not a term of the kernel")),
+        };
+        Ok(raw(kind, span))
+    }
+
+    /// `f x` written with a pipe. `x |> @absurd` is the primitive itself, at
+    /// the type expected.
+    fn apply(&self, f: Aol<Expr>, x: Aol<Expr>, span: Span) -> Result<Raw> {
+        if self.is_absurd(f) {
+            let proof = self.expr(x)?;
+            return Ok(raw(RawKind::Prim(Primitive::Absurd, vec![raw(RawKind::Hole, span), proof]), span));
+        }
+        Ok(raw(RawKind::App(Box::new(self.expr(f)?), Box::new(self.expr(x)?)), span))
+    }
+
+    /// `@absurd`: the parser reads it as the lambda over an empty match.
+    fn is_absurd(&self, e: Aol<Expr>) -> bool {
+        matches!(self.ast.expr(e), Expr::Lambda { body, .. }
+            if matches!(self.ast.expr(*body), Expr::Match { arms, .. } if self.ast.slice(*arms).is_empty()))
+    }
+
+    /// A name standing alone: a variable, a global, `_`, or a primitive
+    /// with no arguments.
+    fn name(&self, name: &str, span: Span) -> Result<Raw> {
+        if name == "_" {
+            return Ok(raw(RawKind::Hole, span));
+        }
+        if name.starts_with('@') {
+            return self.spine(Head::Name(utilities::StrId::intern(name), span), Vec::new(), span);
+        }
+        Ok(raw(RawKind::Var(name.into(), Vec::new()), span))
+    }
+
+    fn tuple(&self, mut items: Vec<Raw>, span: Span) -> Result<Raw> {
+        if items.len() < 2 {
+            return Err(self.error(span, "a pair has two components"));
+        }
+        let mut acc = items.pop().expect("two components");
+        while let Some(item) = items.pop() {
+            acc = raw(RawKind::Tuple(Box::new(item), Box::new(acc)), span);
+        }
+        Ok(acc)
+    }
+
+    fn binder(&self, pat: Aol<Pattern>) -> Result<Name> {
+        match self.ast.pat(pat) {
+            Pattern::Var(name) => Ok(name.as_str().into()),
+            Pattern::Wild => Ok("_".into()),
+            _ => Err(self.error(self.ast.pat_span(pat).unwrap_or(Span::at(0)), "a kernel binder is a name or `_`")),
+        }
+    }
+
+    fn lambda(&self, params: &[LamParam], body: Aol<Expr>, span: Span) -> Result<Raw> {
+        // `@absurd`, the empty match: `\#arg => @absurd _ #arg`.
+        let body = match self.ast.expr(body) {
+            Expr::Match { scrut, arms, .. } if self.ast.slice(*arms).is_empty() => {
+                let proof = self.expr(*scrut)?;
+                raw(RawKind::Prim(Primitive::Absurd, vec![raw(RawKind::Hole, span), proof]), span)
+            }
+            Expr::Match { .. } => {
+                return Err(self.error(span, "a kernel term eliminates with a recursor, `D.elim`, not a match"))
+            }
+            _ => self.expr(body)?,
+        };
+        params.iter().rev().try_fold(body, |body, p| {
+            let name = self.binder(p.pat)?;
+            let ann = p.sig.map(|t| self.ty(t).map(Box::new)).transpose()?;
+            Ok(raw(RawKind::Lam(name, ann, Box::new(body)), span))
         })
     }
 
-    fn constructors(&mut self) -> Result<Vec<RawConstructor>> {
-        let mut ctors = Vec::new();
-        while self.eat(&Tok::Pipe) {
-            let (name, span) = self.ident()?;
-            let mut fields = Vec::new();
-            loop {
-                if self.named_fields_ahead() {
-                    fields.extend(self.binder_group()?);
-                } else if self.starts_atom() {
-                    fields.push(("_".into(), self.atom()?));
-                } else {
-                    break;
-                }
-            }
-            let result = if self.eat(&Tok::Colon) { Some(self.expr()?) } else { None };
-            ctors.push(RawConstructor { name, span, fields, result });
-        }
-        Ok(ctors)
-    }
-
-    /// `(x y: A)` as a constructor's named fields.
-    fn named_fields_ahead(&self) -> bool {
-        if self.peek(0) != &Tok::LParen {
-            return false;
-        }
-        let mut n = 1;
-        while matches!(self.peek(n), Tok::Ident(_)) {
-            n += 1;
-        }
-        n > 1 && self.peek(n) == &Tok::Colon
-    }
-
-    /// A signature's leading `@ctx {u: @l, ...} ->`.
-    fn level_params(&mut self) -> Result<Vec<(Name, Span)>> {
-        let mut params = Vec::new();
-        if !self.at_keyword("ctx") {
-            return Ok(params);
-        }
-        self.next();
-        self.expect(Tok::LBrace)?;
-        loop {
-            params.push(self.ident()?);
-            self.expect(Tok::Colon)?;
-            if !self.at_keyword("l") {
-                return Err(self.unexpected("`@l` (the kernel's `@ctx` binds levels only)"));
-            }
-            self.next();
-            if !self.eat(&Tok::Comma) {
-                break;
-            }
-        }
-        self.expect(Tok::RBrace)?;
-        self.expect(Tok::Arrow)?;
-        Ok(params)
-    }
-
-    // ## Expressions
-
-    fn expr(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        match self.peek(0) {
-            Tok::Backslash => self.lambda(),
-            Tok::Let => self.let_in(),
-            _ if self.binder_group_ahead() => {
-                let binders = self.binder_group()?;
-                let pi = self.eat(&Tok::Arrow);
-                if !pi {
-                    self.expect(Tok::Star)?;
-                }
-                // `(x: A) * B -> C` is `((x: A) * B) -> C`.
-                let cod = if pi { self.expr()? } else { self.product()? };
-                let built = binders.into_iter().rev().fold(cod, |cod, (name, ty)| {
-                    let kind = if pi {
-                        RawKind::Pi(name, Box::new(ty), Box::new(cod))
-                    } else {
-                        RawKind::Sigma(name, Box::new(ty), Box::new(cod))
-                    };
-                    self.raw(kind, start)
-                });
-                self.arrow_tail(built, start)
-            }
-            _ => {
-                let dom = self.product()?;
-                self.arrow_tail(dom, start)
-            }
-        }
-    }
-
-    fn arrow_tail(&mut self, dom: Raw, start: usize) -> Result<Raw> {
-        if self.eat(&Tok::Arrow) {
-            let cod = self.expr()?;
-            Ok(self.raw(RawKind::Pi("_".into(), Box::new(dom), Box::new(cod)), start))
-        } else {
-            Ok(dom)
-        }
-    }
-
-    /// `A * B * C`, right-nested, binding tighter than `->`.
-    fn product(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        if self.binder_group_ahead() {
-            let binders = self.binder_group()?;
-            self.expect(Tok::Star)?;
-            let cod = self.product()?;
-            return Ok(binders.into_iter().rev().fold(cod, |cod, (name, ty)| {
-                self.raw(RawKind::Sigma(name, Box::new(ty), Box::new(cod)), start)
-            }));
-        }
-        let first = self.equality()?;
-        if self.eat(&Tok::Star) {
-            let rest = self.product()?;
-            Ok(self.raw(RawKind::Sigma("_".into(), Box::new(first), Box::new(rest)), start))
-        } else {
-            Ok(first)
-        }
-    }
-
-    /// `(x y: A)` followed by `->` or `*`, told apart from a parenthesized term or
-    /// an ascription by scanning to the matching parenthesis.
-    fn binder_group_ahead(&self) -> bool {
-        if self.peek(0) != &Tok::LParen || !matches!(self.peek(1), Tok::Ident(_)) {
-            return false;
-        }
-        let mut n = 1;
-        while matches!(self.peek(n), Tok::Ident(_)) {
-            n += 1;
-        }
-        if self.peek(n) != &Tok::Colon {
-            return false;
-        }
-        let mut depth = 0usize;
-        loop {
-            match self.peek(n) {
-                Tok::LParen => depth += 1,
-                Tok::RParen if depth == 0 => return matches!(self.peek(n + 1), Tok::Arrow | Tok::Star),
-                Tok::RParen => depth -= 1,
-                Tok::Eof => return false,
-                _ => {}
-            }
-            n += 1;
-        }
-    }
-
-    /// `(x y: A)`: each name with its own copy of the type.
-    fn binder_group(&mut self) -> Result<Vec<(Name, Raw)>> {
-        self.expect(Tok::LParen)?;
-        let mut names = vec![self.ident()?.0];
-        while let Tok::Ident(_) = self.peek(0) {
-            names.push(self.ident()?.0);
-        }
-        self.expect(Tok::Colon)?;
-        let ty = self.expr()?;
-        self.expect(Tok::RParen)?;
-        Ok(names.into_iter().map(|n| (n, ty.clone())).collect())
-    }
-
-    fn lambda(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        self.expect(Tok::Backslash)?;
-        let mut binders: Vec<(Name, Option<Raw>)> = Vec::new();
-        loop {
-            match self.peek(0) {
-                Tok::Ident(_) => binders.push((self.ident()?.0, None)),
-                Tok::LParen => {
-                    for (name, ty) in self.binder_group()? {
-                        binders.push((name, Some(ty)));
-                    }
-                }
-                _ => break,
-            }
-        }
-        if binders.is_empty() {
-            return Err(self.unexpected("a binder"));
-        }
-        self.expect(Tok::FatArrow)?;
-        let body = self.expr()?;
-        Ok(binders.into_iter().rev().fold(body, |body, (name, ty)| {
-            self.raw(RawKind::Lam(name, ty.map(Box::new), Box::new(body)), start)
-        }))
-    }
-
-    fn let_in(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        self.expect(Tok::Let)?;
-        let (name, _) = self.ident()?;
-        let ty = if self.eat(&Tok::Colon) { Some(Box::new(self.expr()?)) } else { None };
-        self.expect(Tok::Equals)?;
-        let val = self.expr()?;
-        self.expect(Tok::In)?;
-        let body = self.expr()?;
-        Ok(self.raw(RawKind::Let(name, ty, Box::new(val), Box::new(body)), start))
-    }
-
-    /// `a ~ b`, non-associative, binding tighter than `*`.
-    fn equality(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        let a = self.app()?;
-        if self.eat(&Tok::Tilde) {
-            let b = self.app()?;
-            Ok(self.raw(RawKind::Eq(Box::new(a), Box::new(b)), start))
-        } else {
-            Ok(a)
-        }
-    }
-
-    fn starts_atom(&self) -> bool {
-        match self.peek(0) {
-            Tok::Ident(_) | Tok::LParen => true,
-            Tok::At(w) => !matches!(&**w, "ctx" | "l" | "data"),
-            _ => false,
-        }
-    }
-
-    fn app(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        let mut f = self.atom()?;
-        loop {
-            if self.starts_atom() {
-                let a = self.atom()?;
-                f = self.raw(RawKind::App(Box::new(f), Box::new(a)), start);
-            } else if matches!(self.peek(0), Tok::Backslash | Tok::Let) {
-                // A trailing lambda or let is the last argument.
-                let a = self.expr()?;
-                f = self.raw(RawKind::App(Box::new(f), Box::new(a)), start);
-                break;
-            } else {
-                break;
-            }
-        }
-        Ok(f)
-    }
-
-    fn atom(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        let mut e = self.atom_head()?;
-        while self.peek(0) == &Tok::Dot {
-            let kind = match self.peek(1) {
-                Tok::Num(1) => RawKind::Fst(Box::new(e)),
-                Tok::Num(2) => RawKind::Snd(Box::new(e)),
-                _ => {
-                    self.next();
-                    return Err(self.unexpected("`1` or `2` (a pair's projections)"));
-                }
+    /// An application: a primitive or `@Type` at its head takes its own
+    /// arguments, and a `@ctx {.u = l}` argument gives the head its levels.
+    fn spine(&self, head: Head, args: Vec<Arg>, span: Span) -> Result<Raw> {
+        let mut levels = Vec::new();
+        let mut rest = Vec::new();
+        for arg in args {
+            let term = match arg {
+                Arg::Expr(a) => Some(a),
+                Arg::Ty(t) => match self.ast.ty(t) {
+                    Ty::Term(e) => Some(*e),
+                    _ => None,
+                },
             };
-            self.next();
-            self.next();
-            e = self.raw(kind, start);
+            match term.map(|e| self.ast.expr(e)) {
+                Some(Expr::CtxArg(inits)) => levels.extend(self.level_args(*inits)?),
+                _ => rest.push(arg),
+            }
         }
-        Ok(e)
-    }
-
-    fn atom_head(&mut self) -> Result<Raw> {
-        let start = self.span().start;
-        match self.peek(0).clone() {
-            Tok::Ident(n) if &*n == "_" => {
-                self.next();
-                Ok(self.raw(RawKind::Hole, start))
-            }
-            Tok::Ident(_) => {
-                let (name, _) = self.ident()?;
-                let levels = self.level_args()?;
-                Ok(self.raw(RawKind::Var(name, levels), start))
-            }
-            Tok::LParen => {
-                self.next();
-                let e = self.expr()?;
-                let kind = if self.eat(&Tok::Colon) {
-                    let ty = self.expr()?;
-                    RawKind::Ann(Box::new(e), Box::new(ty))
-                } else if self.eat(&Tok::Comma) {
-                    let second = self.expr()?;
-                    RawKind::Pair(Box::new(e), Box::new(second))
-                } else {
-                    self.expect(Tok::RParen)?;
-                    return Ok(e);
-                };
-                self.expect(Tok::RParen)?;
-                Ok(self.raw(kind, start))
-            }
-            Tok::At(word) if &*word == "Type" => {
-                self.next();
-                let level = self.level_atom()?;
-                Ok(self.raw(RawKind::Sort(level), start))
-            }
-            Tok::At(word) => match PRIMITIVES.iter().find(|(w, ..)| *w == &*word) {
-                Some(&(_, prim, arity)) => {
-                    self.next();
-                    let mut args = Vec::with_capacity(arity);
-                    for _ in 0..arity {
-                        args.push(self.atom()?);
+        let mut rest = rest.into_iter();
+        let mut acc = match head {
+            Head::Raw(r) => r,
+            Head::Name(name, name_span) => {
+                let text = name.as_str();
+                if text == "@Type" {
+                    let Some(level) = rest.next() else {
+                        return Err(self.error(span, "`@Type` takes a level: `@Type 1`, `@Type (u + 1)`"));
+                    };
+                    raw(RawKind::Sort(self.level(level)?), span)
+                } else if let Some(&(_, prim, arity)) = PRIMITIVES.iter().find(|(w, ..)| *w == text) {
+                    let args: Vec<Raw> = rest.by_ref().take(arity).map(|a| self.arg(a)).collect::<Result<_>>()?;
+                    if args.len() < arity {
+                        return Err(self.error(span, format!("`{text}` takes {arity} argument(s)")));
                     }
-                    Ok(self.raw(RawKind::Prim(prim, args), start))
-                }
-                None => Err(error(self.src, Code::UnknownSymbol, self.span(), format!("unknown primitive `@{word}`"))),
-            },
-            _ => Err(self.unexpected("a term")),
-        }
-    }
-
-    /// `@ctx {.u = l, ...}` after a name.
-    fn level_args(&mut self) -> Result<Vec<LevelArg>> {
-        let mut args = Vec::new();
-        if !self.at_keyword("ctx") {
-            return Ok(args);
-        }
-        self.next();
-        self.expect(Tok::LBrace)?;
-        loop {
-            let start = self.expect(Tok::Dot)?.start;
-            let (name, _) = self.ident()?;
-            self.expect(Tok::Equals)?;
-            let level = self.level()?;
-            args.push(LevelArg {
-                name,
-                level,
-                span: Span::new(start, self.last_end()),
-            });
-            if !self.eat(&Tok::Comma) {
-                break;
-            }
-        }
-        self.expect(Tok::RBrace)?;
-        Ok(args)
-    }
-
-    // ## Levels
-
-    fn level(&mut self) -> Result<RawLevel> {
-        if self.at_keyword("max") || self.at_keyword("imax") {
-            let is_max = self.at_keyword("max");
-            self.next();
-            let a = Box::new(self.level_atom()?);
-            let b = Box::new(self.level_atom()?);
-            return Ok(if is_max { RawLevel::Max(a, b) } else { RawLevel::IMax(a, b) });
-        }
-        let mut l = self.level_atom()?;
-        while self.eat(&Tok::Plus) {
-            match self.next() {
-                Tok::Num(n) => l = RawLevel::Plus(Box::new(l), n),
-                _ => {
-                    self.pos -= 1;
-                    return Err(self.unexpected("a number"));
+                    raw(RawKind::Prim(prim, args), span)
+                } else if text.starts_with('@') {
+                    return Err(error(self.src, Code::UnknownSymbol, name_span, format!("unknown primitive `{text}`")));
+                } else if text == "_" {
+                    raw(RawKind::Hole, name_span)
+                } else {
+                    raw(RawKind::Var(text.into(), levels.split_off(0)), name_span)
                 }
             }
+        };
+        if let Some(l) = levels.first() {
+            return Err(self.error(l.span, "only a global takes `@ctx` levels"));
         }
-        Ok(l)
+        for a in rest {
+            let a = self.arg(a)?;
+            let end = a.span.end.max(acc.span.end);
+            let start = acc.span.start.min(a.span.start);
+            acc = raw(RawKind::App(Box::new(acc), Box::new(a)), Span::new(start, end));
+        }
+        Ok(acc)
     }
 
-    fn level_atom(&mut self) -> Result<RawLevel> {
-        let span = self.span();
-        match self.next() {
-            Tok::Num(n) => Ok(RawLevel::Num(n)),
-            Tok::Ident(n) => Ok(RawLevel::Name(n, span)),
-            Tok::LParen => {
-                let l = self.level()?;
-                self.expect(Tok::RParen)?;
-                Ok(l)
+    fn arg(&self, a: Arg) -> Result<Raw> {
+        match a {
+            Arg::Expr(e) => self.expr(e),
+            Arg::Ty(t) => self.ty(t),
+        }
+    }
+
+    // ### Levels
+
+    fn level_args(&self, inits: utilities::Slice<FieldInit>) -> Result<Vec<LevelArg>> {
+        self.ast
+            .slice(inits)
+            .iter()
+            .map(|init| {
+                let FieldInit::Named { name, value } = init else { unreachable!("the parser names level arguments") };
+                Ok(LevelArg { name: name.as_str().into(), level: self.level(Arg::Expr(*value))?, span: self.expr_span(*value) })
+            })
+            .collect()
+    }
+
+    /// A level: a number, a level name, `l + n`, `@max a b` or `@imax a b`.
+    fn level(&self, a: Arg) -> Result<RawLevel> {
+        let bad = |span| self.error(span, "expected a level: a number, a level name, `l + n`, `@max a b` or `@imax a b`");
+        match a {
+            Arg::Expr(e) => {
+                let span = self.expr_span(e);
+                match self.ast.expr(e) {
+                    Expr::Type(t) => self.level(Arg::Ty(*t)),
+                    Expr::Int(n) => u32::try_from(*n).map(RawLevel::Num).map_err(|_| bad(span)),
+                    Expr::Var { module: None, name } if !name.as_str().starts_with('@') => Ok(RawLevel::Name(name.as_str().into(), span)),
+                    Expr::BinOp { op, lhs, rhs } if op.as_str() == "+" => match self.ast.expr(*rhs) {
+                        Expr::Int(n) => Ok(RawLevel::Plus(Box::new(self.level(Arg::Expr(*lhs))?), u32::try_from(*n).map_err(|_| bad(span))?)),
+                        _ => Err(bad(span)),
+                    },
+                    Expr::App(f, b) => match self.ast.expr(*f) {
+                        Expr::App(m, a) => self.max(*m, Arg::Expr(*a), Arg::Expr(*b), span),
+                        _ => Err(bad(span)),
+                    },
+                    _ => Err(bad(span)),
+                }
             }
-            _ => {
-                self.pos -= 1;
-                Err(self.unexpected("a level"))
+            Arg::Ty(t) => {
+                let span = self.ty_span(t);
+                match self.ast.ty(t) {
+                    Ty::Term(e) => self.level(Arg::Expr(*e)),
+                    Ty::Nat(n) => u32::try_from(*n).map(RawLevel::Num).map_err(|_| bad(span)),
+                    Ty::Var(name) => Ok(RawLevel::Name(name.as_str().into(), span)),
+                    Ty::SizeAdd(l, n) => match self.ast.ty(*n) {
+                        Ty::Nat(n) => Ok(RawLevel::Plus(Box::new(self.level(Arg::Ty(*l))?), u32::try_from(*n).map_err(|_| bad(span))?)),
+                        _ => Err(bad(span)),
+                    },
+                    Ty::App(f, b) => match self.ast.ty(*f) {
+                        Ty::App(m, a) => match self.ast.ty(*m) {
+                            Ty::Con { module: None, name } => self.max_named(name.as_str(), Arg::Ty(*a), Arg::Ty(*b), span),
+                            _ => Err(bad(span)),
+                        },
+                        _ => Err(bad(span)),
+                    },
+                    _ => Err(bad(span)),
+                }
             }
         }
     }
+
+    fn max(&self, m: Aol<Expr>, a: Arg, b: Arg, span: Span) -> Result<RawLevel> {
+        match self.ast.expr(m) {
+            Expr::Var { module: None, name } => self.max_named(name.as_str(), a, b, span),
+            _ => Err(self.error(span, "expected a level")),
+        }
+    }
+
+    fn max_named(&self, name: &str, a: Arg, b: Arg, span: Span) -> Result<RawLevel> {
+        let (a, b) = (Box::new(self.level(a)?), Box::new(self.level(b)?));
+        match name {
+            "@max" => Ok(RawLevel::Max(a, b)),
+            "@imax" => Ok(RawLevel::IMax(a, b)),
+            _ => Err(self.error(span, "expected a level: `@max a b` or `@imax a b`")),
+        }
+    }
+}
+
+/// An application's head: a name, which may be a primitive, or any term.
+enum Head {
+    Name(utilities::StrId, Span),
+    Raw(Raw),
+}
+
+/// An argument, from an expression or a type position.
+#[derive(Clone, Copy)]
+enum Arg {
+    Expr(Aol<Expr>),
+    Ty(Aol<Ty>),
 }

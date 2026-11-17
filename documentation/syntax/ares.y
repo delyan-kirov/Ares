@@ -37,10 +37,10 @@
  *
  * ONE GRAMMAR FOR TYPES AND EXPRESSIONS (#406 step 2). A type is an `expr`:
  * signatures, annotations, fields, payloads, row arguments. The merge kept
- * the meaning of every corpus program; it admits more than parser.rs: an operator,
- * a lowercase head (`m a`) or a control form in a type position parses here
- * and is rejected by parser.rs, whose type parser stays separate until the
- * elaborator takes types as expressions (step 3).
+ * the meaning of every corpus program. parser.rs reads a type position as an
+ * expression too (#473) and views it as a type; an expression the checker's
+ * types do not spell (a lambda, `a ~ b`) parses, the kernel reads it, and the
+ * checker rejects it until its elaborator takes types as terms (step 3).
  *
  * DIVERGENCES from parser.rs (this grammar is intentionally stricter):
  *   - SHOULD WARN (future work): parser.rs lets a control form (let/if/\)
@@ -62,8 +62,10 @@
 %token HOLE         /* ??? a typed hole: any type, always a compile error naming it */
 
 %token AT_MOD AT_STRUCT AT_UNION AT_ALIAS AT_EFFECT AT_MAIN AT_BUILD
-%token AT_USE AT_IFACE  /* AT_USE: `@use`; `@ctx` is reserved for
-                          the unified binder of #406 */
+%token AT_USE AT_IFACE  /* AT_USE: `@use` */
+%token AT_CTX       /* `@ctx`: level parameters `@ctx {u: @l} ->` and level
+                       arguments `f @ctx {.u = 1}` (#406); any other use is
+                       reserved, which parser.rs reports */
 %token AT_PRIVATE AT_EXTERN AT_ARRAY AT_IMPORT
 %token AT_TRUE AT_FALSE /* the two `@Bool` literals (there is no `true`/`false` alias) */
 %token AT_TYCON     /* any other @name: a built-in type (@Int64, @Str, @Vec) or
@@ -81,7 +83,7 @@
 %left  PIPE_FWD                     /* |> */
 %left  OR_OR                        /* || (short-circuit, desugars to a lazy if) */
 %left  AND_AND                      /* && (short-circuit, desugars to a lazy if) */
-%left  EQEQ NEQ LT GT LE GE         /* == != < > <= >= */
+%left  EQEQ NEQ LT GT LE GE TILDE   /* == != < > <= >=, and `~` the observational equality (#406) */
 %right CONS                         /* :: */
 %left  CONCAT                       /* ++ */
 %left  PLUS MINUS BAR3 CARET3      /* ||| ^^^ bitwise or, xor */
@@ -109,6 +111,13 @@ globals   : /* empty */ | globals global ;
 
 global
   : DOLLAR LIDENT opt_sig EQ body
+  /* A capitalized name with a signature defines a type as a term (#406):
+   * `$ Frac : @Type 1 = {Integer, Pos}`, or an inductive type whose
+   * signature states its parameters, indices and universe,
+   * `$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, ...`.
+   * Only the kernel checks these so far; parser.rs reads them. */
+  | DOLLAR UIDENT COLON expr EQ expr
+  | DOLLAR UIDENT COLON expr EQ AT_UNION union_body
   | DOLLAR UIDENT COLON AT_STRUCT opt_type_params EQ struct_body
   | DOLLAR UIDENT COLON AT_STRUCT AT_EXTERN STR opt_type_params EQ struct_body  /* C layout */
   | DOLLAR UIDENT COLON AT_UNION  opt_type_params EQ union_body
@@ -187,6 +196,11 @@ splice : AMP app ;
 payload_decl
   : LBRACE RBRACE
   | LBRACE payload_fields opt_comma RBRACE
+  /* An indexed family's constructor states its result (#406):
+   * `Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }`. A bare
+   * payload's arrow is its own type, so only a braced payload states one. */
+  | LBRACE RBRACE ARROW expr
+  | LBRACE payload_fields opt_comma RBRACE ARROW expr
   | app_nb
   | app_nb ARROW expr
   | app_nb ARROW eff_row expr
@@ -213,6 +227,11 @@ opt_comma   : /* empty */ | COMMA ;
  * type, which the parser enforces: the grammar admits `(@use {d: I t} -> t) -> t`,
  * parser.rs rejects it. A local `let` signature does not take `@use` yet. */
 use_param  : AT_USE LBRACE use_fields opt_comma RBRACE ;
+
+/* Level parameters, `@ctx {u: @l, v: @l} ->`, at the start of a signature
+ * (#406): each field's type is `@l`, which parser.rs checks. A use passes
+ * levels as `f @ctx {.u = 1}` (see plain) or leaves them to the kernel. */
+ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE ;
 use_fields : LIDENT COLON expr | use_fields COMMA LIDENT COLON expr ;
 
 rec_field_list
@@ -261,6 +280,7 @@ expr
   | op_expr ARROW eff_row expr
   | use_param ARROW expr
   | use_param ARROW eff_row expr
+  | ctx_param ARROW expr
   ;
 
 ctrl_expr
@@ -296,6 +316,7 @@ op_expr
   | op_expr GT op_expr
   | op_expr LE op_expr
   | op_expr GE op_expr
+  | op_expr TILDE op_expr            /* `a ~ b`, a type (#406) */
   | op_expr CONS op_expr
   | op_expr CONCAT op_expr
   | op_expr PLUS op_expr
@@ -360,6 +381,10 @@ plain
    * At least one field: an empty `@use {}` supplies nothing, so it is an error.
    * It precedes the explicit argument that follows its parameter. */
   | AT_USE LBRACE use_inits opt_comma RBRACE
+  /* Level arguments of a level-polymorphic global (#406). */
+  | AT_CTX LBRACE use_inits opt_comma RBRACE
+  /* `_`, an argument the kernel infers from the types around it (#470). */
+  | UNDERSCORE
   | seq_lit
   /* The byte-array type. `@Array.{ n }` is its literal, the typed struct
    * literal postfix on the type like `Person.{ ... }`; parser.rs checks that

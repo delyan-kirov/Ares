@@ -47,4 +47,4 @@ checker compares the expected and the synthesised type.
 
 Update (2026-11-11): implemented. Conversion strips a cast whose two types
 are convertible (Note [A cast between convertible types is the identity] in
-`crates/kernel/src/conversion.rs`), and `rationals.ott` still checks.
+`crates/kernel/src/conversion.rs`), and `RATIONALS.ares` still checks.
