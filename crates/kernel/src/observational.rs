@@ -111,7 +111,10 @@ pub fn eq(sig: &Signature, level: Level, ty: Val, a: Val, b: Val) -> Val {
         // applies until the level is known.
         return stuck_eq(level, ty, a, b);
     }
-    match &ty {
+    // The rules look at the heads; a stuck equality keeps the sides as
+    // written. See Note [Glued evaluation].
+    let (head, a_head, b_head) = (ty.force(sig).clone(), a.force(sig).clone(), b.force(sig).clone());
+    match &head {
         // Rule [Eq-Fun]
         Val::Pi(p) => {
             let p = p.clone();
@@ -123,23 +126,23 @@ pub fn eq(sig: &Signature, level: Level, ty: Val, a: Val, b: Val) -> Val {
         }
         // Rule [Eq-Pair]
         Val::Sigma(p) => {
-            let (a1, b1) = (fst(a.clone()), fst(b.clone()));
+            let (a1, b1) = (fst(sig, a.clone()), fst(sig, b.clone()));
             let first = eq(sig, p.dom_level.clone(), p.dom.clone(), a1.clone(), b1.clone());
             let (ca, cb) = (p.cod.apply(sig, a1), p.cod.apply(sig, b1));
-            let moved = cast(sig, ca, cb.clone(), Val::Irrelevant, snd(a));
-            let second = eq(sig, p.cod_level.clone(), cb, moved, snd(b));
+            let moved = cast(sig, ca, cb.clone(), Val::Irrelevant, snd(sig, a));
+            let second = eq(sig, p.cod_level.clone(), cb, moved, snd(sig, b));
             and(first, second)
         }
         Val::Sort(k) => eq_types(sig, k, a, b),
         // Rule [Eq-Ctor]
-        Val::Data(_) => match (&a, &b) {
+        Val::Data(_) => match (&a_head, &b_head) {
             (Val::Constructor(x), Val::Constructor(y)) if x.index != y.index => Val::Bottom,
             (Val::Constructor(x), Val::Constructor(y)) => eq_fields(sig, x, y),
             _ => stuck_eq(level, ty, a, b),
         },
         // Rule [Eq-Quot-Class]
         // See Note [Equality on a quotient is its relation].
-        Val::Quot(q) => match (&a, &b) {
+        Val::Quot(q) => match (&a_head, &b_head) {
             (Val::QIn(x), Val::QIn(y)) => apply(sig, apply(sig, q.relation.clone(), (**x).clone()), (**y).clone()),
             _ => stuck_eq(level, ty, a, b),
         },
@@ -148,6 +151,7 @@ pub fn eq(sig: &Signature, level: Level, ty: Val, a: Val, b: Val) -> Val {
         Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => {
             unreachable!("an equality at a non-type")
         }
+        Val::Unfold(_) => unreachable!("forced"),
     }
 }
 
@@ -203,7 +207,8 @@ fn eq_types(sig: &Signature, k: &Level, a: Val, b: Val) -> Val {
     if !k.is_nonzero() {
         return stuck_eq(k.succ(), universe(), a, b);
     }
-    match (&a, &b) {
+    let (a_head, b_head) = (a.force(sig).clone(), b.force(sig).clone());
+    match (&a_head, &b_head) {
         // Rule [Eq-Univ]
         (Val::Sort(i), Val::Sort(j)) => {
             if i.equal(j) {
@@ -215,7 +220,7 @@ fn eq_types(sig: &Signature, k: &Level, a: Val, b: Val) -> Val {
             }
         }
         (Val::Pi(p), Val::Pi(q)) | (Val::Sigma(p), Val::Sigma(q)) => {
-            let is_pi = matches!(a, Val::Pi(_));
+            let is_pi = matches!(a_head, Val::Pi(_));
             let (dom, cod) = match (component(&p.dom_level, &q.dom_level), component(&p.cod_level, &q.cod_level)) {
                 (Component::At(d), Component::At(c)) => (d, c),
                 // Rule [Eq-Univ-Neq]
@@ -280,10 +285,11 @@ fn eq_types(sig: &Signature, k: &Level, a: Val, b: Val) -> Val {
 /// `@cast a b e t`: `t : a` seen at `b`, along `e : a ~ b`.
 pub fn cast(sig: &Signature, a: Val, b: Val, e: Val, t: Val) -> Val {
     // Rule [Proof-Witness]
-    if let Val::Irrelevant = t {
-        return t;
+    if let Val::Irrelevant = t.force(sig) {
+        return Val::Irrelevant;
     }
-    match (&a, &b) {
+    let (a_head, b_head, t_head) = (a.force(sig).clone(), b.force(sig).clone(), t.force(sig).clone());
+    match (&a_head, &b_head) {
         // Rule [Cast-Univ]
         (Val::Sort(_), Val::Sort(_)) | (Val::Top, Val::Top) | (Val::Bottom, Val::Bottom) => t,
         // Rule [Cast-Pi]
@@ -300,15 +306,15 @@ pub fn cast(sig: &Signature, a: Val, b: Val, e: Val, t: Val) -> Val {
         }
         // Rule [Cast-Sigma]
         (Val::Sigma(p), Val::Sigma(q)) => {
-            let a1 = fst(t.clone());
+            let a1 = fst(sig, t.clone());
             let a2 = cast(sig, p.dom.clone(), q.dom.clone(), Val::Irrelevant, a1.clone());
             let (from, to) = (p.cod.apply(sig, a1), q.cod.apply(sig, a2.clone()));
-            let b2 = cast(sig, from, to, Val::Irrelevant, snd(t));
+            let b2 = cast(sig, from, to, Val::Irrelevant, snd(sig, t));
             Val::Pair(Rc::new((a2, b2)))
         }
         // Rule [Cast-Ctor]
         (Val::Data(x), Val::Data(y)) if x.data == y.data => {
-            let Val::Constructor(c) = &t else {
+            let Val::Constructor(c) = &t_head else {
                 return stuck_cast(a, b, e, t);
             };
             let target = ConstructorVal {
@@ -327,7 +333,7 @@ pub fn cast(sig: &Signature, a: Val, b: Val, e: Val, t: Val) -> Val {
             Val::Constructor(Rc::new(ConstructorVal { fields, ..target }))
         }
         // Rule [Cast-Quot]
-        (Val::Quot(x), Val::Quot(y)) => match &t {
+        (Val::Quot(x), Val::Quot(y)) => match &t_head {
             Val::QIn(v) => Val::QIn(Rc::new(cast(sig, x.carrier.clone(), y.carrier.clone(), Val::Irrelevant, (**v).clone()))),
             _ => stuck_cast(a, b, e, t),
         },

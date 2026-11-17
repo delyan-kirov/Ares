@@ -231,7 +231,22 @@ fn recursors_compute_on_constructors() {
     let src = format!("{NAT}$ p : P (add two two)\n$ q : P four = p\n");
     let sig = accept(&src);
     assert_eq!(normal_form(&sig, "q").unwrap(), "p");
-    reject(&format!("{NAT}$ p : P (add two two)\n$ q : P two = p\n"), "expected `P (succ (succ zero))`");
+    reject(&format!("{NAT}$ p : P (add two two)\n$ q : P two = p\n"), "expected `P two`, found `P (add two two)`");
+}
+
+#[test]
+fn applications_of_one_definition_compare_by_arguments() {
+    // `pow two sixteen` unfolds to 65536 constructors; equal arguments make
+    // the two sides equal without unfolding it.
+    let src = format!(
+        "{NAT}$ mul : Nat -> Nat -> Nat = \\m n => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) zero (\\_ r => add n r) m
+$ pow : Nat -> Nat -> Nat = \\b e => Nat.elim @ctx {{.m = 1}} (\\_ => Nat) (succ zero) (\\_ r => mul b r) e
+$ sixteen : Nat = mul four four
+$ p : P (pow two sixteen)
+$ q : P (pow two (add (mul two four) (mul four two))) = p
+"
+    );
+    accept(&src);
 }
 
 #[test]

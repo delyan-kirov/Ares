@@ -450,7 +450,7 @@ pub fn recursor_value(sig: &Signature, data: DataId, levels: Rc<[Level]>) -> Val
 /// constructor's own indices, and is cast to the major premise's.
 /// See Note [Indexed families are forded].
 pub fn iota(sig: &Signature, rec: Rc<RecursorArgs>, major: Val) -> Val {
-    match major {
+    match major.force(sig).clone() {
         Val::Constructor(c) => {
             assert_eq!(c.data, rec.data, "the recursor of one type met a constructor of another");
             let decl = sig.data(rec.data);

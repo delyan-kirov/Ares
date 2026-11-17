@@ -51,7 +51,7 @@ pub fn normal_form(sig: &Signature, name: &str) -> Option<String> {
         return None;
     };
     let value = nbe::eval(sig, &nbe::Env::new(), body);
-    let term = nbe::quote(sig, 0, &value);
+    let term = nbe::quote_unfolded(sig, 0, &value);
     let shown = term::TermDisplay {
         sig,
         names: &[],

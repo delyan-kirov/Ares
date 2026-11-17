@@ -321,6 +321,7 @@ impl Checker<'_> {
                 // The indices as written when the result is `D` applied
                 // directly, so they keep their proofs; read back otherwise.
                 let written = spine(&ty);
+                let ty_val = ty_val.force(&self.sig).clone();
                 let indices: Vec<Rc<Term>> = match &ty_val {
                     Val::Data(_) if is_data_at_own_params(&ty_val, data, np, u) && written.len() == np && head(&ty) == Some(decl.global) => {
                         written[u..].iter().map(|y| Rc::new((*y).clone())).collect()
@@ -531,12 +532,27 @@ impl Checker<'_> {
         .to_string()
     }
 
+    /// Types print folded; a note gives the head of each unfolded, its
+    /// arguments still folded, when that reads differently.
+    /// See Note [Glued evaluation].
     fn mismatch(&self, ctx: &Context, span: Span, expected: &Val, found: &Val) -> Diagnostic {
-        self.error(
-            Code::TypeMismatch,
-            span,
-            format!("expected `{}`, found `{}`", self.show(ctx, expected), self.show(ctx, found)),
-        )
+        let (shown_expected, shown_found) = (self.show(ctx, expected), self.show(ctx, found));
+        let unfolded = |v: &Val, shown: &str| Some(self.show(ctx, v.force(&self.sig))).filter(|head| head != shown);
+        let (head_expected, head_found) = (unfolded(expected, &shown_expected), unfolded(found, &shown_found));
+        if matches!(expected.force(&self.sig), Val::Bottom) && head_expected.is_some() {
+            return self
+                .error(Code::TypeMismatch, span, "this claim is false")
+                .with_note(format!("the claim `{shown_expected}` computes to `@Bottom`"))
+                .with_note(format!("found a proof of `{shown_found}`"));
+        }
+        let mut d = self.error(Code::TypeMismatch, span, format!("expected `{shown_expected}`, found `{shown_found}`"));
+        if let Some(head) = head_expected {
+            d = d.with_note(format!("the expected type computes to `{head}`"));
+        }
+        if let Some(head) = head_found {
+            d = d.with_note(format!("the found type computes to `{head}`"));
+        }
+        d
     }
 
     /// Run `k` with `name: ty` in scope.
@@ -553,7 +569,7 @@ impl Checker<'_> {
     /// Elaborate `raw` as a type, returning its sort.
     fn check_type(&self, ctx: &mut Context, raw: &Raw) -> Result<(Term, Level)> {
         let (t, ty) = self.infer(ctx, raw)?;
-        match ty {
+        match ty.force(&self.sig).clone() {
             Val::Sort(l) => Ok((t, l)),
             other => Err(self.error(
                 Code::TypeMismatch,
@@ -575,7 +591,7 @@ impl Checker<'_> {
     }
 
     fn check_relevant(&self, ctx: &mut Context, raw: &Raw, expected: &Val) -> Result<Term> {
-        match (&raw.kind, expected) {
+        match (&raw.kind, expected.force(&self.sig)) {
             // Rule [Fun]
             (RawKind::Lam(name, ann, body), Val::Pi(pi)) => {
                 let dom = match ann {
@@ -657,7 +673,7 @@ impl Checker<'_> {
             )),
             RawKind::Fst(e) | RawKind::Snd(e) => {
                 let (t, ty) = self.infer(ctx, e)?;
-                let Val::Sigma(sigma) = &ty else {
+                let Val::Sigma(sigma) = ty.force(&self.sig) else {
                     return Err(self.error(
                         Code::TypeMismatch,
                         e.span,
@@ -668,7 +684,7 @@ impl Checker<'_> {
                 if matches!(raw.kind, RawKind::Fst(_)) {
                     Ok((Term::Fst(t), sigma.dom.clone()))
                 } else {
-                    let first = fst(self.eval(ctx, &t));
+                    let first = fst(&self.sig, self.eval(ctx, &t));
                     Ok((Term::Snd(t), sigma.cod.apply(&self.sig, first)))
                 }
             }
@@ -700,7 +716,7 @@ impl Checker<'_> {
             // Rule [App]
             RawKind::App(f, a) => {
                 let (f_term, f_ty) = self.infer(ctx, f)?;
-                let Val::Pi(pi) = &f_ty else {
+                let Val::Pi(pi) = f_ty.force(&self.sig) else {
                     return Err(self.error(
                         Code::TypeMismatch,
                         f.span,
@@ -882,7 +898,7 @@ impl Checker<'_> {
     // Rule [Quot-Elim]
     fn infer_quotient_elim(&self, ctx: &mut Context, args: &[Raw]) -> Result<(Term, Val)> {
         let (q, q_ty) = self.infer(ctx, &args[3])?;
-        let Val::Quot(quot) = &q_ty else {
+        let Val::Quot(quot) = q_ty.force(&self.sig) else {
             return Err(self.error(
                 Code::TypeMismatch,
                 args[3].span,
@@ -928,9 +944,9 @@ impl Checker<'_> {
             return Ok((Term::Lam(name.clone(), written, Rc::new(body)), level));
         }
         let (t, ty) = self.infer(ctx, raw)?;
-        if let Val::Pi(pi) = &ty {
+        if let Val::Pi(pi) = ty.force(&self.sig) {
             let cod = pi.cod.apply(&self.sig, Val::var(ctx.depth()));
-            if let Val::Sort(level) = cod {
+            if let Val::Sort(level) = cod.force(&self.sig).clone() {
                 if self.conversion(ctx).conv_type(&pi.dom, dom) {
                     return Ok((t, level));
                 }

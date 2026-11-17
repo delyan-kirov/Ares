@@ -297,7 +297,7 @@ fn data_eq_projection() {
 #[test]
 fn eq_quot_class() {
     applies("$ t : class zero ~ class two = @tt\n");
-    blocked("$ t : class zero ~ class (succ zero) = @tt\n", "expected `@Bottom`, found `@Top`");
+    blocked("$ t : class zero ~ class (succ zero) = @tt\n", "the claim `R zero (succ zero)` computes to `@Bottom`");
 }
 
 // Test [Eq-Quot]
@@ -330,7 +330,7 @@ fn cast_sigma() {
 fn cast_univ() {
     let sig = applies("$ T : @Type 1 = @cast (@Type 1) (@Type 1) @tt Nat\n$ n : T = zero\n");
     assert_eq!(normal(&sig, "T"), "Nat");
-    blocked("$ T : @Type 1 = @cast (@Type 1) (@Type 1) @tt Nat\n$ n : T = true\n", "expected `Nat`, found `Bool`");
+    blocked("$ T : @Type 1 = @cast (@Type 1) (@Type 1) @tt Nat\n$ n : T = true\n", "the expected type computes to `Nat`");
 }
 
 // Test [Cast-Ctor]
@@ -408,7 +408,7 @@ $ vlength : (a: @Type 1) -> (n: Nat) -> Vec a n -> Nat =
 #[test]
 fn data_iota() {
     applies("$ p : P (add two two)\n$ q : P four = p\n");
-    blocked("$ p : P (add two two)\n$ q : P two = p\n", "expected `P (succ (succ zero))`");
+    blocked("$ p : P (add two two)\n$ q : P two = p\n", "expected `P two`, found `P (add two two)`");
 }
 
 // Test [Positivity-Restricted]

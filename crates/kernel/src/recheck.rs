@@ -293,8 +293,18 @@ impl Rechecker<'_> {
         .to_string()
     }
 
+    /// Types print folded, each followed by its head unfolded when that reads
+    /// differently. See Note [Glued evaluation].
     fn mismatch(&self, ctx: &Context, expected: &Val, found: &Val) -> String {
-        format!("expected `{}`, found `{}`", self.show(ctx, expected), self.show(ctx, found))
+        let shown = |v: &Val| {
+            let (folded, head) = (self.show(ctx, v), self.show(ctx, v.force(self.sig)));
+            if folded == head {
+                format!("`{folded}`")
+            } else {
+                format!("`{folded}` (which computes to `{head}`)")
+            }
+        };
+        format!("expected {}, found {}", shown(expected), shown(found))
     }
 
     fn level(&self, ctx: &Context, l: &Level) -> Result<()> {
@@ -315,7 +325,7 @@ impl Rechecker<'_> {
     }
 
     fn check_type(&self, ctx: &mut Context, t: &Term) -> Result<Level> {
-        match self.infer(ctx, t)? {
+        match self.infer(ctx, t)?.force(self.sig).clone() {
             Val::Sort(l) => Ok(l),
             other => Err(format!("expected a type, found a value of type `{}`", self.show(ctx, &other))),
         }
@@ -323,7 +333,7 @@ impl Rechecker<'_> {
 
     // Algorithm [Bidirectional checking]
     fn check(&self, ctx: &mut Context, t: &Term, expected: &Val) -> Result<()> {
-        match (t, expected) {
+        match (t, expected.force(self.sig)) {
             // Rule [Proof-Witness]
             (Term::Proof(p), _) => {
                 if !self.conversion(ctx).is_proposition(expected) {
@@ -476,7 +486,7 @@ impl Rechecker<'_> {
             Term::Lam(..) | Term::Pair(..) | Term::QIn(_) => Err("cannot infer the type of a lambda, pair or class".into()),
             Term::App(f, a) => {
                 let f_ty = self.infer(ctx, f)?;
-                let Val::Pi(pi) = &f_ty else {
+                let Val::Pi(pi) = f_ty.force(self.sig) else {
                     return Err(format!("applies a value of type `{}`, which is not a function", self.show(ctx, &f_ty)));
                 };
                 self.check(ctx, a, &pi.dom)?;
@@ -489,13 +499,13 @@ impl Rechecker<'_> {
             }
             Term::Fst(e) | Term::Snd(e) => {
                 let ty = self.infer(ctx, e)?;
-                let Val::Sigma(sigma) = &ty else {
+                let Val::Sigma(sigma) = ty.force(self.sig) else {
                     return Err(format!("projects from a value of type `{}`, which is not a pair", self.show(ctx, &ty)));
                 };
                 if matches!(t, Term::Fst(_)) {
                     Ok(sigma.dom.clone())
                 } else {
-                    Ok(sigma.cod.apply(self.sig, fst(self.eval(ctx, e))))
+                    Ok(sigma.cod.apply(self.sig, fst(self.sig, self.eval(ctx, e))))
                 }
             }
             Term::Top | Term::Bottom => Ok(Val::Sort(Level::Zero)),
@@ -571,7 +581,7 @@ impl Rechecker<'_> {
             Term::QElim(motive, method, respect, level, q) => {
                 self.level(ctx, level)?;
                 let q_ty = self.infer(ctx, q)?;
-                let Val::Quot(quot) = &q_ty else {
+                let Val::Quot(quot) = q_ty.force(self.sig) else {
                     return Err(format!("eliminates a value of type `{}`, which is not a quotient", self.show(ctx, &q_ty)));
                 };
                 let sort = level.clone();

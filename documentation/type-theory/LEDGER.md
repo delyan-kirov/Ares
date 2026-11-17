@@ -123,9 +123,17 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Normalisation by evaluation | BS91, Coq96 | not checked: not vendored | published-uncovered | - | yes |
 | Bidirectional checking | PTu00, DK21 | not checked: not vendored | published-uncovered | - | yes |
 | Typed conversion | AC05, PLT25 | PLT25 Fig. 7, algorithmic conversion; AC05 not checked: not vendored | published-uncovered | - | yes |
+| Glued evaluation | smalltt | README.md, Glued evaluation and Approximate conversion checking: top-level definitions unfold lazily, and one head on both sides compares spines first, unfolding when they differ | published-uncovered | - | yes |
 | Level comparison by case split | nanoda-level | level.rs:158-173, leq_imax_by_cases, the same split on a parameter being zero or not; soundness is Lean Level comparison soundness | published-uncovered | #479 | yes |
 | Recursor generation | Dyb94 | not checked: not vendored | published-uncovered | - | yes |
 | Transitive axioms | - | - | conjecture | #480 | yes |
+
+Glued evaluation changes no rule. Unfolding a definition is its definitional
+equation, done later than before, and two applications of one definition to
+equal arguments are equal by congruence. When the arguments differ,
+conversion unfolds and compares as it did before, so it decides the same
+relation. What it changes is how values read back: a type in an error keeps
+the definitions it was written with.
 
 The level comparison was attributed to Lean 4 in the code, but Lean's C++
 kernel does not split cases: `is_geq_core` (Lean4, `level.cpp:483`) is a

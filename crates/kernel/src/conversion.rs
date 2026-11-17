@@ -47,21 +47,26 @@ impl ConversionChecker<'_> {
         r
     }
 
+    /// `v` with the definitions at its head unfolded.
+    fn force(&self, v: &Val) -> Val {
+        v.force(self.sig).clone()
+    }
+
     /// The type of a neutral, rebuilt from its head's type.
     pub fn infer_neutral(&mut self, n: &Neutral) -> Val {
         match n {
             Neutral::Var(level) => self.types[*level as usize].clone(),
             Neutral::Axiom(id, levels) => global_type(self.sig, *id, levels.clone()),
-            Neutral::App(f, a) => match self.infer_neutral(f) {
+            Neutral::App(f, a) => match self.infer_neutral(f).force(self.sig) {
                 Val::Pi(p) => p.cod.apply(self.sig, a.clone()),
                 _ => unreachable!("applied a neutral that is not a function"),
             },
-            Neutral::Fst(p) => match self.infer_neutral(p) {
+            Neutral::Fst(p) => match self.infer_neutral(p).force(self.sig) {
                 Val::Sigma(s) => s.dom.clone(),
                 _ => unreachable!("projected from a neutral that is not a pair"),
             },
-            Neutral::Snd(p) => match self.infer_neutral(p) {
-                Val::Sigma(s) => s.cod.apply(self.sig, fst(Val::Neutral(p.clone()))),
+            Neutral::Snd(p) => match self.infer_neutral(p).force(self.sig) {
+                Val::Sigma(s) => s.cod.apply(self.sig, fst(self.sig, Val::Neutral(p.clone()))),
                 _ => unreachable!("projected from a neutral that is not a pair"),
             },
             Neutral::Absurd(ty, _) => ty.clone(),
@@ -74,18 +79,19 @@ impl ConversionChecker<'_> {
 
     /// The level `l` with `ty : @Type l`, when it can be read off.
     pub fn sort_of(&mut self, ty: &Val) -> Option<Level> {
-        match ty {
+        match ty.force(self.sig) {
             Val::Sort(l) => Some(l.succ()),
             Val::Pi(p) => Some(Level::imax(&p.dom_level, &p.cod_level)),
             Val::Sigma(p) => Some(Level::max(&p.dom_level, &p.cod_level)),
             Val::Top | Val::Bottom => Some(Level::Zero),
             Val::Data(d) => Some(data_level(self.sig, d)),
             Val::Quot(q) => Some(q.level.clone()),
-            Val::Neutral(n) => match self.infer_neutral(n) {
-                Val::Sort(l) => Some(l),
+            Val::Neutral(n) => match self.infer_neutral(n).force(self.sig) {
+                Val::Sort(l) => Some(l.clone()),
                 _ => None,
             },
             Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => None,
+            Val::Unfold(_) => unreachable!("forced"),
         }
     }
 
@@ -106,8 +112,11 @@ impl ConversionChecker<'_> {
         if self.is_proposition(ty) {
             return true;
         }
+        if self.same_application(a, b) {
+            return true;
+        }
         let (a, b) = (&self.strip_casts(a), &self.strip_casts(b));
-        match ty {
+        match ty.force(self.sig) {
             // Rule [Eta-Pi]
             Val::Pi(p) => self.under(p.dom.clone(), |c, x| {
                 let cod = p.cod.apply(c.sig, x.clone());
@@ -117,10 +126,10 @@ impl ConversionChecker<'_> {
             }),
             // Rule [Eta-Sigma]
             Val::Sigma(p) => {
-                let (fa, fb) = (fst(a.clone()), fst(b.clone()));
+                let (fa, fb) = (fst(self.sig, a.clone()), fst(self.sig, b.clone()));
                 self.conv(&p.dom, &fa, &fb) && {
                     let cod = p.cod.apply(self.sig, fa);
-                    self.conv(&cod, &snd(a.clone()), &snd(b.clone()))
+                    self.conv(&cod, &snd(self.sig, a.clone()), &snd(self.sig, b.clone()))
                 }
             }
             Val::Sort(_) => self.conv_type(a, b),
@@ -133,7 +142,33 @@ impl ConversionChecker<'_> {
             Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => {
                 unreachable!("not a type")
             }
+            Val::Unfold(_) => unreachable!("forced"),
         }
+    }
+
+    // Algorithm [Glued evaluation]
+    // See Note [Glued evaluation].
+    /// `a` and `b` apply one definition at the same levels to equal
+    /// arguments, so they are equal without unfolding it. A no is not final:
+    /// the unfoldings may still be equal.
+    fn same_application(&mut self, a: &Val, b: &Val) -> bool {
+        let (Val::Unfold(x), Val::Unfold(y)) = (a, b) else { return false };
+        if Rc::ptr_eq(x, y) {
+            return true;
+        }
+        let (xs, ys) = (x.spine(), y.spine());
+        if x.global != y.global || !levels_equal(&x.levels, &y.levels) || xs.len() != ys.len() {
+            return false;
+        }
+        let mut ty = global_type(self.sig, x.global, x.levels.clone());
+        for (a, b) in xs.iter().zip(&ys) {
+            let Val::Pi(p) = self.force(&ty) else { unreachable!("a definition applied to more arguments than its type takes") };
+            if !self.conv(&p.dom, a, b) {
+                return false;
+            }
+            ty = p.cod.apply(self.sig, a.clone());
+        }
+        true
     }
 
     /// Values of a type with no extensionality rule: canonical values by
@@ -160,10 +195,10 @@ impl ConversionChecker<'_> {
     // See Note [A cast between convertible types is the identity].
     /// `v` without the casts between convertible types around it.
     fn strip_casts(&mut self, v: &Val) -> Val {
-        let mut v = v.clone();
+        let mut v = self.force(v);
         while let Val::Neutral(n) = &v {
             match self.strip_cast(n) {
-                Some(inner) => v = inner,
+                Some(inner) => v = self.force(&inner),
                 None => break,
             }
         }
@@ -181,11 +216,11 @@ impl ConversionChecker<'_> {
         // A cast of a canonical value between convertible types computes by
         // head, so what is left under the cast is another neutral.
         if let Some(inner) = self.strip_cast(a) {
-            let Val::Neutral(a) = inner else { return None };
+            let Val::Neutral(a) = self.force(&inner) else { return None };
             return self.conv_neutral(&a, b);
         }
         if let Some(inner) = self.strip_cast(b) {
-            let Val::Neutral(b) = inner else { return None };
+            let Val::Neutral(b) = self.force(&inner) else { return None };
             return self.conv_neutral(a, &b);
         }
         match (a, b) {
@@ -193,16 +228,16 @@ impl ConversionChecker<'_> {
             (Neutral::Axiom(x, xl), Neutral::Axiom(y, yl)) if x == y && levels_equal(xl, yl) => {
                 Some(global_type(self.sig, *x, xl.clone()))
             }
-            (Neutral::App(f, x), Neutral::App(g, y)) => match self.conv_neutral(f, g)? {
+            (Neutral::App(f, x), Neutral::App(g, y)) => match self.conv_neutral(f, g)?.force(self.sig).clone() {
                 Val::Pi(p) => self.conv(&p.dom, x, y).then(|| p.cod.apply(self.sig, x.clone())),
                 _ => unreachable!("applied a neutral that is not a function"),
             },
-            (Neutral::Fst(p), Neutral::Fst(q)) => match self.conv_neutral(p, q)? {
+            (Neutral::Fst(p), Neutral::Fst(q)) => match self.conv_neutral(p, q)?.force(self.sig).clone() {
                 Val::Sigma(s) => Some(s.dom.clone()),
                 _ => unreachable!("projected from a neutral that is not a pair"),
             },
-            (Neutral::Snd(p), Neutral::Snd(q)) => match self.conv_neutral(p, q)? {
-                Val::Sigma(s) => Some(s.cod.apply(self.sig, fst(Val::Neutral(p.clone())))),
+            (Neutral::Snd(p), Neutral::Snd(q)) => match self.conv_neutral(p, q)?.force(self.sig).clone() {
+                Val::Sigma(s) => Some(s.cod.apply(self.sig, fst(self.sig, Val::Neutral(p.clone())))),
                 _ => unreachable!("projected from a neutral that is not a pair"),
             },
             // The proofs of `@Bottom` are irrelevant.
@@ -215,7 +250,7 @@ impl ConversionChecker<'_> {
                 let recursor = self.sig.data(r.data).recursor;
                 let mut ty = global_type(self.sig, recursor, r.levels.clone());
                 for (a, b) in r.args.iter().zip(&s.args) {
-                    let Val::Pi(p) = ty else { unreachable!("the recursor takes more arguments than its type") };
+                    let Val::Pi(p) = self.force(&ty) else { unreachable!("the recursor takes more arguments than its type") };
                     if !self.conv(&p.dom, a, b) {
                         return None;
                     }
@@ -232,7 +267,7 @@ impl ConversionChecker<'_> {
                 Neutral::QElim { motive: p1, method: f1, level: l1, quotient: q1 },
                 Neutral::QElim { motive: p2, method: f2, level: l2, quotient: q2 },
             ) => {
-                let Val::Quot(quot) = self.conv_neutral(q1, q2)? else {
+                let Val::Quot(quot) = self.conv_neutral(q1, q2)?.force(self.sig).clone() else {
                     unreachable!("eliminated a neutral that is not a class")
                 };
                 if !l1.equal(l2) {
@@ -259,7 +294,10 @@ impl ConversionChecker<'_> {
 
     /// `a` and `b` are equal types.
     pub fn conv_type(&mut self, a: &Val, b: &Val) -> bool {
-        match (a, b) {
+        if self.same_application(a, b) {
+            return true;
+        }
+        match (&self.force(a), &self.force(b)) {
             (Val::Sort(l), Val::Sort(m)) => l.equal(m),
             (Val::Pi(p), Val::Pi(q)) | (Val::Sigma(p), Val::Sigma(q)) => {
                 self.conv_type(&p.dom, &q.dom)
