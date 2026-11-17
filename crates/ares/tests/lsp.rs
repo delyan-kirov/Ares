@@ -569,3 +569,56 @@ fn members_a_splice_generates_are_not_errors_while_editing() {
     let _ = c.child.kill();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// A project whose `BUILD.ares` sets `check.checker` to `kernel` is checked by
+// the observational kernel (#406): the editor sees the kernel's error, and
+// none once it is fixed.
+#[test]
+fn a_kernel_project_is_checked_by_the_kernel() {
+    let dir = std::env::temp_dir().join(format!("ares-lsp-kernel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    std::fs::write(
+        dir.join("BUILD.ares"),
+        "$ @mod BUILD\n$ @build : {} -> <@Meta, @IO> @Code = @option \"check.checker\" \"kernel\"; \"\"\n",
+    )
+    .unwrap();
+    let wrong = "$ @mod NAT\n$ Nat : @union = Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @tt\n";
+    std::fs::write(dir.join("NAT.ares"), wrong).unwrap();
+    let uri = ares::lsp::path_to_uri(&dir.join("NAT.ares"));
+
+    let mut c = Client::start();
+    c.request(
+        "initialize",
+        Json::obj([("initializationOptions", Json::obj([("lsp", Json::obj([("grace", Json::Bool(false))]))]))]),
+    );
+    c.notify("initialized", Json::obj([]));
+    c.notify(
+        "textDocument/didOpen",
+        Json::obj([(
+            "textDocument",
+            Json::obj([
+                ("uri", Json::str(uri.as_str())),
+                ("languageId", Json::str("ares")),
+                ("version", Json::int(1)),
+                ("text", Json::str(wrong)),
+            ]),
+        )]),
+    );
+    let diags = c.diagnostics(&uri);
+    let messages: Vec<&str> = diags.iter().filter_map(|d| d.get("message").as_str()).collect();
+    assert!(messages.len() == 1 && messages[0].contains("expected `@Bottom`, found `@Top`"), "{diags:?}");
+
+    let fixed = "$ @mod NAT\n$ Nat : @union = Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Zero = @tt\n";
+    c.notify(
+        "textDocument/didChange",
+        Json::obj([
+            ("textDocument", Json::obj([("uri", Json::str(uri.as_str())), ("version", Json::int(2))])),
+            ("contentChanges", Json::Arr(vec![Json::obj([("text", Json::str(fixed))])])),
+        ]),
+    );
+    assert!(c.diagnostics(&uri).is_empty());
+    let _ = c.child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+}

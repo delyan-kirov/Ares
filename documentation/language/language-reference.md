@@ -36,6 +36,7 @@ each of type `a -> a -> @Bool`.
 13. The `@`-sigil catalogue
 14. Compiler CLI
 15. Standard library modules
+16. Dependent types (preview, checked by the kernel)
 
 ---
 
@@ -1060,9 +1061,10 @@ $ as_min : @Int =
 
 `@use` stands only on a global definition's own signature: not inside a
 parameter's type (`(@use {d: IOrd t} -> t) -> t`), an annotation, a field type, or
-(for now) a local `let`'s signature. `@use {}` is an error. `@ctx` is reserved:
-with dependent types (#406) it becomes the binder of parameters solved by
-unification (`@ctx {t: @Type}`), and writing it today is an error that points here.
+(for now) a local `let`'s signature. `@use {}` is an error. `@ctx` binds
+parameters solved by unification (#406). Today it binds levels only,
+`@ctx {u: @l} ->`, which the kernel checks (section 16); any other `@ctx`
+parameter is an error that points here.
 
 An instance may itself take a context, which resolution fills in recursively, so
 `IEq (@Vec t)` is built from `IEq t`. `CORE`'s operators are all ordinary functions
@@ -1704,6 +1706,7 @@ An option not set keeps its default:
 | `format.width` | `100` | 40 to 400 | the line width `ares fmt` fits code into |
 | `format.indent` | `4` | 1 to 16 | spaces per indentation level |
 | `check.max_errors` | `20` | 1 to 10000 | the most errors `ares check` prints |
+| `check.checker` | `frontend` | `frontend`, `kernel` | what checks a module: the compiler's checker, or the kernel for dependent modules (section 16) |
 | `lsp.check` | `type` | `type`, `save` | check as you type, or only when a file is saved |
 | `lsp.focus` | `roots` | `all`, `roots`, `one` | how loudly errors are shown (see `documentation/tooling/lsp.md`) |
 | `lsp.debounce_ms` | `150` | 0 to 5000 | how long typing must pause before the file is checked |
@@ -1806,7 +1809,10 @@ A quick index of the `@`-forms and where each is documented above.
 | `@struct` `@union` `@effect` `@alias` | type declarations | 6, 8.1, 3.10 |
 | `@extern` | foreign binding, builtin declaration | 10 |
 | `@use` | instance (interface) parameter and explicit argument | 7.4 |
-| `@ctx` | reserved for dependent types | 7.4 |
+| `@ctx` | level parameters and arguments; any other use is reserved | 16, 7.4 |
+| `@Type` `@l` `@max` `@imax` | universes and levels | 16 |
+| `@axiom` | a postulate | 16 |
+| `@Top` `@tt` `@Bottom` `@Eq` `@refl` `@transp` `@cast` `@Quot` `@qin` `@qelim` | kernel primitives | 16 |
 | `@absurd` | the empty match | 5.1 |
 | `@private` | visibility | 2.4 |
 | `&` `@abort` | compile-time splice | 11 |
@@ -1878,4 +1884,83 @@ import). A brief map:
 | `LA` | shape-checked linear algebra over sized tensors |
 | `CPX` | complex math over `CORE`'s `Cpx`: parts, polar form, roots, transcendentals |
 | `TARGET` | compilation-target reflection (qualified) |
+
+---
+
+# 16. Dependent types (preview, checked by the kernel)
+
+Ares is becoming dependently typed, with observational equality (issue #406).
+The parser already reads the whole language: types are expressions, so any
+term may stand in a type position and a function type may stand in a term. The
+compiler's checker does not take types as terms yet; it rejects these forms
+(`UNSUPPORTED`). What checks them today is the observational kernel
+(`crates/kernel`, see `documentation/type-theory/kernel.md`), for modules in a
+project whose `BUILD.ares` sets `@option "check.checker" "kernel"`. There
+`ares check` and the language server hand the module to the kernel, which
+prints each global with its type; such a module is not compiled.
+
+```ares-fragment
+$ @mod NAT
+$ Nat : @union = Zero: {}, Succ: Nat
+$ add : Nat -> Nat -> Nat = \m n => Nat.elim (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
+$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
+$ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl (add two two)
+```
+
+## 16.1 Universes and functions
+
+`@Type l` is the universe at level `l`; `@Type 0` holds the propositions, and a
+type lives in exactly one universe. A level is a number, a level name, `l + n`,
+`@max a b` or `@imax a b`. A function type may name its parameter and mention
+it in its result, `(t: @Type 1) -> t -> t`; as in every definition, the
+signature's leading named parameters are bound in the body (section 7.4), so
+the identity is written `$ id : (t: @Type 1) -> t -> t = \x => x`.
+
+A signature that starts with `@ctx {u: @l, ...} ->` binds levels. A use passes
+them by name, `id @ctx {.u = 2} ...`, or leaves them out to be inferred. An
+argument written `_` is inferred from the types around it:
+`trans _ _ _ e f`.
+
+## 16.2 Types as terms
+
+A capitalized name with a signature defines a type, or a type family, as a term:
+
+```ares-fragment
+$ Frac : @Type 1 = {Integer, Pos}
+$ Pred : Nat -> @Type 0 = \n => n ~ n
+```
+
+`{a, b}` is a pair where a pair type is expected, and otherwise the type of
+pairs `{A, B}`; `{x: A, y: B x}` is a dependent pair type, and `p.0`, `p.1`
+project. `$ name : T = @axiom` postulates `name`.
+
+## 16.3 Inductive types
+
+An inductive type is a union. `$ D : @union = Tag: payload, ...` is in
+`@Type 1`. With parameters, indices or another universe, the signature states
+them and the body is the union. A constructor of an indexed family states its
+result after its payload:
+
+```ares-fragment
+$ Vec : (a: @Type 1) -> Nat -> @Type 1 =
+    @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }
+```
+
+Constructor `Tag` of `D` is written `D.Tag.{ fields }`, or `.Tag.{ fields }`
+when one constructor has that tag; the type's parameters are inferred. A
+declaration adds the recursor `D.elim`, whose motive comes first after the
+parameters, and for a type with parameters the projections `D.eq_Tag_f` from
+`D a ~ D b` to the equality of field `f`'s types.
+
+## 16.4 Equality, casts and quotients
+
+`a ~ b` is the observational equality, a proposition computed from the type of
+`a` and `b`: pointwise at functions, componentwise at pairs,
+constructor-wise at inductive types. `@refl a` proves `a ~ a`;
+`@transp t B u t2 e` transports a proof `u : B t` along `e : t ~ t2`;
+`@cast A B e x` moves `x : A` to `B` along `e : A ~ B`. `@Top`, `@tt` and
+`@Bottom` are truth, its proof and falsity, and `x |> @absurd` eliminates a
+proof `x` of `@Bottom` at the type expected. `@Quot A R rr rs rt` is `A`
+quotiented by an equivalence `R`, `@qin a` a class, and `@qelim P f resp q`
+eliminates a class by a function `f` that respects `R`.
 

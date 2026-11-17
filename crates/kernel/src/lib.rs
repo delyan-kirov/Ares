@@ -43,6 +43,22 @@ pub fn axioms(sig: &Signature, name: &str) -> Option<Vec<String>> {
     Some(sig.axioms(id).into_iter().map(|a| sig.global(a).name.to_string()).collect())
 }
 
+/// Global `name`'s type, printed.
+pub fn type_of(sig: &Signature, name: &str) -> Option<String> {
+    let global = sig.global(sig.lookup(name)?);
+    let shown = term::TermDisplay {
+        sig,
+        names: &[],
+        level_names: &global.level_params,
+        term: &global.ty,
+    };
+    if global.level_params.is_empty() {
+        return Some(shown.to_string());
+    }
+    let levels: Vec<String> = global.level_params.iter().map(|l| format!("{l}: @l")).collect();
+    Some(format!("@ctx {{{}}} -> {shown}", levels.join(", ")))
+}
+
 /// The normal form of global `name`'s body, printed (for tests and tools).
 pub fn normal_form(sig: &Signature, name: &str) -> Option<String> {
     let id = sig.lookup(name)?;

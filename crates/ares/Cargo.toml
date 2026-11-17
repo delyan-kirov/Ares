@@ -20,3 +20,4 @@ utilities = { path = "../utilities" }
 frontend = { path = "../frontend" }
 interpreter = { path = "../interpreter" }
 ccg = { path = "../ccg" }
+kernel = { path = "../kernel" }

@@ -9,6 +9,7 @@ dependencies = [
  "ccg",
  "frontend",
  "interpreter",
+ "kernel",
  "utilities",
 ]
 

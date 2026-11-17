@@ -50,7 +50,7 @@ $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
 $ Nat : @union = Zero: {}, Succ: Nat
 $ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
 $ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
-$ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl four
+$ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl (add two two)
 ```
 
 - `$ name : T = e` defines and `$ name : T = @axiom` postulates. A signature's leading named parameters `(x: A) ->` are bound by the signature, as in every Ares definition (#437): `id`'s body binds only `x`. A capitalized name defines a type, `$ Frac : @Type 1 = {Integer, Pos}`.

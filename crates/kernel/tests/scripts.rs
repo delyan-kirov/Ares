@@ -9,7 +9,8 @@ fn scripts() -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
         .expect("the scripts directory exists")
         .map(|e| e.expect("a readable entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "ares"))
+        // `BUILD.ares` configures the directory: it is not a script.
+        .filter(|p| p.extension().is_some_and(|e| e == "ares") && p.file_stem().is_some_and(|s| s != "BUILD"))
         .collect();
     paths.sort();
     assert!(!paths.is_empty(), "no scripts in {}", dir.display());

@@ -51,6 +51,9 @@ struct Open {
     /// Why the last analysis could not load the document's modules, for the
     /// version analyzed, when that has a place in the document.
     failure: Option<(i64, Diagnostic)>,
+    /// The kernel checks this document (`check.checker` is `kernel`): its one
+    /// error, if any, is `failure`, and there is no snapshot.
+    kernel: bool,
 }
 
 pub struct Server {
@@ -414,6 +417,7 @@ impl Server {
                 saved: None,
                 focus: None,
                 failure: None,
+                kernel: false,
             },
         );
         self.mark_dirty(uri, Duration::ZERO);
@@ -451,7 +455,7 @@ impl Server {
     fn did_save(&mut self, params: &Json) {
         let Some(uri) = params.get("textDocument").get("uri").as_str() else { return };
         let uri = uri.to_string();
-        if let Some(open) = self.open.get_mut(&uri) {
+        if let Some(open) = self.open.get_mut(&uri).filter(|o| !o.kernel) {
             open.last_edit = None;
             let name = open.snapshot.as_ref().map(|(_, s)| s.sources[s.root].0.clone());
             let started = Instant::now();
@@ -568,6 +572,9 @@ impl Server {
     }
 
     fn analyze(&mut self, uri: &str) {
+        if self.open.get(uri).is_some_and(|o| self.config(&o.path).word("check", "checker") == "kernel") {
+            return self.analyze_kernel(uri);
+        }
         let overlay: HashMap<PathBuf, String> = self
             .provided
             .iter()
@@ -575,6 +582,7 @@ impl Server {
             .chain(self.open.values().map(|o| (o.path.clone(), o.doc.text.clone())))
             .collect();
         let Some(open) = self.open.get_mut(uri) else { return };
+        open.kernel = false;
         let (path, version) = (open.path.clone(), open.doc.version);
         // The new check rewinds the types the old snapshot reads, so it goes first.
         open.snapshot = None;
@@ -603,6 +611,19 @@ impl Server {
                 self.notify("window/logMessage", Json::obj([("type", Json::int(1)), ("message", Json::str(msg))]));
             }
         }
+    }
+
+    /// Check a kernel module: the kernel reports its first error, which is the
+    /// document's one diagnostic, or none.
+    fn analyze_kernel(&mut self, uri: &str) {
+        let Some(open) = self.open.get_mut(uri) else { return };
+        let started = Instant::now();
+        let result = crate::driver::kernel_check(&open.doc.text);
+        open.kernel = true;
+        open.snapshot = None;
+        open.failure = result.err().map(|d| (open.doc.version, d));
+        let msg = format!("ares: kernel checked {} in {:.1} ms", open.path.display(), started.elapsed().as_secs_f64() * 1000.0);
+        self.notify("window/logMessage", Json::obj([("type", Json::int(4)), ("message", Json::str(msg))]));
     }
 
     /// A fresh analysis of `uri` for a request about its current text.
@@ -749,7 +770,16 @@ impl Server {
     /// load failure, which is its one diagnostic.
     fn publish_failure(&mut self, uri: &str) {
         let Some(open) = self.open.get(uri) else { return };
-        let Some((version, d)) = &open.failure else { return };
+        let Some((version, d)) = &open.failure else {
+            if open.kernel {
+                let version = open.doc.version;
+                self.notify(
+                    "textDocument/publishDiagnostics",
+                    Json::obj([("uri", Json::str(uri)), ("version", Json::int(version)), ("diagnostics", Json::Arr(Vec::new()))]),
+                );
+            }
+            return;
+        };
         let diag = Json::obj([
             ("range", range(&open.doc, d.root().span, self.enc)),
             ("severity", Json::int(ERROR)),
