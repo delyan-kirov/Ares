@@ -1,0 +1,8 @@
+$ @mod TYPE_VAR_UNBOUND
+
+# A signature binds its type variables in `@ctx`: a lowercase name nothing
+# binds is an error, fixed by binding it there.
+$ id : a -> a = \x => x  #~ error[TYPE_UNBOUND]: `a` is not bound
+
+# An annotation in a body names the signature's variables, and no others.
+$ keep : @ctx {a: @Type} -> a -> a = \(x: b) => x  #~ error[TYPE_UNBOUND]: `b` is not bound

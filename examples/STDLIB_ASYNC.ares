@@ -114,7 +114,7 @@ $ tallied : {} -> <Async, Tally> @Int =
     Async.recv done + Async.recv done
 
 # A count of every `bump`, the handler threading it as a parameter.
-$ count : ({} -> <Tally> a) -> { a, @Int } = \body =>
+$ count : @ctx { a: @Type } -> ({} -> <Tally> a) -> { a, @Int } = \body =>
     let run =
         do body {}
         ctl k | Tally.bump n => \acc => k {} (acc + n) | r => \acc => { r, acc }

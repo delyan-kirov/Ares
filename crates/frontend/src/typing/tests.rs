@@ -144,7 +144,7 @@ fn identity_is_polymorphic() {
 fn polymorphic_id_used_at_two_types() {
     // Using a generalized `id` at @Int and @Str must not conflict.
     let src = "$ @mod M\n\
-                   $ id : a -> a = \\x => x\n\
+                   $ id : @ctx {a: @Type} -> a -> a = \\x => x\n\
                    $ pair : {@Int, @Str} = let a = id 1 in let b = id \"s\" in {a, b}";
     assert_eq!(type_of(src, "pair"), "{@Int, @Str}");
 }
@@ -159,7 +159,7 @@ fn a_local_let_is_not_generalized() {
 
 #[test]
 fn function_application_and_arrows() {
-    let src = "$ @mod M\n$ apply : (a -> b) -> a -> b = \\f x => f x";
+    let src = "$ @mod M\n$ apply : @ctx {a: @Type, b: @Type} -> (a -> b) -> a -> b = \\f x => f x";
     // `(A -> B) -> A -> B`.
     assert_eq!(type_of(src, "apply"), "(a -> b) -> a -> b");
 }
@@ -234,7 +234,7 @@ fn union_constructor_and_match() {
     let src = "$ @mod M\n\
                    $ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}\n\
                    $ m : Maybe @Int = Maybe.Just.{ 7 }\n\
-                   $ get : a -> Maybe a -> a = \\d => \\o => o |> \\ | Maybe.Just.{x} => x | _ => d";
+                   $ get : @ctx {a: @Type} -> a -> Maybe a -> a = \\d => \\o => o |> \\ | Maybe.Just.{x} => x | _ => d";
     assert_eq!(type_of(src, "m"), "Maybe @Int");
     assert_eq!(type_of(src, "get"), "a -> Maybe a -> a");
 }
@@ -282,7 +282,7 @@ fn a_name_defined_twice_is_an_error() {
 fn an_interface_covers_several_types() {
     let src = "$ @mod M\n\
                    $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                   $ bump : @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
+                   $ bump : @ctx {t: @Type} -> @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x + 1 }\n\
                    $ bump_str : IBump @Str = .{ .bump = \\x => x ++ \"!\" }\n\
                    $ a : @Int = bump 3\n\
@@ -319,7 +319,7 @@ fn sized_literal_arithmetic_takes_the_result_type() {
 fn a_type_with_no_instance_is_reported() {
     let src = "$ @mod M\n\
                    $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                   $ bump : @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
+                   $ bump : @ctx {t: @Type} -> @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x }\n\
                    $ bad = bump 1.0";
     assert!(errors(src).contains("no value of type `IBump @Float64`"), "{}", errors(src));
@@ -343,7 +343,7 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
     ));
     assert!(several.contains("`(+) @use {.d = add_a} a b`"), "{several}");
     let named = "$ @mod M\n$ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                 $ bump : @use {b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
+                 $ bump : @ctx {t: @Type} -> @use {b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
     assert!(helps(named).contains("`bump @use {.b = value} ...`"), "{}", helps(named));
 }
 
@@ -351,9 +351,9 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
 fn cross_module_import_brings_in_types_and_values() {
     let dep_src = "$ @mod OPT\n\
                        $ Option : (t: @Type) -> @Type = @union Some: t, None: {}\n\
-                       $ is_some : Option t -> @Bool = \\o => \
+                       $ is_some : @ctx {t: @Type} -> Option t -> @Bool = \\o => \
                        o |> \\ | Option.Some.{_} => @true | _ => @false\n\
-                       $ unwrap_or : Option t -> t -> t = \\o d => \
+                       $ unwrap_or : @ctx {t: @Type} -> Option t -> t -> t = \\o d => \
                        o |> \\ | Option.Some.{x} => x | _ => d";
     let use_src = "$ @mod U\n\
                        $ @import OPT\n\
@@ -505,7 +505,7 @@ fn io_is_a_builtin_effect_and_propagates() {
     // it in its latent row, and a caller that performs it inherits `@IO`.
     let src = "$ @mod M\n\
                $ write : @Str -> <@IO> @Int = @extern \"C\" \"write\" \"libc\"\n\
-               $ p : @Str -> <@IO | a> {} = \\s => let _ = write s in {}";
+               $ p : @ctx {a: @Row} -> @Str -> <@IO | a> {} = \\s => let _ = write s in {}";
     assert_eq!(type_of(src, "write"), "@Str -> <@IO> @Int");
     assert!(type_of(src, "p").contains("<@IO"), "{}", type_of(src, "p"));
 }
@@ -568,7 +568,7 @@ fn type_variable_and_sized_and_declared_types_are_accepted() {
     // name is known. None of these is an "unknown type".
     let src = "$ @mod M\n\
                $ Box : @Type = @union Wrap: { @Int },\n\
-               $ id : a -> a = \\x => x\n\
+               $ id : @ctx {a: @Type} -> a -> a = \\x => x\n\
                $ n : @Int8 = 5\n\
                $ p : @Ptr -> @Ptr = \\x => x\n\
                $ b : Box = Box.Wrap.{ 1 }";
@@ -612,7 +612,7 @@ fn open_row_entry_may_perform_any_effect() {
     // pure `<>` would reject this (see `unhandled_effect_is_a_compile_error`).
     let src = "$ @mod MAIN\n\
                $ Yell : @Type = @effect shout : @Int -> {},\n\
-               $ main : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
+               $ main : @ctx {e: @Row} -> {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "", "open-row main should type-check");
     assert_eq!(type_of(src, "main"), "{} -> <Yell | a> @Int");
 }
@@ -622,7 +622,7 @@ fn signed_member_recurses_at_another_type() {
     // A use inside the recursive group sees `id`'s signature, so `g` may call it
     // at `@Str` and `@Int` and neither use fixes `a`.
     let src = "$ @mod M\n\
-               $ id : a -> a = \\x => let _ = g 0 in x\n\
+               $ id : @ctx {a: @Type} -> a -> a = \\x => let _ = g 0 in x\n\
                $ g : @Int -> @Int = \\n => let _ = id \"s\" in id n";
     assert_eq!(errors(src), "");
     assert_eq!(type_of(src, "id"), "a -> a");
@@ -633,7 +633,7 @@ fn signature_row_tail_stays_open() {
     // Unlike a type variable, a row tail may be extended by the body (#270).
     let src = "$ @mod M\n\
                $ Yell : @Type = @effect shout : @Int -> {},\n\
-               $ f : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
+               $ f : @ctx {e: @Row} -> {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "");
 }
 
@@ -935,7 +935,7 @@ fn equality_needs_an_instance() {
 /// undeclared one has nothing to resolve, and says so instead of inventing a type.
 #[test]
 fn generic_comparison_declares_its_context() {
-    let src = "$ @mod M\n$ eq : @use {d: IEq a} -> a -> a -> @Bool = \\x y => d.eq x y";
+    let src = "$ @mod M\n$ eq : @ctx {a: @Type} -> @use {d: IEq a} -> a -> a -> @Bool = \\x y => d.eq x y";
     assert_eq!(errors(src), "");
     assert_eq!(type_of(src, "eq"), "a -> a -> @Bool");
 
@@ -948,8 +948,8 @@ fn generic_comparison_declares_its_context() {
 #[test]
 fn comparison_operators_coexist_with_effect_rows() {
     let src = "$ @mod M\n$ Fail : @Type = @effect fail : {} -> @Int\n\
-               $ f : @Int -> <Fail | e> @Bool = \\n => n < 3\n\
-               $ g : @Int -> <| e> @Bool = \\n => n > 3";
+               $ f : @ctx {e: @Row} -> @Int -> <Fail | e> @Bool = \\n => n < 3\n\
+               $ g : @ctx {e: @Row} -> @Int -> <| e> @Bool = \\n => n > 3";
     assert_eq!(errors(src), "");
     assert_eq!(type_of(src, "g"), "@Int -> @Bool");
 }
@@ -1442,7 +1442,7 @@ fn a_row_names_only_effects() {
         "{ROW_EFFECTS}$ N : @Type = @Int\n$ f : @Int -> <N> @Int = \\x => x\n"
     ));
     assert!(e.contains("type alias `N` is not an effect"), "got: {e:?}");
-    let e = errors(&format!("{ROW_EFFECTS}$ f : @Int -> <Log e> @Int = \\x => x\n"));
+    let e = errors(&format!("{ROW_EFFECTS}$ f : @ctx {{e: @Type}} -> @Int -> <Log e> @Int = \\x => x\n"));
     assert!(e.contains("effect `Log` takes no parameters"), "got: {e:?}");
 }
 
@@ -1488,9 +1488,9 @@ fn a_handler_cannot_resume_with_a_value_of_its_own() {
 fn mutual_recursion_keeps_a_row_parameter_open() {
     let src = "$ @mod M\n\
                $ St : (e: @Row) -> @Type = @union Done: @Int, More: ({} -> <e> St e),\n\
-               $ serve : St e -> @Int -> <e> @Int = \\st s =>\n\
+               $ serve : @ctx {e: @Row} -> St e -> @Int -> <e> @Int = \\st s =>\n\
                \tst |> \\ | St.Done.{ r } => r + s | St.More.{ k } => step k s\n\
-               $ step : ({} -> <e> St e) -> @Int -> <e> @Int = \\k s => serve (k {}) s\n";
+               $ step : @ctx {e: @Row} -> ({} -> <e> St e) -> @Int -> <e> @Int = \\k s => serve (k {}) s\n";
     // A bare row variable is not printed; a closed one would show as `St <>`.
     assert_eq!(type_of(src, "serve"), "St a -> @Int -> @Int");
     assert_eq!(type_of(src, "step"), "({} -> St a) -> @Int -> @Int");
@@ -1528,11 +1528,11 @@ fn reflection_reports_member_sources_and_pending_types() {
 fn sizes_are_normalised_before_a_variable_binds() {
     // `n * 1` is the size `n`, not a binding of `n` to `n * 1` (a cycle).
     let src = "$ @mod M\n\
-               $ one : @Tensor (n * 1) @Int -> @Tensor n @Int = \\x => x\n\
-               $ zero : @Tensor n @Int -> @Tensor (n + 0) @Int = \\x => x\n\
-               $ comm : @Tensor (n + m) @Int -> @Tensor (m + n) @Int = \\x => x\n";
+               $ one : @ctx {n: @Nat} -> @Tensor (n * 1) @Int -> @Tensor n @Int = \\x => x\n\
+               $ zero : @ctx {n: @Nat} -> @Tensor n @Int -> @Tensor (n + 0) @Int = \\x => x\n\
+               $ comm : @ctx {n: @Nat, m: @Nat} -> @Tensor (n + m) @Int -> @Tensor (m + n) @Int = \\x => x\n";
     assert_eq!(errors(src), "");
-    let src = "$ @mod M\n$ succ : @Tensor n @Int -> @Tensor (n + 1) @Int = \\x => x\n";
+    let src = "$ @mod M\n$ succ : @ctx {n: @Nat} -> @Tensor n @Int -> @Tensor (n + 1) @Int = \\x => x\n";
     assert!(errors(src).contains("size mismatch"), "{}", errors(src));
 }
 
@@ -1540,9 +1540,9 @@ fn sizes_are_normalised_before_a_variable_binds() {
 fn a_size_equation_solves_once_equal_terms_cancel() {
     // `n + 1 = 5` is `n = 4`; `2 * n = 6` waits until the result fixes `n`.
     let src = "$ @mod M\n\
-               $ head1 : @Tensor (n + 1) @Int -> @Int = \\t => head1 t\n\
+               $ head1 : @ctx {n: @Nat} -> @Tensor (n + 1) @Int -> @Int = \\t => head1 t\n\
                $ a : @Tensor 5 @Int -> @Int = \\x => head1 x\n\
-               $ half : @Tensor (2 * n) @Int -> @Tensor n @Int = \\x => half x\n\
+               $ half : @ctx {n: @Nat} -> @Tensor (2 * n) @Int -> @Tensor n @Int = \\x => half x\n\
                $ c : @Tensor 6 @Int -> @Tensor 3 @Int = \\x => half x\n";
     assert_eq!(errors(src), "");
 }
@@ -1551,7 +1551,7 @@ fn a_size_equation_solves_once_equal_terms_cancel() {
 fn a_postponed_size_equation_wakes_when_a_variable_is_solved() {
     // `n + m = 5` has no unique solution until `n` is known.
     let drop = "$ @mod M\n\
-                $ drop : @Tensor (n + m) @Int -> @Tensor n @Int -> @Tensor m @Int = \\x y => drop x y\n";
+                $ drop : @ctx {n: @Nat, m: @Nat} -> @Tensor (n + m) @Int -> @Tensor n @Int -> @Tensor m @Int = \\x y => drop x y\n";
     let ok = format!("{drop}$ b : @Tensor 5 @Int -> @Tensor 2 @Int -> @Tensor 3 @Int = \\x y => drop x y\n");
     assert_eq!(errors(&ok), "");
     let bad = format!("{drop}$ b : @Tensor 5 @Int -> @Tensor 7 @Int -> @Tensor 3 @Int = \\x y => drop x y\n");

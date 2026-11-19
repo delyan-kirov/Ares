@@ -408,7 +408,7 @@ fn one_operation_over_two_types_matches_interpreter() {
     // backend must project and call the same instance the interpreter does.
     let src = "$ @mod M\n\
                $ IKind : (t: @Type) -> @Type = @struct kind: t -> @Int,\n\
-               $ kind : @use {d: IKind t} -> t -> @Int = \\x => d.kind x\n\
+               $ kind : @ctx {t: @Type} -> @use {d: IKind t} -> t -> @Int = \\x => d.kind x\n\
                $ kind_int : IKind @Int = .{ .kind = \\x => 1 }\n\
                $ kind_bool : IKind @Bool = .{ .kind = \\b => 2 }\n\
                $ test : @Int = (kind 7) + (kind @true) * 10\n";
@@ -423,10 +423,10 @@ fn ctx_context_parameter_passing() {
     let src = "$ @mod M\n\
                $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ ord_box : @use {o: Ord t} -> Ord (Box t) = \n\
+               $ ord_box : @ctx {t: @Type} -> @use {o: Ord t} -> Ord (Box t) = \n\
                \t.{ .gt = \\p q => p |> \\ | Box.Wrap.{a} => (q |> \\ | Box.Wrap.{b} => o.gt a b) }\n\
                $ unbox : Box @Int -> @Int = \\b => b |> \\ | Box.Wrap.{n} => n\n\
                $ test : @Int =\n\
@@ -443,7 +443,7 @@ fn open_row_record_param() {
     let src = "$ @mod M\n\
                $ Point  : @Type = @struct x: @Int, y: @Int,\n\
                $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int,\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
                $ test : @Int = (area Point.{ .x=3, .y=4 }) + (area Point3.{ .x=5, .y=6, .z=9 })\n";
     assert_matches(src, "test");
 }
@@ -453,8 +453,8 @@ fn anonymous_record_values() {
     // Records under an open row (name-keyed) and pair decay (positional) must build
     // and read the same on the C backend as the interpreter.
     let src = "$ @mod M\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
-               $ shift : { x: @Int | r } -> { x: @Int | r } = \\p => { .x = p.x + 10 | p }\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
+               $ shift : @ctx {r: @Row} -> { x: @Int | r } -> { x: @Int | r } = \\p => { .x = p.x + 10 | p }\n\
                $ add : {x: @Int, y: @Int} -> @Int = x + y\n\
                $ test : @Int =\n\
                \t(area { .x = 2, .y = 5, .tag = 7 }) + (area (shift { .x = 1, .y = 4 })) + add { .x = 5, .y = 6 }\n";
@@ -466,8 +466,8 @@ fn record_destructuring_pattern() {
     // Record patterns lower to name-keyed struct matches; the C backend must
     // destructure them the same as the interpreter.
     let src = "$ @mod M\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p |> \\ | { .x = a, .y = b, .._ } => a * b\n\
-               $ sumxy : { x: @Int, y: @Int | r } -> @Int = \\{ .x, .y } => x + y\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p |> \\ | { .x = a, .y = b, .._ } => a * b\n\
+               $ sumxy : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\{ .x, .y } => x + y\n\
                $ test : @Int = area { .x = 3, .y = 4, .tag = 9 } + sumxy { .x = 5, .y = 6 }\n";
     assert_matches(src, "test");
 }
@@ -479,8 +479,8 @@ fn lazy_recursive_struct_streams() {
     let src = "$ @mod M\n\
                $ Stream : (t: @Type) -> @Type = @struct head : t, tail : Stream t\n\
                $ from : @Int -> Stream @Int = \\n => { .head = n, .tail = from (n + 1) }\n\
-               $ smap : (a -> b) -> Stream a -> Stream b = \\f s => { .head = f s.head, .tail = smap f s.tail }\n\
-               $ nth : @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
+               $ smap : @ctx {a: @Type, b: @Type} -> (a -> b) -> Stream a -> Stream b = \\f s => { .head = f s.head, .tail = smap f s.tail }\n\
+               $ nth : @ctx {t: @Type} -> @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
                $ dbl : @Int -> @Int = \\x => x + x\n\
                $ test : @Int = nth 4 (smap dbl (from 1))\n";
     assert_matches(src, "test");
@@ -949,7 +949,7 @@ fn variants_and_when() {
 #[test]
 fn lists_and_length() {
     let src = "$ @mod T\n\
-               $ len : @Vec t -> @Int =\n\
+               $ len : @ctx {t: @Type} -> @Vec t -> @Int =\n\
                \tlet helper : @Vec t -> @Int -> @Int = \\l n =>\n\
                \t\tl |> \\ | [] => n | _ :: rest => helper rest (n + 1)\n\
                \t in \\l => helper l 0\n\
@@ -1094,7 +1094,7 @@ fn literal_construction_hooks_match_interpreter() {
                $ Wrap : @Type = @struct n: @Int\n\
                $ il : @IIntLit Wrap = .{ .of_int = \\x => Wrap.{ .n = x } }\n\
                $ Bag : (a: @Type) -> @Type = @union Items: {@Vec a}\n\
-               $ ql : @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
+               $ ql : @ctx {a: @Type} -> @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
                $ w : Wrap = 40\n\
                $ bag : Bag @Int = [1, 2]\n\
                $ plain : @Int = 5\n\
@@ -1150,7 +1150,7 @@ fn pattern_hooks_match_interpreter() {
     // types must lower the same on the C backend as on the interpreter.
     let src = "$ @mod M\n\
                $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
-               $ sv : @ISeqView (Stack a) a = .{\n\
+               $ sv : @ctx {a: @Type} -> @ISeqView (Stack a) a = .{\n\
                \t.view = \\s => s.items |> \\ | h :: t => SeqView.More.{ h, Stack.{ .items = t } } | _ => SeqView.Empty,\n\
                }\n\
                $ MyStr : @Type = @struct bytes: @Str\n\

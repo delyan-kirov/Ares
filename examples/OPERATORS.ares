@@ -57,7 +57,7 @@ $ ck_structural : @Int =
 
 # `<` and `>` in an expression, in a function whose type carries an effect row:
 # the row is type-level, the operators value-level, so the two never meet.
-$ clamp_pos : @Int -> <| e> @Int = \n => if n < 0 => 0 else n
+$ clamp_pos : @ctx { e: @Row } -> @Int -> <| e> @Int = \n => if n < 0 => 0 else n
 $ ck_row : @Int = if (clamp_pos (0 - 3) == 0) && (clamp_pos 5 == 5) => 0 else 256
 
 # Force-evaluate results for the combined test runner (pass = no fault).

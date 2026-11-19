@@ -42,6 +42,8 @@ pub enum CtxVal {
     Proj(Box<CtxVal>, usize),
     /// An explicit `@use {...}` argument; lowering lowers this AST node in place.
     Expr(Aol<Expr>),
+    /// A natural number, part of a `@ctx` size passed at run time.
+    Nat(u64),
 }
 
 /// A desugar site's resolved blessed interface: the instance found by type and the
@@ -112,6 +114,12 @@ pub struct Resolved {
     /// lowering injects ahead of the explicit arguments (from
     /// [`Checker::ctx_calls`]).
     pub ctx_args: HashMap<Aol<Expr>, CtxVal>,
+    /// The `@ctx` sizes each reference passes at run time, ahead of its
+    /// context, and the `@Nat` fields a definition (keyed by its body) takes
+    /// as leading parameters (from [`Checker::size_args`] and
+    /// [`Checker::size_params`]).
+    pub size_args: HashMap<Aol<Expr>, Vec<CtxVal>>,
+    pub size_params: HashMap<Aol<Expr>, Vec<StrId>>,
     /// The sites a lenient expansion round left unresolved (from
     /// [`Checker::deferred_sites`]). Lowering marks the globals containing one.
     pub deferred_sites: HashSet<Aol<Expr>>,
@@ -198,6 +206,12 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
         resolved.call_modules.extend(checker.call_modules());
         for (&site, val) in checker.ctx_calls() {
             resolved.ctx_args.insert(site, val.clone());
+        }
+        for (&site, vals) in checker.size_args() {
+            resolved.size_args.insert(site, vals.clone());
+        }
+        for (&body, fields) in checker.size_params() {
+            resolved.size_params.insert(body, fields.clone());
         }
         resolved.deferred_sites.extend(checker.deferred_sites());
         resolved.cast_widths.extend(checker.cast_widths());
@@ -313,6 +327,16 @@ impl<'a> Checker<'a> {
     /// value lowering injects ahead of the explicit arguments.
     pub fn ctx_calls(&self) -> &HashMap<Aol<Expr>, CtxVal> {
         &self.ctx_args
+    }
+
+    /// The sizes each reference passes at run time (see `ctx_sizes`).
+    pub fn size_args(&self) -> &HashMap<Aol<Expr>, Vec<CtxVal>> {
+        &self.size_args
+    }
+
+    /// The `@Nat` fields each definition, by its body, takes at run time.
+    pub fn size_params(&self) -> &HashMap<Aol<Expr>, Vec<StrId>> {
+        &self.size_params
     }
 
     /// Each `@extern` site's marshalling signature: the flattened argument type

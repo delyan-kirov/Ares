@@ -178,8 +178,10 @@ $ impl_IToString_for_Char : IToString Char = .{ .show = \c => utf8_encode c.code
 $ chars : @Str -> @Vec Char = \s => chars_onto s 0 (@vec_new {})
 
 $ impl_IFmap_for_str : IFmap @Str Char @Str Char = .{ .fmap = \f s => fmap_chars f s 0 "" }
-$ impl_IFor_for_str : IFor @Str Char e = .{ .each = \s body => for_chars s body 0 }
-$ impl_IFoldl_for_str : IFoldl @Str a Char = .{ .foldl = \f acc s => foldl_chars f acc s 0 }
+$ impl_IFor_for_str : @ctx { e: @Type } -> IFor @Str Char e =
+    .{ .each = \s body => for_chars s body 0 }
+$ impl_IFoldl_for_str : @ctx { a: @Type } -> IFoldl @Str a Char =
+    .{ .foldl = \f acc s => foldl_chars f acc s 0 }
 
 # ---- the collection interfaces ----
 
@@ -297,14 +299,14 @@ $ fmap_chars : (Char -> Char) -> @Str -> @Int -> @Str -> @Str = \f s i acc =>
         let d = utf8_decode s i in
         fmap_chars f s d.1 (utf8_encode (f Char.{ .code = d.0 }).code acc)
 
-$ for_chars : @Str -> (Char -> <Loop | e> {}) -> @Int -> <e> {} = \s body i =>
+$ for_chars : @ctx { e: @Row } -> @Str -> (Char -> <Loop | e> {}) -> @Int -> <e> {} = \s body i =>
     if i >= @array_len s =>
         {}
     else
         let d = utf8_decode s i in
         if loop_body Char.{ .code = d.0 } body => for_chars s body d.1 else {}
 
-$ foldl_chars : (a -> Char -> a) -> a -> @Str -> @Int -> a = \f acc s i =>
+$ foldl_chars : @ctx { a: @Type } -> (a -> Char -> a) -> a -> @Str -> @Int -> a = \f acc s i =>
     if i >= @array_len s =>
         acc
     else

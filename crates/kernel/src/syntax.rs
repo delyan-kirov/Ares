@@ -216,6 +216,7 @@ impl Lower<'_> {
                     Expr::Var { module: None, name } if name.as_str() == "@axiom" => ItemBody::Axiom,
                     _ => ItemBody::Definition(self.expr(*body)?),
                 };
+                self.only_levels(*sig)?;
                 Ok(Item {
                     name: name.as_str().into(),
                     span,
@@ -240,6 +241,13 @@ impl Lower<'_> {
                 "a kernel script holds definitions (`$ x : T = e`, `= @axiom`) and unions, nothing else",
             )),
         }
+    }
+
+    /// The kernel's `@ctx` binds levels only: a type is an explicit binder.
+    fn only_levels(&self, sig: Aol<Ty>) -> Result<()> {
+        let Some(fields) = self.ast.ctx_params.get(sig) else { return Ok(()) };
+        let f = self.ast.slice(*fields)[0];
+        Err(self.error(f.span, format!("the kernel's `@ctx` binds levels only: bind `{}` as `({}: ...) ->`", f.name, f.name)))
     }
 
     fn level_params(&self, sig: Aol<Ty>) -> Vec<(Name, Span)> {

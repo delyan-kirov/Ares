@@ -8,49 +8,54 @@ $ @mod ARES
 
 $ @import ARESxALGO
 
-$ is_some : Opt t -> @Bool = \o => o |> \ | Opt.Some.{ _ } => @true | _ => @false
+$ is_some : @ctx { t: @Type } -> Opt t -> @Bool = \o =>
+    o |> \ | Opt.Some.{ _ } => @true | _ => @false
 
-$ is_none : Opt t -> @Bool = \o => o |> \ | Opt.Some.{ _ } => @false | _ => @true
+$ is_none : @ctx { t: @Type } -> Opt t -> @Bool = \o =>
+    o |> \ | Opt.Some.{ _ } => @false | _ => @true
 
 # `unwrap_or o d`: the value inside, or `d` when absent.
-$ impl_IUnwrapOr_for_Opt : IUnwrapOr (Opt t) t =
+$ impl_IUnwrapOr_for_Opt : @ctx { t: @Type } -> IUnwrapOr (Opt t) t =
     .{ .unwrap_or = \o d => o |> \ | Opt.Some.{ x } => x | _ => d }
 
 # Chain a partial computation: feed the value (if any) to an `f` that may
 # itself decline.
-$ opt_then : (a -> Opt b) -> Opt a -> Opt b = \f o => o |> \ | Opt.Some.{ x } => f x | _ => Opt.None
+$ opt_then : @ctx { a: @Type, b: @Type } -> (a -> Opt b) -> Opt a -> Opt b = \f o =>
+    o |> \ | Opt.Some.{ x } => f x | _ => Opt.None
 
 # ---- the container interfaces: zero elements or one ----
 
-$ impl_IFmap_for_Opt : IFmap (Opt a) a (Opt b) b =
+$ impl_IFmap_for_Opt : @ctx { a: @Type, b: @Type } -> IFmap (Opt a) a (Opt b) b =
     .{ .fmap = \f o => o |> \ | Opt.Some.{ x } => Opt.Some.{ f x } | _ => Opt.None }
-$ impl_IFor_for_Opt : IFor (Opt a) a e =
+$ impl_IFor_for_Opt : @ctx { a: @Type, e: @Type } -> IFor (Opt a) a e =
     .{ .each = \o body => o |> \ | Opt.Some.{ x } => (if loop_body x body => {} else {}) | _ => {} }
-$ impl_IFormap_for_Opt : IFormap (Opt a) a (Opt b) b e = .{
-    .mapping = \o f =>
-        o |> \
-            | Opt.Some.{ x } =>
-                (loop_step x f |> \ | LoopStep.Keep.{ y } => Opt.Some.{ y } | _ => Opt.None)
-            | _              => Opt.None,
-}
-$ impl_IFilter_for_Opt : IFilter (Opt t) (t -> @Bool) =
+$ impl_IFormap_for_Opt : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (Opt a) a (Opt b) b e =
+    .{
+        .mapping = \o f =>
+            o |> \
+                | Opt.Some.{ x } =>
+                    (loop_step x f |> \ | LoopStep.Keep.{ y } => Opt.Some.{ y } | _ => Opt.None)
+                | _              => Opt.None,
+    }
+$ impl_IFilter_for_Opt : @ctx { t: @Type } -> IFilter (Opt t) (t -> @Bool) =
     .{ .filter = \p o => o |> \ | Opt.Some.{ x } => (if p x => o else Opt.None) | _ => Opt.None }
-$ impl_IFilterMap_for_Opt : IFilterMap (Opt a) a (Opt b) b =
+$ impl_IFilterMap_for_Opt : @ctx { a: @Type, b: @Type } -> IFilterMap (Opt a) a (Opt b) b =
     .{ .filter_map = \f o => o |> \ | Opt.Some.{ x } => f x | _ => Opt.None }
-$ impl_IFoldl_for_Opt : IFoldl (Opt t) a t =
+$ impl_IFoldl_for_Opt : @ctx { t: @Type, a: @Type } -> IFoldl (Opt t) a t =
     .{ .foldl = \f acc o => o |> \ | Opt.Some.{ x } => f acc x | _ => acc }
-$ impl_IFoldr_for_Opt : IFoldr (Opt t) a t =
+$ impl_IFoldr_for_Opt : @ctx { t: @Type, a: @Type } -> IFoldr (Opt t) a t =
     .{ .foldr = \f z o => o |> \ | Opt.Some.{ x } => f x z | _ => z }
-$ impl_ILen_for_Opt : ILen (Opt t) = .{ .len = \o => o |> \ | Opt.Some.{ _ } => 1 | _ => 0 }
-$ impl_IEmpty_for_Opt : IEmpty (Opt t) = .{ .is_empty = is_none }
-$ impl_IAny_for_Opt : IAny (Opt t) t =
+$ impl_ILen_for_Opt : @ctx { t: @Type } -> ILen (Opt t) =
+    .{ .len = \o => o |> \ | Opt.Some.{ _ } => 1 | _ => 0 }
+$ impl_IEmpty_for_Opt : @ctx { t: @Type } -> IEmpty (Opt t) = .{ .is_empty = is_none }
+$ impl_IAny_for_Opt : @ctx { t: @Type } -> IAny (Opt t) t =
     .{ .any = \p o => o |> \ | Opt.Some.{ x } => p x | _ => @false }
-$ impl_IAll_for_Opt : IAll (Opt t) t =
+$ impl_IAll_for_Opt : @ctx { t: @Type } -> IAll (Opt t) t =
     .{ .all = \p o => o |> \ | Opt.Some.{ x } => p x | _ => @true }
-$ impl_IFind_for_Opt : IFind (Opt t) t =
+$ impl_IFind_for_Opt : @ctx { t: @Type } -> IFind (Opt t) t =
     .{ .find = \p o => o |> \ | Opt.Some.{ x } => (if p x => o else Opt.None) | _ => Opt.None }
-$ impl_IToList_for_Opt : IToList (Opt t) (List t) =
+$ impl_IToList_for_Opt : @ctx { t: @Type } -> IToList (Opt t) (List t) =
     .{ .to_list = \o => o |> \ | Opt.Some.{ x } => List.Cons.{ x, List.Nil } | _ => List.Nil }
 # A nested `Opt`, flattened: present only when both layers are.
-$ impl_IConcat_for_Opt : IConcat (Opt (Opt t)) (Opt t) =
+$ impl_IConcat_for_Opt : @ctx { t: @Type } -> IConcat (Opt (Opt t)) (Opt t) =
     .{ .concat = \o => o |> \ | Opt.Some.{ x } => x | _ => Opt.None }

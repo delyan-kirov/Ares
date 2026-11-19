@@ -1,7 +1,8 @@
 $ @mod PARSE_NAMED_PARAM_DEPENDENT
 
-# A result type that names the parameter is a dependent function type, which
-# needs the elaborator of #406; until then a lowercase name is a type variable.
-# The parser reads it (types are expressions); the checker rejects it.
-$ len : (n: @Nat) -> @Tensor n @Int = ???  #~ error[UNEXPECTED_TOKEN]: the result type names the parameter `n`
+# A result type that names a parameter which is a value is a dependent
+# function type, which needs the elaborator of #406. A `(t: @Type)` or
+# `(n: @Nat)` parameter may be named; the parser reads any (types are
+# expressions), and the checker rejects the rest.
+$ len : (k: @Int) -> @Tensor k @Int = ???  #~ error[UNEXPECTED_TOKEN]: the result type names the parameter `k`
 #~^ error[TYPED_HOLE]: hole `???` has type

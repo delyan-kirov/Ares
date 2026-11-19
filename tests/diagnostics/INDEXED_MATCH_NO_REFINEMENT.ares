@@ -5,5 +5,5 @@ $ Vec : (a: @Type) -> @Nat -> @Type =
 
 # Matching does not refine the scrutinee's index yet (#543): the tail's
 # length is the constructor's own, not `n`.
-$ tail : Vec a (n + 1) -> Vec a n = \v =>
+$ tail : @ctx {a: @Type, n: @Nat} -> Vec a (n + 1) -> Vec a n = \v =>
     v |> \ | Vec.Cons.{ _, t } => t | _ => tail v  #~ error[TYPE_MISMATCH]: of `Cons`

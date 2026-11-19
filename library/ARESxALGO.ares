@@ -17,8 +17,8 @@ $ @mod ARES
 # resumes or carries a value (each just aborts the body). Any OTHER effects the
 # body performs pass through to the outer handler.
 $ Loop : @Type = @effect break : {} -> a, continue : {} -> a,
-$ break : {} -> <Loop> a = Loop.break {}
-$ continue : {} -> <Loop> a = Loop.continue {}
+$ break : @ctx { a: @Type } -> {} -> <Loop> a = Loop.break {}
+$ continue : @ctx { a: @Type } -> {} -> <Loop> a = Loop.continue {}
 
 # `for` runs `body` on each element FOR ITS EFFECTS, returning `{}`. The body's
 # effect row is a PARAMETER of the interface, so an instance stays polymorphic in it
@@ -26,7 +26,9 @@ $ continue : {} -> <Loop> a = Loop.continue {}
 # one under `<>`).
 $ IFor : (s: @Type) -> (a: @Type) -> (e: @Row) -> @Type = @struct
     each: s -> (a -> <Loop | e> {}) -> <e> {},
-$ for : @use { d: IFor s a e } -> s -> (a -> <Loop | e> {}) -> <e> {} = \xs body => d.each xs body
+$ for : @ctx { s: @Type, a: @Type, e: @Type } -> @use { d: IFor s a e } -> s -> (a -> <Loop | e> {})
+    -> <e> {} = \xs body =>
+    d.each xs body
 
 # `formap` TRANSFORMS: it maps `body` over the structure and returns the result (the
 # effectful analogue of `fmap`, like Haskell's `traverse`). `continue` drops an
@@ -34,11 +36,12 @@ $ for : @use { d: IFor s a e } -> s -> (a -> <Loop | e> {}) -> <e> {} = \xs body
 # result structure as well, since mapping changes the element type.
 $ IFormap : (s: @Type) -> (a: @Type) -> (t: @Type) -> (b: @Type) -> (e: @Row) -> @Type = @struct
     mapping: s -> (a -> <Loop | e> b) -> <e> t,
-$ formap : @use { d: IFormap s a t b e } -> s -> (a -> <Loop | e> b) -> <e> t = \xs f =>
+$ formap : @ctx { s: @Type, a: @Type, t: @Type, b: @Type, e: @Type }
+    -> @use { d: IFormap s a t b e } -> s -> (a -> <Loop | e> b) -> <e> t = \xs f =>
     d.mapping xs f
 
 # An instance's step: run `body` on `x`, and say whether the loop goes on.
-$ loop_body : a -> (a -> <Loop | e> {}) -> <e> @Bool = \x body =>
+$ loop_body : @ctx { a: @Type, e: @Row } -> a -> (a -> <Loop | e> {}) -> <e> @Bool = \x body =>
     do body x
     ctl k
     | Loop.continue u => @true
@@ -47,7 +50,8 @@ $ loop_body : a -> (a -> <Loop | e> {}) -> <e> @Bool = \x body =>
 
 # The three ways a `formap` step can end, and the step itself.
 $ LoopStep : (b: @Type) -> @Type = @union Keep: { b }, Skip: {}, Stop: {},
-$ loop_step : a -> (a -> <Loop | e> b) -> <e> LoopStep b = \x f =>
+$ loop_step : @ctx { a: @Type, e: @Row, b: @Type } -> a -> (a -> <Loop | e> b)
+    -> <e> LoopStep b = \x f =>
     do let y = f x in LoopStep.Keep.{ y }
     ctl k
     | Loop.continue u => LoopStep.Skip
@@ -61,104 +65,134 @@ $ forever : List {} = List.Cons.{ {}, forever }
 # Each interface leads with the container, which is the type an instance is found
 # by; `new` and `from_list` lead with the container they build.
 $ ILen : (s: @Type) -> @Type = @struct len: s -> @Int,
-$ len : @use { d: ILen s } -> s -> @Int = \x => d.len x
+$ len : @ctx { s: @Type } -> @use { d: ILen s } -> s -> @Int = \x => d.len x
 
 $ IEmpty : (s: @Type) -> @Type = @struct is_empty: s -> @Bool,
-$ is_empty : @use { d: IEmpty s } -> s -> @Bool = \x => d.is_empty x
+$ is_empty : @ctx { s: @Type } -> @use { d: IEmpty s } -> s -> @Bool = \x => d.is_empty x
 
 # An empty container, of the type the context asks for: `new {}`.
 $ INew : (t: @Type) -> @Type = @struct new: {} -> t,
-$ new : @use { d: INew t } -> {} -> t = d.new {}
+$ new : @ctx { t: @Type } -> @use { d: INew t } -> {} -> t = d.new {}
 
 $ IFmap : (s: @Type) -> (a: @Type) -> (t: @Type) -> (b: @Type) -> @Type = @struct
     fmap: (a -> b) -> s -> t,
-$ fmap : @use { d: IFmap s a t b } -> (a -> b) -> s -> t = \f xs => d.fmap f xs
+$ fmap : @ctx { s: @Type, a: @Type, t: @Type, b: @Type } -> @use { d: IFmap s a t b } -> (a -> b)
+    -> s -> t = \f xs =>
+    d.fmap f xs
 
 # `p` is the predicate's whole type: a map's takes the key and the value.
 $ IFilter : (s: @Type) -> (p: @Type) -> @Type = @struct filter: p -> s -> s,
-$ filter : @use { d: IFilter s p } -> p -> s -> s = \p xs => d.filter p xs
+$ filter : @ctx { s: @Type, p: @Type } -> @use { d: IFilter s p } -> p -> s -> s = \p xs =>
+    d.filter p xs
 
 $ IFilterMap : (s: @Type) -> (a: @Type) -> (t: @Type) -> (b: @Type) -> @Type = @struct
     filter_map: (a -> Opt b) -> s -> t,
-$ filter_map : @use { d: IFilterMap s a t b } -> (a -> Opt b) -> s -> t = \f xs => d.filter_map f xs
+$ filter_map : @ctx { s: @Type, a: @Type, t: @Type, b: @Type } -> @use { d: IFilterMap s a t b }
+    -> (a -> Opt b) -> s -> t = \f xs =>
+    d.filter_map f xs
 
 $ IConcat : (s: @Type) -> (t: @Type) -> @Type = @struct concat: s -> t,
-$ concat : @use { d: IConcat s t } -> s -> t = \xs => d.concat xs
+$ concat : @ctx { s: @Type, t: @Type } -> @use { d: IConcat s t } -> s -> t = \xs => d.concat xs
 
 $ IAppend : (s: @Type) -> @Type = @struct append: s -> s -> s,
-$ append : @use { d: IAppend s } -> s -> s -> s = \ys xs => d.append xs ys
+$ append : @ctx { s: @Type } -> @use { d: IAppend s } -> s -> s -> s = \ys xs => d.append xs ys
 
 $ IReverse : (s: @Type) -> @Type = @struct reverse: s -> s,
-$ reverse : @use { d: IReverse s } -> s -> s = \xs => d.reverse xs
+$ reverse : @ctx { s: @Type } -> @use { d: IReverse s } -> s -> s = \xs => d.reverse xs
 
 $ IToList : (s: @Type) -> (t: @Type) -> @Type = @struct to_list: s -> t,
-$ to_list : @use { d: IToList s t } -> s -> t = \xs => d.to_list xs
+$ to_list : @ctx { s: @Type, t: @Type } -> @use { d: IToList s t } -> s -> t = \xs => d.to_list xs
 
 $ IFromList : (t: @Type) -> (s: @Type) -> @Type = @struct from_list: s -> t,
-$ from_list : @use { d: IFromList t s } -> s -> t = \xs => d.from_list xs
+$ from_list : @ctx { t: @Type, s: @Type } -> @use { d: IFromList t s } -> s -> t = \xs =>
+    d.from_list xs
 
 # Lookup by key (a map) or by position (a vector).
 $ IGet : (s: @Type) -> (k: @Type) -> (v: @Type) -> @Type = @struct get: s -> k -> Opt v,
-$ get : @use { d: IGet s k v } -> k -> s -> Opt v = \k xs => d.get xs k
+$ get : @ctx { s: @Type, k: @Type, v: @Type } -> @use { d: IGet s k v } -> k -> s
+    -> Opt v = \k xs =>
+    d.get xs k
 
-$ get_or : @use { d: IGet s k v } -> k -> v -> s -> v = \k fallback xs =>
+$ get_or : @ctx { s: @Type, k: @Type, v: @Type } -> @use { d: IGet s k v } -> k -> v -> s
+    -> v = \k fallback xs =>
     d.get xs k |> \ | Opt.Some.{ x } => x | _ => fallback
 
 $ IHas : (s: @Type) -> (k: @Type) -> @Type = @struct has: s -> k -> @Bool,
-$ has : @use { d: IHas s k } -> k -> s -> @Bool = \k xs => d.has xs k
+$ has : @ctx { s: @Type, k: @Type } -> @use { d: IHas s k } -> k -> s -> @Bool = \k xs => d.has xs k
 
 $ IRemove : (s: @Type) -> (k: @Type) -> @Type = @struct remove: s -> k -> s,
-$ remove : @use { d: IRemove s k } -> k -> s -> s = \k xs => d.remove xs k
+$ remove : @ctx { s: @Type, k: @Type } -> @use { d: IRemove s k } -> k -> s -> s = \k xs =>
+    d.remove xs k
 
 $ IMerge : (s: @Type) -> @Type = @struct merge: s -> s -> s,
-$ merge : @use { d: IMerge s } -> s -> s -> s = \b a => d.merge a b
+$ merge : @ctx { s: @Type } -> @use { d: IMerge s } -> s -> s -> s = \b a => d.merge a b
 
 # `f` is the step function's whole type: a map's takes the key and the value.
 $ IFold : (s: @Type) -> (a: @Type) -> (f: @Type) -> @Type = @struct fold: f -> a -> s -> a,
-$ fold : @use { d: IFold s a f } -> f -> a -> s -> a = \f acc xs => d.fold f acc xs
+$ fold : @ctx { s: @Type, a: @Type, f: @Type } -> @use { d: IFold s a f } -> f -> a -> s
+    -> a = \f acc xs =>
+    d.fold f acc xs
 
 $ IFoldl : (s: @Type) -> (a: @Type) -> (t: @Type) -> @Type = @struct
     foldl: (a -> t -> a) -> a -> s -> a,
-$ foldl : @use { d: IFoldl s a t } -> (a -> t -> a) -> a -> s -> a = \f acc xs => d.foldl f acc xs
+$ foldl : @ctx { s: @Type, a: @Type, t: @Type } -> @use { d: IFoldl s a t } -> (a -> t -> a) -> a
+    -> s -> a = \f acc xs =>
+    d.foldl f acc xs
 
 $ IFoldr : (s: @Type) -> (a: @Type) -> (t: @Type) -> @Type = @struct
     foldr: (t -> a -> a) -> a -> s -> a,
-$ foldr : @use { d: IFoldr s a t } -> (t -> a -> a) -> a -> s -> a = \f z xs => d.foldr f z xs
+$ foldr : @ctx { s: @Type, a: @Type, t: @Type } -> @use { d: IFoldr s a t } -> (t -> a -> a) -> a
+    -> s -> a = \f z xs =>
+    d.foldr f z xs
 
 $ IFind : (s: @Type) -> (t: @Type) -> @Type = @struct find: (t -> @Bool) -> s -> Opt t,
-$ find : @use { d: IFind s t } -> (t -> @Bool) -> s -> Opt t = \p xs => d.find p xs
+$ find : @ctx { s: @Type, t: @Type } -> @use { d: IFind s t } -> (t -> @Bool) -> s
+    -> Opt t = \p xs =>
+    d.find p xs
 
 $ IAny : (s: @Type) -> (t: @Type) -> @Type = @struct any: (t -> @Bool) -> s -> @Bool,
-$ any : @use { d: IAny s t } -> (t -> @Bool) -> s -> @Bool = \p xs => d.any p xs
+$ any : @ctx { s: @Type, t: @Type } -> @use { d: IAny s t } -> (t -> @Bool) -> s -> @Bool = \p xs =>
+    d.any p xs
 
 $ IAll : (s: @Type) -> (t: @Type) -> @Type = @struct all: (t -> @Bool) -> s -> @Bool,
-$ all : @use { d: IAll s t } -> (t -> @Bool) -> s -> @Bool = \p xs => d.all p xs
+$ all : @ctx { s: @Type, t: @Type } -> @use { d: IAll s t } -> (t -> @Bool) -> s -> @Bool = \p xs =>
+    d.all p xs
 
 $ IZip : (s: @Type) -> (t: @Type) -> (u: @Type) -> @Type = @struct zip: s -> t -> u,
-$ zip : @use { d: IZip s t u } -> t -> s -> u = \ys xs => d.zip xs ys
+$ zip : @ctx { s: @Type, t: @Type, u: @Type } -> @use { d: IZip s t u } -> t -> s -> u = \ys xs =>
+    d.zip xs ys
 
 $ ITake : (s: @Type) -> @Type = @struct take: @Int -> s -> s,
-$ take : @use { d: ITake s } -> @Int -> s -> s = \n xs => d.take n xs
+$ take : @ctx { s: @Type } -> @use { d: ITake s } -> @Int -> s -> s = \n xs => d.take n xs
 
 $ IDrop : (s: @Type) -> @Type = @struct drop: @Int -> s -> s,
-$ drop : @use { d: IDrop s } -> @Int -> s -> s = \n xs => d.drop n xs
+$ drop : @ctx { s: @Type } -> @use { d: IDrop s } -> @Int -> s -> s = \n xs => d.drop n xs
 
 $ ITakeWhile : (s: @Type) -> (t: @Type) -> @Type = @struct take_while: (t -> @Bool) -> s -> s,
-$ take_while : @use { d: ITakeWhile s t } -> (t -> @Bool) -> s -> s = \p xs => d.take_while p xs
+$ take_while : @ctx { s: @Type, t: @Type } -> @use { d: ITakeWhile s t } -> (t -> @Bool) -> s
+    -> s = \p xs =>
+    d.take_while p xs
 
 $ IDropWhile : (s: @Type) -> (t: @Type) -> @Type = @struct drop_while: (t -> @Bool) -> s -> s,
-$ drop_while : @use { d: IDropWhile s t } -> (t -> @Bool) -> s -> s = \p xs => d.drop_while p xs
+$ drop_while : @ctx { s: @Type, t: @Type } -> @use { d: IDropWhile s t } -> (t -> @Bool) -> s
+    -> s = \p xs =>
+    d.drop_while p xs
 
 $ INth : (s: @Type) -> (t: @Type) -> @Type = @struct nth: s -> @Int -> Opt t,
-$ nth : @use { d: INth s t } -> @Int -> s -> Opt t = \i xs => d.nth xs i
+$ nth : @ctx { s: @Type, t: @Type } -> @use { d: INth s t } -> @Int -> s -> Opt t = \i xs =>
+    d.nth xs i
 
 $ ILast : (s: @Type) -> (t: @Type) -> @Type = @struct last: s -> Opt t,
-$ last : @use { d: ILast s t } -> s -> Opt t = \xs => d.last xs
+$ last : @ctx { s: @Type, t: @Type } -> @use { d: ILast s t } -> s -> Opt t = \xs => d.last xs
 
 # The half-open range `[lo, hi)`.
 $ ISlice : (s: @Type) -> (t: @Type) -> @Type = @struct slice: s -> @Int -> @Int -> t,
-$ slice : @use { d: ISlice s t } -> @Int -> @Int -> s -> t = \lo hi xs => d.slice xs lo hi
+$ slice : @ctx { s: @Type, t: @Type } -> @use { d: ISlice s t } -> @Int -> @Int -> s
+    -> t = \lo hi xs =>
+    d.slice xs lo hi
 
 # The value inside, or `fallback` when there is none (an `Opt`, a `Result`).
 $ IUnwrapOr : (s: @Type) -> (t: @Type) -> @Type = @struct unwrap_or: s -> t -> t,
-$ unwrap_or : @use { d: IUnwrapOr s t } -> t -> s -> t = \fallback x => d.unwrap_or x fallback
+$ unwrap_or : @ctx { s: @Type, t: @Type } -> @use { d: IUnwrapOr s t } -> t -> s
+    -> t = \fallback x =>
+    d.unwrap_or x fallback

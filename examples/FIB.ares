@@ -17,7 +17,7 @@ $ fib15 : @Int = fib 15
 # annotated, recursive `let`; the match arms are bare variant patterns (`.Nil`,
 # `.Cons`) whose union is inferred from the constructors. `@Vec` is the prelude
 # type (its `[..]`/`::` sugar is hardwired to that name).
-$ len: @Vec t -> @Int =
+$ len: @ctx { t: @Type } -> @Vec t -> @Int =
     let helper: @Vec t -> @Int -> @Int = \l n => l |> \ | [] => n | _ :: xs => helper xs (n + 1) in
     \l => helper l 0
 

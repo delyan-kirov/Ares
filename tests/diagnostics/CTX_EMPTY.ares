@@ -1,0 +1,4 @@
+$ @mod CTX_EMPTY
+
+# A `@ctx` parameter binds at least one field.
+$ f : @ctx {} -> @Int = 1  #~ error[UNEXPECTED_TOKEN]: a `@ctx` parameter names at least one

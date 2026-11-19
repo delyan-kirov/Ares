@@ -9,6 +9,247 @@
 
 use super::*;
 
+// ## Binding type variables
+
+/// How elaborating a type treats a lowercase name no binder in scope binds.
+/// Either way it stands as a fresh variable, so every look at one signature
+/// agrees; only the look that owns the signature reports it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FreeNames {
+    Bind,
+    Report,
+}
+
+/// A name found unbound while elaborating a type in [`FreeNames::Report`].
+pub(super) struct Unbound {
+    name: StrId,
+    span: Option<Span>,
+    ty: Type,
+    row: bool,
+}
+
+impl<'a> Checker<'a> {
+    /// The variables a signature's `@ctx` fields bind, by name, each fresh and of
+    /// its field's kind.
+    pub(super) fn sig_tvars(&mut self, sig: Aol<Ty>) -> HashMap<StrId, Type> {
+        let mut tvars = HashMap::new();
+        let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return tvars };
+        for f in self.ast.slice(fields).to_vec() {
+            let t = match self.kind_of_ast(f.ty) {
+                Some(ParamKind::Nat) => self.unifier.fresh_nat(),
+                Some(_) => self.unifier.fresh(),
+                None => continue,
+            };
+            tvars.insert(f.name, t);
+        }
+        tvars
+    }
+
+    /// The variable `name` stands for: the one `tvars` binds, else a fresh one
+    /// of `kind`, recorded as unbound when reporting.
+    fn free_name(&mut self, name: StrId, span: Option<Span>, tvars: &mut HashMap<StrId, Type>, kind: ParamKind) -> Type {
+        if let Some(&t) = tvars.get(&name) {
+            if let Some(u) = self.unbound.iter_mut().find(|u| u.name == name) {
+                if span.is_some_and(|s| u.span.is_none_or(|w| s.start < w.start)) {
+                    u.span = span;
+                }
+            }
+            return t;
+        }
+        let t = match kind {
+            ParamKind::Nat => self.unifier.fresh_nat(),
+            _ => self.unifier.fresh(),
+        };
+        tvars.insert(name, t);
+        if self.free_names == FreeNames::Report {
+            self.unbound.push(Unbound { name, span, ty: t, row: kind == ParamKind::Row });
+        }
+        t
+    }
+
+    /// Elaborate `ty` reporting the names nothing binds: `sig` is the
+    /// signature it is, whose `@ctx` the fix extends, or `None` for an
+    /// annotation inside a body.
+    pub(super) fn ty_reporting(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>, sig: Option<Aol<Ty>>) -> Type {
+        let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
+        let t = self.ty_of_ast(ty, tvars);
+        self.free_names = saved;
+        self.mark_sizes(t);
+        self.report_unbound(sig);
+        if let Some(sig) = sig {
+            self.check_ctx_kinds(sig, tvars);
+        }
+        t
+    }
+
+    /// Mark the variables `ty` uses as sizes `@Nat`: tensor sizes, a declared
+    /// type's `@Nat` arguments, and the operands of `+` and `*`.
+    fn mark_sizes(&mut self, ty: Type) {
+        self.unifier.note_tensor_sizes(ty);
+        self.mark_param_sizes(ty);
+    }
+
+    fn mark_param_sizes(&mut self, ty: Type) {
+        let ty = self.unifier.resolve(ty);
+        match self.unifier.types.node(ty) {
+            TypeNode::App(..) => {
+                let mut args = Vec::new();
+                let mut head = ty;
+                while let TypeNode::App(h, a) = self.unifier.types.node(self.unifier.resolve(head)) {
+                    args.push(a);
+                    head = h;
+                }
+                args.reverse();
+                if let TypeNode::Con(name) = self.unifier.types.node(self.unifier.resolve(head)) {
+                    for (kind, &a) in self.param_kinds(name).unwrap_or_default().iter().zip(&args) {
+                        if *kind == ParamKind::Nat {
+                            self.unifier.mark_size(a);
+                        }
+                    }
+                }
+                for a in args {
+                    self.mark_param_sizes(a);
+                }
+            }
+            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) => {
+                self.unifier.mark_size(a);
+                self.unifier.mark_size(b);
+            }
+            TypeNode::Arrow(from, to, _) => {
+                self.mark_param_sizes(from);
+                self.mark_param_sizes(to);
+            }
+            TypeNode::Tuple(items) => {
+                for t in self.unifier.types.items(items).to_vec() {
+                    self.mark_param_sizes(t);
+                }
+            }
+            TypeNode::Record(row) => self.mark_param_sizes(row),
+            TypeNode::RowField(_, t, rest) => {
+                self.mark_param_sizes(t);
+                self.mark_param_sizes(rest);
+            }
+            _ => {}
+        }
+    }
+
+    /// A `@ctx {n: @Type}` field the signature uses as a size is a `@Nat`.
+    fn check_ctx_kinds(&mut self, sig: Aol<Ty>, tvars: &HashMap<StrId, Type>) {
+        let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return };
+        for f in self.ast.slice(fields).to_vec() {
+            let used_as_size = tvars.get(&f.name).is_some_and(|t| self.unifier.is_size_var(*t));
+            if self.kind_of_ast(f.ty) != Some(ParamKind::Type) || !used_as_size {
+                continue;
+            }
+            let written = self.ast.ty_span(f.ty).unwrap_or(f.span);
+            self.errors.push(
+                diag!(
+                    Code::TypeMismatch, f.span, 0,
+                    "`{}` is a `@Type`, but the signature uses it as a size", f.name;
+                    note: "a size is a `@Nat`"
+                )
+                .with_fix(format!("make `{}` a `@Nat`", f.name), vec![Edit::new(written, "@Nat")], Applicability::MachineApplicable),
+            );
+        }
+    }
+
+    /// The error for the names found unbound, with the fix that binds them in
+    /// the signature's leading `@ctx`.
+    pub(super) fn report_unbound(&mut self, sig: Option<Aol<Ty>>) {
+        let mut unbound = std::mem::take(&mut self.unbound);
+        unbound.sort_by_key(|u| u.span.map_or(usize::MAX, |s| s.start));
+        let Some(first) = unbound.first() else { return };
+        let fields: Vec<String> = unbound
+            .iter()
+            .map(|u| {
+                let kind = match (u.row, self.unifier.is_size_var(u.ty)) {
+                    (true, _) => "@Row",
+                    (false, true) => "@Nat",
+                    (false, false) => "@Type",
+                };
+                format!("{}: {kind}", u.name)
+            })
+            .collect();
+        let names: Vec<String> = unbound.iter().map(|u| format!("`{}`", u.name)).collect();
+        let (names, verb) = match names.as_slice() {
+            [one] => (one.clone(), "is"),
+            [init @ .., last] => (format!("{} and {last}", init.join(", ")), "are"),
+            [] => unreachable!("at least one unbound name"),
+        };
+        let mut d = diag!(
+            Code::TypeUnbound, first.span.unwrap_or(Span::at(0)), 0,
+            "{names} {verb} not bound";
+            note: "a signature binds its type variables in `@ctx`, as in `@ctx {{t: @Type}} -> t -> t`"
+        );
+        for u in &unbound[1..] {
+            if let Some(span) = u.span {
+                d = d.with_label(span, "");
+            }
+        }
+        let fix = format!("bind {names} in the signature's `@ctx`");
+        d = match sig.and_then(|s| self.ctx_insertion(s, &fields)) {
+            Some(edit) => d.with_fix(fix, vec![edit], Applicability::MachineApplicable),
+            None if sig.is_some() => d.with_help(format!("{fix}: `@ctx {{{}}} -> ...`", fields.join(", "))),
+            None => d.with_help(format!(
+                "bind {names} in the enclosing definition's `@ctx`, or write `_` for a type left to inference"
+            )),
+        };
+        self.errors.push(d);
+    }
+
+    /// The edit adding `fields` to the `@ctx` that opens `sig`, or a new one
+    /// in front of it.
+    fn ctx_insertion(&self, sig: Aol<Ty>, fields: &[String]) -> Option<Edit> {
+        let mut bound: Vec<UseField> = Vec::new();
+        for map in [&self.ast.level_params, &self.ast.ctx_params] {
+            if let Some(fs) = map.get(sig) {
+                bound.extend(self.ast.slice(*fs).iter().copied());
+            }
+        }
+        let first_use = self.ast.use_params.get(sig).and_then(|fs| {
+            self.ast.slice(*fs).iter().filter(|f| !f.ctx).map(|f| f.span.start).min()
+        });
+        let leading = bound
+            .iter()
+            .filter(|f| f.before == 0 && first_use.is_none_or(|u| f.span.start < u))
+            .map(|f| f.span.end)
+            .max();
+        match leading {
+            Some(end) => Some(Edit::new(Span::at(end), format!(", {}", fields.join(", ")))),
+            None => {
+                let start = self.ast.ty_span(sig)?.start;
+                Some(Edit::new(Span::at(start), format!("@ctx {{{}}} -> ", fields.join(", "))))
+            }
+        }
+    }
+
+    /// Check that each `@ctx` field of `name`'s signature binds a type, a size
+    /// or a row: an instance is found by search, so it is a `@use` field.
+    pub(super) fn check_ctx_fields(&mut self, name: StrId, sig: Aol<Ty>) {
+        let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return };
+        for f in self.ast.slice(fields).to_vec() {
+            if self.kind_of_ast(f.ty).is_some() {
+                continue;
+            }
+            let written = self.ast.ty_source(f.ty).unwrap_or_else(|| "T".into());
+            let mut head = f.ty;
+            while let Ty::App(h, _) = self.tnode(head) {
+                head = *h;
+            }
+            let d = match *self.tnode(head) {
+                Ty::Con { name: h, .. } if self.is_nominal(h) => diag!(
+                    Code::TypeMismatch, f.span, 0,
+                    "`@ctx` field `{}` of `{name}` is an instance, which is found by search", f.name;
+                    note: "`@ctx` binds what unification solves: types, sizes and rows";
+                    help: "make it a `@use` field: `@use {{{}: {written}}} -> ...`", f.name
+                ),
+                _ => dependent_only(Some(f.span), "a `@ctx` field that is a value"),
+            };
+            self.errors.push(d);
+        }
+    }
+}
+
 // ## Type names
 
 impl<'a> Checker<'a> {
@@ -161,7 +402,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Evaluate a `@Nat` constant's body to a size.
-    fn size_of_expr(&mut self, e: Aol<Expr>, visiting: &mut Vec<StrId>) -> std::result::Result<Type, SizeError> {
+    pub(super) fn size_of_expr(&mut self, e: Aol<Expr>, visiting: &mut Vec<StrId>) -> std::result::Result<Type, SizeError> {
         match self.node(e) {
             Expr::Int(n) if *n >= 0 => Ok(self.unifier.types.add(TypeNode::Nat(*n as u64))),
             Expr::Var { module: None, name } if self.nat_consts.contains_key(name) => {
@@ -173,6 +414,11 @@ impl<'a> Checker<'a> {
                 let v = self.size_of_expr(self.nat_consts[&name], visiting)?;
                 visiting.pop();
                 Ok(v)
+            }
+            // A `@Nat` field or `(n: @Nat)` parameter in scope holds its size.
+            Expr::Var { module: None, name } if self.lookup(*name).and_then(|t| self.size_of_req(t)).is_some() => {
+                let t = self.lookup(*name).expect("looked up");
+                Ok(self.size_of_req(t).expect("a size field"))
             }
             Expr::BinOp { op, lhs, rhs } if matches!(op.as_str(), "+" | "*") => {
                 let (add, lhs, rhs) = (op.as_str() == "+", *lhs, *rhs);
@@ -362,13 +608,15 @@ impl<'a> Checker<'a> {
         &mut self,
         entries: Slice<RowEntry>,
         tail: Option<StrId>,
+        span: Option<Span>,
         tvars: &mut HashMap<StrId, Type>,
     ) -> Type {
         let ast = self.ast;
         let mut labels: Vec<(StrId, Type)> = Vec::new();
         let mut tails: Vec<Type> = Vec::new();
         if let Some(t) = tail {
-            tails.push(*tvars.entry(t).or_insert_with(|| self.unifier.fresh()));
+            let v = self.free_name(t, span, tvars, ParamKind::Row);
+            tails.push(v);
         }
         for entry in ast.slice(entries) {
             // `<&X>`: the labels are unknown until the driver splices them, so
@@ -487,8 +735,8 @@ impl<'a> Checker<'a> {
                 self.nat_const(name, self.ast.ty_span(ty))
             }
             Ty::Var(name) => {
-                let eng = &mut self.unifier;
-                *tvars.entry(*name).or_insert_with(|| eng.fresh_nat())
+                let name = *name;
+                self.free_name(name, self.ast.ty_span(ty), tvars, ParamKind::Nat)
             }
             Ty::SizeAdd(a, b) => {
                 let (a, b) = (*a, *b);
@@ -604,9 +852,13 @@ impl<'a> Checker<'a> {
                 self.nat_const(name, self.ast.ty_span(ty))
             }
             Ty::Var(name) => {
-                *tvars
-                    .entry(*name)
-                    .or_insert_with(|| self.unifier.fresh())
+                let name = *name;
+                self.free_name(name, self.ast.ty_span(ty), tvars, ParamKind::Type)
+            }
+            Ty::App(head, size) if matches!(self.tnode(*head), Ty::Con { module: None, name } if *name == SIZE_OF) => {
+                let size = self.size_ty_of_ast(*size, tvars);
+                let head = self.unifier.types.con(StrId::intern(SIZE_OF));
+                self.unifier.types.app(head, size)
             }
             Ty::App(..) => {
                 self.check_type_arity(ty, true);
@@ -652,15 +904,36 @@ impl<'a> Checker<'a> {
             }
             Ty::Arrow { from, effect, to, binder } => {
                 let (from, to, binder) = (*from, *to, *binder);
-                if let Some(name) = binder {
-                    self.dependent_arrow(ty, name, to);
-                }
+                // `(t: @Type) -> B` and `(n: @Nat) -> B`: `B` may name the
+                // parameter, whose argument fixes it at each call.
+                let singleton = match (binder, self.kind_of_ast(from)) {
+                    (Some(name), Some(kind @ (ParamKind::Type | ParamKind::Nat))) => {
+                        let v = match kind {
+                            ParamKind::Nat => self.unifier.fresh_nat(),
+                            _ => self.unifier.fresh(),
+                        };
+                        tvars.insert(name, v);
+                        let head = if kind == ParamKind::Nat { SIZE_OF } else { ty::TYPE_OF };
+                        let head = self.unifier.types.con(StrId::intern(head));
+                        Some(self.unifier.types.app(head, v))
+                    }
+                    (Some(name), _) => {
+                        self.dependent_arrow(ty, name, to);
+                        tvars.entry(name).or_insert_with(|| self.unifier.fresh());
+                        None
+                    }
+                    (None, _) => None,
+                };
                 // An unannotated arrow is pure.
                 let eff = match effect {
-                    Some(row) => self.row_of_ast(row.entries, row.tail, tvars),
+                    Some(row) => self.row_of_ast(row.entries, row.tail, row.tail_span, tvars),
                     None => self.unifier.types.row_empty(),
                 };
-                let (f, t) = (self.ty_of_ast(from, tvars), self.ty_of_ast(to, tvars));
+                let f = match singleton {
+                    Some(s) => s,
+                    None => self.ty_of_ast(from, tvars),
+                };
+                let t = self.ty_of_ast(to, tvars);
                 self.unifier.types.arrow_eff(f, t, eff)
             }
             Ty::Unit => self.unifier.types.con(ty::UNIT),
@@ -675,7 +948,10 @@ impl<'a> Checker<'a> {
                 // y: B }` is closed (empty tail). Records are real, name-keyed types;
                 // positional/scalar values promote to them at call sites.
                 let rest = match tail {
-                    Some(tvar) => *tvars.entry(*tvar).or_insert_with(|| self.unifier.fresh()),
+                    Some(tvar) => {
+                        let tvar = *tvar;
+                        self.free_name(tvar, self.ast.ty_span(ty), tvars, ParamKind::Row)
+                    }
                     None => self.unifier.types.row_empty(),
                 };
                 let decls: Vec<_> = self.ast.slice(*fields).to_vec();
@@ -695,7 +971,7 @@ impl<'a> Checker<'a> {
 const UNEVALUATED_SIZE: &str = "a size other than literals, size variables, `@Nat` constants, `+` and `*`";
 
 /// Why a `@Nat` constant does not unfold to a size.
-enum SizeError {
+pub(super) enum SizeError {
     Cycle,
     /// A subterm conversion cannot evaluate (a call, a negative literal).
     Term(Aol<Expr>),

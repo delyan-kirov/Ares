@@ -40,11 +40,14 @@ $ pollout : @Int = 4
 
 # Run `main` and every task it spawns to completion (see the module notes). A
 # task waiting on a descriptor is never woken here, so it counts as blocked.
-$ run_async : ({} -> <Async m e | e> a) -> <e> Opt a = \main => run_with (\fds => @vec_new {}) main
+$ run_async : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> a)
+    -> <e> Opt a = \main =>
+    run_with (\fds => @vec_new {}) main
 
 # `run_async` for tasks that may perform `@IO`: a group whose every task is
 # blocked, some on descriptors, sleeps in poll(2) until one is ready.
-$ run_io : ({} -> <Async, @IO | e> a) -> <@IO | e> Opt a = \main => run_with poll_ready main
+$ run_io : @ctx { e: @Row, a: @Type } -> ({} -> <Async, @IO | e> a) -> <@IO | e> Opt a = \main =>
+    run_with poll_ready main
 
 # ---- internals ----
 
@@ -62,7 +65,8 @@ $ Step : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @union
     Wants: { Chan m, m -> <e> Step m e a },
     Waits: { @Int, @Int, {} -> <e> Step m e a },
 
-$ step_main : ({} -> <Async m e | e> a) -> <e> Step m e a = \t =>
+$ step_main : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> a)
+    -> <e> Step m e a = \t =>
     do t {}
     ctl k
     | Async.spawn c   => Step.Spawned.{ c, k }
@@ -73,7 +77,8 @@ $ step_main : ({} -> <Async m e | e> a) -> <e> Step m e a = \t =>
     | Async.wait_fd w => Step.Waits.{ w.0, w.1, k }
     | r               => Step.Done.{ Opt.Some.{ r } }
 
-$ step_child : ({} -> <Async m e | e> {}) -> <e> Step m e a = \t =>
+$ step_child : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> {})
+    -> <e> Step m e a = \t =>
     do t {}
     ctl k
     | Async.spawn c   => Step.Spawned.{ c, k }
@@ -90,11 +95,12 @@ $ Queue : (t: @Type) -> @Type = @struct
     front: List t,
     back: List t,
 
-$ q_empty : {} -> Queue t = Queue.{ .front = List.Nil, .back = List.Nil }
+$ q_empty : @ctx { t: @Type } -> {} -> Queue t = Queue.{ .front = List.Nil, .back = List.Nil }
 
-$ q_push : Queue t -> t -> Queue t = \q x => Queue.{ .back = List.Cons.{ x, q.back } | q }
+$ q_push : @ctx { t: @Type } -> Queue t -> t -> Queue t = \q x =>
+    Queue.{ .back = List.Cons.{ x, q.back } | q }
 
-$ q_pop : Queue t -> Opt { t, Queue t } = \q =>
+$ q_pop : @ctx { t: @Type } -> Queue t -> Opt { t, Queue t } = \q =>
     q.front |> \
         | List.Cons.{ x, rest } => Opt.Some.{ { x, Queue.{ .front = rest, .back = q.back } } }
         | _ =>
@@ -103,7 +109,7 @@ $ q_pop : Queue t -> Opt { t, Queue t } = \q =>
                     Opt.Some.{ { x, Queue.{ .front = rest, .back = List.Nil } } }
                 | _                     => Opt.None
 
-$ q_rev_onto : List t -> List t -> List t = \l acc =>
+$ q_rev_onto : @ctx { t: @Type } -> List t -> List t -> List t = \l acc =>
     l |> \ | List.Cons.{ h, t } => q_rev_onto t (List.Cons.{ h, acc }) | _ => acc
 
 # A channel's state: its buffered values (at most `cap`), and the tasks parked
@@ -130,8 +136,8 @@ $ Sched : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
     result: Opt a,
     poll: @Vec { @Int, @Int } -> <e> @Vec @Int,
 
-$ run_with : (@Vec { @Int, @Int } -> <e> @Vec @Int) -> ({} -> <Async m e | e> a)
-    -> <e> Opt a = \poll main =>
+$ run_with : @ctx { e: @Row, m: @Type, a: @Type } -> (@Vec { @Int, @Int } -> <e> @Vec @Int)
+    -> ({} -> <Async m e | e> a) -> <e> Opt a = \poll main =>
     schedule
         (
             Sched.{
@@ -145,7 +151,7 @@ $ run_with : (@Vec { @Int, @Int } -> <e> @Vec @Int) -> ({} -> <Async m e | e> a)
 
 # Run the next ready task. With none ready, wake the descriptor waiters that
 # can go on; with none of those either, the group is over.
-$ schedule : Sched m e a -> <e> Opt a = \s =>
+$ schedule : @ctx { m: @Type, e: @Row, a: @Type } -> Sched m e a -> <e> Opt a = \s =>
     q_pop s.ready |> \
         | Opt.Some.{ p } => serve (p.0 {}) Sched.{ .ready = p.1 | s }
         | _ =>
@@ -155,7 +161,8 @@ $ schedule : Sched m e a -> <e> Opt a = \s =>
                 let woken = s.poll (fd_list s.waiting 0 (@vec_new {})) in
                 if @vec_len woken == 0 => s.result else schedule (wake s woken)
 
-$ fd_list : @Vec (Waiter m e a) -> @Int -> @Vec { @Int, @Int } -> @Vec { @Int, @Int } = \ws i acc =>
+$ fd_list : @ctx { m: @Type, e: @Type, a: @Type } -> @Vec (Waiter m e a) -> @Int
+    -> @Vec { @Int, @Int } -> @Vec { @Int, @Int } = \ws i acc =>
     if i >= @vec_len ws =>
         acc
     else
@@ -163,7 +170,8 @@ $ fd_list : @Vec (Waiter m e a) -> @Int -> @Vec { @Int, @Int } -> @Vec { @Int, @
 
 # Requeue the waiters at the `woken` indices (ascending), in order, and keep
 # the rest parked.
-$ wake : Sched m e a -> @Vec @Int -> Sched m e a = \s woken =>
+$ wake : @ctx { m: @Type, e: @Type, a: @Type } -> Sched m e a -> @Vec @Int
+    -> Sched m e a = \s woken =>
     let go =
         \i j ready rest =>
             if i >= @vec_len s.waiting =>
@@ -179,7 +187,7 @@ $ wake : Sched m e a -> @Vec @Int -> Sched m e a = \s woken =>
 
 # Serve what a task stopped for. An operation that can complete at once resumes
 # the same task right away; one that cannot parks it.
-$ serve : Step m e a -> Sched m e a -> <e> Opt a = \st s =>
+$ serve : @ctx { m: @Type, e: @Type, a: @Type } -> Step m e a -> Sched m e a -> <e> Opt a = \st s =>
     st |> \
         | Step.Done.{ r }          =>
             schedule (r |> \ | Opt.Some.{ _ } => Sched.{ .result = r | s } | _ => s)
@@ -201,12 +209,14 @@ $ serve : Step m e a -> Sched m e a -> <e> Opt a = \st s =>
         | Step.Waits.{ fd, ev, k } => schedule
             Sched.{ .waiting = @vec_push s.waiting Waiter.{ .fd = fd, .events = ev, .k = k } | s }
 
-$ set_chan : Sched m e a -> @Int -> Mailbox m e a -> Sched m e a = \s c ch =>
+$ set_chan : @ctx { m: @Type, e: @Type, a: @Type } -> Sched m e a -> @Int -> Mailbox m e a
+    -> Sched m e a = \s c ch =>
     Sched.{ .chans = @vec_set s.chans c ch | s }
 
 # A waiting receiver takes the value directly; otherwise it is buffered if
 # there is room, and the sender parks if there is not.
-$ send_to : @Int -> m -> ({} -> <e> Step m e a) -> Sched m e a -> <e> Opt a = \c v k s =>
+$ send_to : @ctx { m: @Type, e: @Row, a: @Type } -> @Int -> m -> ({} -> <e> Step m e a)
+    -> Sched m e a -> <e> Opt a = \c v k s =>
     let ch = @vec_get s.chans c in
     q_pop ch.receivers |> \
         | Opt.Some.{ p } =>
@@ -222,7 +232,8 @@ $ send_to : @Int -> m -> ({} -> <e> Step m e a) -> Sched m e a -> <e> Opt a = \c
 # A buffered value is taken first (and a parked sender's value moves into the
 # freed slot); with an empty buffer a parked sender hands over directly (the
 # zero-capacity rendezvous); otherwise the receiver parks.
-$ recv_from : @Int -> (m -> <e> Step m e a) -> Sched m e a -> <e> Opt a = \c k s =>
+$ recv_from : @ctx { m: @Type, e: @Row, a: @Type } -> @Int -> (m -> <e> Step m e a) -> Sched m e a
+    -> <e> Opt a = \c k s =>
     let ch = @vec_get s.chans c in
     q_pop ch.buf |> \
         | Opt.Some.{ b } => (
@@ -250,12 +261,13 @@ $ pollfd : @Int -> @Int -> PollFd = \fd events =>
     let ev : @Int16 = @cast events in
     PollFd.{ .fd = f, .events = ev, .revents = 0 }
 
-$ poll_now : @Int -> @Int -> <@IO | e> @Bool = \fd events => c_poll { [pollfd fd events], 1, 0 } > 0
+$ poll_now : @ctx { e: @Row } -> @Int -> @Int -> <@IO | e> @Bool = \fd events =>
+    c_poll { [pollfd fd events], 1, 0 } > 0
 
 # Sleep until at least one descriptor is ready, then answer which ones are,
 # each probed without blocking. The C array poll(2) fills in is not read back,
 # so readiness is asked one descriptor at a time.
-$ poll_ready : @Vec { @Int, @Int } -> <@IO | e> @Vec @Int = \fds =>
+$ poll_ready : @ctx { e: @Row } -> @Vec { @Int, @Int } -> <@IO | e> @Vec @Int = \fds =>
     let all = build_pollfds fds 0 (@vec_new {}) in
     let n : @Nat64 = @cast (@vec_len fds) in
     let forever : @Int32 = -1 in
@@ -267,7 +279,8 @@ $ build_pollfds : @Vec { @Int, @Int } -> @Int -> @Vec PollFd -> @Vec PollFd = \f
     else
         let p = @vec_get fds i in build_pollfds fds (i + 1) (@vec_push acc (pollfd p.0 p.1))
 
-$ probe : @Vec { @Int, @Int } -> @Int -> @Vec @Int -> <@IO | e> @Vec @Int = \fds i acc =>
+$ probe : @ctx { e: @Row } -> @Vec { @Int, @Int } -> @Int -> @Vec @Int
+    -> <@IO | e> @Vec @Int = \fds i acc =>
     if i >= @vec_len fds =>
         acc
     else

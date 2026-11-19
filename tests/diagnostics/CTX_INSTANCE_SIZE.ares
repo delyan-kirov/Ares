@@ -1,0 +1,6 @@
+$ @mod CTX_INSTANCE_SIZE
+
+# Instance search passes no sizes, so an instance cannot read a `@Nat` field.
+$ @import ARESxALGO
+
+$ impl_ILen_for_ones : @ctx {n: @Nat} -> ILen (@Tensor n @Int) = .{ .len = \_ => @cast n }  #~ error[TYPE_MISMATCH]: the instance `impl_ILen_for_ones` uses its `@ctx` field `n` at run time

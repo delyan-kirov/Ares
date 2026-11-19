@@ -13,7 +13,7 @@ $ Tally : @Type = @effect tick : @Int -> {},
 $ double : @Int -> @Int = \n => n * 2
 $ count : @Int -> <Tally> @Int = \n => tick n; n
 
-$ total : ({} -> <Tally> a) -> @Int = \body =>
+$ total : @ctx { a: @Type } -> ({} -> <Tally> a) -> @Int = \body =>
     let h =
         do body {}; {}
         ctl k | tick n => \s => (k {}) (s + n) | _ => \s => s

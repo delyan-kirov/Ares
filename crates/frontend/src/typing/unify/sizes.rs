@@ -48,6 +48,14 @@ impl Unifier {
         ty
     }
 
+    /// Whether `ty` is a variable of kind `@Nat`.
+    pub fn is_size_var(&self, ty: Type) -> bool {
+        match self.types.node(self.resolve(ty)) {
+            TypeNode::Var(id) => self.is_nat_var(id),
+            _ => false,
+        }
+    }
+
     pub(super) fn is_nat_var(&self, id: VarId) -> bool {
         self.nat_vars.contains(&id)
     }
@@ -57,6 +65,11 @@ impl Unifier {
         if self.nat_vars.insert(id) {
             self.trail.push(Undo::NatVar(id));
         }
+    }
+
+    /// Mark the variables of a size `ty` as `@Nat`, for a position that wants one.
+    pub fn mark_size(&mut self, ty: Type) {
+        self.note_nat(ty);
     }
 
     /// Mark every variable in a size expression (a `Nat` position) as `Nat`-kinded.
@@ -366,6 +379,15 @@ impl Unifier {
     /// `(coefficient, sorted variable monomial)` terms, like terms combined, zero
     /// terms dropped. Bound variables are followed, so equality is decidable and
     /// `n + m` and `m + n` share a normal form.
+    /// A size as a sum of `(coefficient, variables multiplied)` terms, each
+    /// variable as a type.
+    pub fn size_poly(&self, ty: Type) -> Vec<(u64, Vec<Type>)> {
+        self.normalize_size(ty)
+            .into_iter()
+            .map(|(k, vars)| (k, vars.into_iter().map(|v| self.types.add(TypeNode::Var(v))).collect()))
+            .collect()
+    }
+
     pub(super) fn normalize_size(&self, ty: Type) -> Poly {
         match self.head(ty) {
             TypeNode::Nat(k) => canon(vec![(k, vec![])]),

@@ -63,9 +63,9 @@
 
 %token AT_MOD AT_STRUCT AT_UNION AT_EFFECT AT_MAIN AT_BUILD
 %token AT_USE AT_IFACE  /* AT_USE: `@use` */
-%token AT_CTX       /* `@ctx`: level parameters `@ctx {u: @l} ->` and level
-                       arguments `f @ctx {.u = 1}` (#406); any other use is
-                       reserved, which parser.rs reports */
+%token AT_CTX       /* `@ctx`: parameters solved by unification,
+                       `@ctx {t: @Type, n: @Nat} ->`, and arguments that give
+                       some by name, `f @ctx {.t = @Int}` (#537) */
 %token AT_PRIVATE AT_EXTERN AT_ARRAY AT_IMPORT
 %token AT_TRUE AT_FALSE /* the two `@Bool` literals (there is no `true`/`false` alias) */
 %token AT_TYCON     /* any other @name: a built-in type (@Int64, @Str, @Vec) or
@@ -230,9 +230,14 @@ opt_comma   : /* empty */ | COMMA ;
  * parser.rs rejects it. A local `let` signature does not take `@use` yet. */
 use_param  : AT_USE LBRACE use_fields opt_comma RBRACE ;
 
-/* Level parameters, `@ctx {u: @l, v: @l} ->`, at the start of a signature
- * (#406): each field's type is `@l`, which parser.rs checks. A use passes
- * levels as `f @ctx {.u = 1}` (see plain) or leaves them to the kernel. */
+/* A `@ctx` parameter binds what unification solves: types `t: @Type`, sizes
+ * `n: @Nat`, rows `e: @Row`, and universe levels `u: @l`, which stand in the
+ * signature's first `@ctx`, ahead of its parameters (#406, #537). A
+ * signature binds every type variable it names this way. Like `@use`: any
+ * number, anywhere on a global's signature, at least one field, names unique
+ * across the signature; never inside a parameter's type, an annotation, a
+ * local `let`'s type or a field type, which parser.rs enforces. A use leaves
+ * the fields to unification or gives some by name, `f @ctx {.t = @Int}`. */
 ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE ;
 use_fields : LIDENT COLON expr | use_fields COMMA LIDENT COLON expr ;
 
@@ -383,7 +388,10 @@ plain
    * At least one field: an empty `@use {}` supplies nothing, so it is an error.
    * It precedes the explicit argument that follows its parameter. */
   | AT_USE LBRACE use_inits opt_comma RBRACE
-  /* Level arguments of a level-polymorphic global (#406). */
+  /* An explicit `@ctx` argument, matched to the signature's `@ctx` fields by
+   * name; omitted fields are still solved: `zero_of @ctx {.t = @Int}`,
+   * `id @ctx {.u = 2}` for a level. It precedes the explicit argument that
+   * follows its parameter. */
   | AT_CTX LBRACE use_inits opt_comma RBRACE
   /* `_`, left to elaboration: in a type the checker solves it from the body
    * (#535); in a term the kernel infers it from the types around it (#470). */

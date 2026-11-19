@@ -1,0 +1,5 @@
+$ @mod CTX_MISPLACED
+
+# `@ctx` stands only on a global's signature: not in a parameter's type
+# (no higher-rank implicits), an annotation, or a local `let`'s type.
+$ a : (@ctx {t: @Type} -> t -> t) -> @Int = \f => 1  #~ error[UNEXPECTED_TOKEN]: a `@ctx` parameter stands only on the arrows of a global's signature

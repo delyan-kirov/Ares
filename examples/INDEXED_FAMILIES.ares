@@ -19,14 +19,15 @@ $ Vec : (a: @Type) -> @Nat -> @Type = @union
     Nil: {} -> Vec a 0,
     Cons: { a, Vec a n } -> Vec a (n + 1)
 
-$ cons : a -> Vec a n -> Vec a (n + 1) = \x xs => Vec.Cons.{ x, xs }
+$ cons : @ctx { a: @Type, n: @Nat } -> a -> Vec a n -> Vec a (n + 1) = \x xs => Vec.Cons.{ x, xs }
 
 # The lengths are checked as the vectors are built.
 $ three : Vec @Int 3 = cons 1 <| cons 2 <| cons 3 Vec.Nil
 
 # Matching does not refine the index yet (#543): the tail's length is the
 # constructor's own, so a function over every length is what can be written.
-$ to_list : Vec a n -> List a = \v => v |> \ | Vec.Cons.{ h, t } => h :: to_list t | Vec.Nil => []
+$ to_list : @ctx { a: @Type, n: @Nat } -> Vec a n -> List a = \v =>
+    v |> \ | Vec.Cons.{ h, t } => h :: to_list t | Vec.Nil => []
 
 # An index may be a type: each constructor says which.
 $ Expr : @Type -> @Type = @union
@@ -36,11 +37,12 @@ $ Expr : @Type -> @Type = @union
 
 $ both : Expr { @Int, @Bool } = Expr.Both.{ Expr.Num.{ 1 }, Expr.Flag.{ @true } }
 
-$ size : Expr a -> @Int = \e => e |> \ | Expr.Both.{ l, r } => size l + size r | _ => 1
+$ size : @ctx { a: @Type } -> Expr a -> @Int = \e =>
+    e |> \ | Expr.Both.{ l, r } => size l + size r | _ => 1
 
 $ window : Window 2 @Int = { .samples = [4, 5], .label = "w" }
 
-$ twice : Step e = Step.{ .run = \x => 2 * x }
+$ twice : @ctx { e: @Type } -> Step e = Step.{ .run = \x => 2 * x }
 
 $ sum : List @Int -> @Int = \l => l |> \ | List.Cons.{ h, t } => h + sum t | _ => 0
 

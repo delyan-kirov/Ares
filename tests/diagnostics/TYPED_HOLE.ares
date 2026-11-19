@@ -6,4 +6,4 @@ $ @import ARESxALGO
 $ f : @Int -> @Int = \n => n + ???  #~ error[TYPED_HOLE]: hole `???` has type `@Int`
 
 # A hole whose type is a variable of the signature: the locals of that type fit.
-$ first : a -> List a -> a = \d v => v |> \ | List.Cons.{ h, _ } => h | _ => ???  #~ error[TYPED_HOLE]: hole `???` has type `a`
+$ first : @ctx {a: @Type} -> a -> List a -> a = \d v => v |> \ | List.Cons.{ h, _ } => h | _ => ???  #~ error[TYPED_HOLE]: hole `???` has type `a`

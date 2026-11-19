@@ -136,7 +136,7 @@ Ares over the existing continuations.
 
 ```ares
 $ Async : @Type = @effect spawn : ({} -> <Async> {}) -> {}, yield : {} -> {},
-$ run_async : ({} -> <Async> a) -> a = ...   # round-robin over stored continuations
+$ run_async : @ctx {a: @Type} -> ({} -> <Async> a) -> a = ...   # round-robin over stored continuations
 ```
 
 - **Structured:** a `run_async` scope is a task group. It returns only after
@@ -151,8 +151,8 @@ $ run_async : ({} -> <Async> a) -> a = ...   # round-robin over stored continuat
 ### 2.2 Pure parallelism: `par` and parallel `formap`
 
 ```ares
-$ par : ({} -> b) -> Future b = ...          # the argument must be PURE (empty row)
-$ get : Future b -> b = ...
+$ par : @ctx {b: @Type} -> ({} -> b) -> Future b = ...          # the argument must be PURE (empty row)
+$ get : @ctx {b: @Type} -> Future b -> b = ...
 ```
 
 plus parallel instances of `formap` for `@Vec` and the LA tensors.
@@ -184,7 +184,7 @@ Rust decides what may cross threads with the `Send` and `Sync` traits. Ares
 can decide it with the effect row instead:
 
 ```ares
-$ spawn_par : ({} -> <e> a) -> <Par | e> Future a = ...
+$ spawn_par : @ctx {e: @Row, a: @Type} -> ({} -> <e> a) -> <Par | e> Future a = ...
 ```
 
 is accepted only when every effect in `e` is handled by a handler declared
@@ -235,7 +235,7 @@ The extensible route is an ordinary effect whose handler discharges into
 ```ares
 $ Gpu : @Type = @effect draw : Mesh -> {}, present : {} -> {}
 
-$ run_gpu : ({} -> <Gpu | e> a) -> <@IO | e> a = \body =>
+$ run_gpu : @ctx {e: @Row, a: @Type} -> ({} -> <Gpu | e> a) -> <@IO | e> a = \body =>
 	do body {}
 	ctl k
 	| Gpu.draw m => (raylib_draw m; k {})

@@ -290,7 +290,7 @@ The remaining hardcoded `[]` jobs became overloads, so every bracket form resolv
   checker no longer knows the con name `Stream`, and lowering no longer names `range`
   or `count_from`. `Checker::range_hook` resolves against the expected type, so a
   sequence of your own claims the surface with one overload.
-- **`::`.** An ordinary operator (`$ (::) : t -> @Vec t -> @Vec t` in CORE) instead of
+- **`::`.** An ordinary operator (`$ (::) : @ctx {t: @Type} -> t -> @Vec t -> @Vec t` in CORE) instead of
   a lowering-time rewrite to `vcons`, so it is overloadable like `+` and construction
   now agrees with the `h :: t` pattern. Dropped from `parser::table::desugared` and
   from the checker's built-in bindings.
@@ -351,6 +351,6 @@ What changed:
   (`blessed_first`), so CORE's declaration order keeps deciding that a bare
   `[lo ... hi]` is a `@Vec` and a bare `[lo ...]` is a `Stream`.
 
-`LA`'s tensor indexing is `$ impl_IIndex_for_tensor : @IIndex (@Tensor n a) @Int a`,
+`LA`'s tensor indexing is `$ impl_IIndex_for_tensor : @ctx {n: @Nat, a: @Type} -> @IIndex (@Tensor n a) @Int a`,
 `MAP`'s is `@IIndex (Map k v) k (Opt v)`, and `examples/TENSORS.ares` shows a user type
 joining with `@IIndex Grid @Int @Int`.

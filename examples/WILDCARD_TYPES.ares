@@ -8,7 +8,7 @@ $ @mod WILDCARD_TYPES
 $ succ : _ -> @Int = \x => x + 1
 
 # The result is whatever the parameter is; `a` stays the caller's choice.
-$ same : a -> _ = \x => x
+$ same : @ctx { a: @Type } -> a -> _ = \x => x
 
 $ twice : _ -> _ = \n => succ n |> succ
 

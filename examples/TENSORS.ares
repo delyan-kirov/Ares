@@ -21,11 +21,11 @@ $ ck_wrap : @Int = if v.[3] == 10 => 0 else 2
 $ ck_wrap2: @Int = if v.[7] == 20 => 0 else 4
 
 # Size-polymorphic: `first` takes `@Tensor n @Int` for any `n` (the size unifies).
-$ first : @Tensor n @Int -> @Int = \t => t.[0]
+$ first : @ctx { n: @Nat } -> @Tensor n @Int -> @Int = \t => t.[0]
 $ ck_poly : @Int = if first v == 10 => 0 else 8
 
 # The element type is polymorphic too; `head` works for any `@Tensor n a`.
-$ head : @Tensor n a -> a = \t => t.[0]
+$ head : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> a = \t => t.[0]
 $ ck_elem : @Int = if head [7, 8, 9] == 7 => 0 else 16
 
 # A rank-2 tensor nests: `@Tensor m (@Tensor n T)`, which `LA.Matrix m n T`
@@ -39,8 +39,10 @@ $ ab : @Tensor 5 @Int = concat_tensors v [40, 50] # 3 + 2 = 5
 $ ck_cat : @Int = if ab.[4] == 50 => 0 else 64
 
 # The normalizer decides equality: `n + n` is `2 * n`, and `+` commutes.
-$ dup : @Tensor n a -> @Tensor (2 * n) a = \t => concat_tensors t t
-$ flip : @Tensor n a -> @Tensor m a -> @Tensor (m + n) a = \x y => concat_tensors x y
+$ dup : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> @Tensor (2 * n) a = \t => concat_tensors t t
+$ flip : @ctx { n: @Nat, a: @Type, m: @Nat } -> @Tensor n a -> @Tensor m a
+    -> @Tensor (m + n) a = \x y =>
+    concat_tensors x y
 $ dd : @Tensor 6 @Int = dup v # 2 * 3 = 6
 $ ck_dup : @Int = if dd.[5] == 30 => 0 else 128
 
@@ -83,7 +85,8 @@ $ ck_ext : @Int =
 # `create template f` builds a tensor the same size as `template` (result size is
 # the template's, so it is sound), applying `f` at each index. With `length` and
 # `index` this is enough to write tensor ops in SOURCE: here, transpose.
-$ myT : Matrix m n a -> Matrix n m a = \t => create (\j => create (\i => t.[i].[j]) t) t.[0]
+$ myT : @ctx { m: @Nat, n: @Nat, a: @Type } -> Matrix m n a -> Matrix n m a = \t =>
+    create (\j => create (\i => t.[i].[j]) t) t.[0]
 $ ck_gen : @Int =
     if (myT mA).[2, 0] == 3 =>
         0
@@ -126,10 +129,12 @@ $ ck_ms : @Int =
 # `dot` and `matmul` run as runtime KERNELS (unboxed loops for CORE's numbers),
 # which must agree with the definition written in source: here on views (a
 # transpose, a column) and on element types that take the generic path.
-$ ref_dot : @use { p: IAdd a, m: IMul a, z: IZero a } -> @Tensor n a -> @Tensor n a -> a = \x y =>
+$ ref_dot : @ctx { a: @Type, n: @Nat } -> @use { p: IAdd a, m: IMul a, z: IZero a } -> @Tensor n a
+    -> @Tensor n a -> a = \x y =>
     let go = \i acc => if i == len x => acc else go (i + 1) (p.add acc (m.mul x.[i] y.[i])) in
     go 0 z.zero
-$ ref_mm : @use { p: IAdd t, m: IMul t, z: IZero t } -> Matrix m k t -> Matrix k n t
+$ ref_mm : @ctx { m: @Nat, n: @Nat, t: @Type, k: @Nat }
+    -> @use { p: IAdd t, mul: IMul t, z: IZero t } -> Matrix m k t -> Matrix k n t
     -> Matrix m n t = \a b =>
     let bt = transpose b in create (\i => create (\j => ref_dot a.[i] bt.[j]) (b.[0])) a
 $ kTA : Matrix 3 3 @Int = matmul mT mA             # [[17, 22, 27], [22, 29, 36], [27, 36, 45]]

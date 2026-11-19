@@ -1206,7 +1206,8 @@ $ ffmpeg : @Str -> @Int -> @Str -> <@IO> @Int = \src width dst =>
     C.system "ffmpeg -loglevel error -y -i ?(src) -vf ?(chain) ?(dst)"
 
 # How many of the steps `step` takes on the items from `i` on fail.
-$ failures : (t -> <@IO> @Int) -> @Vec t -> @Int -> <@IO> @Int = \step items i =>
+$ failures : @ctx { t: @Type } -> (t -> <@IO> @Int) -> @Vec t -> @Int
+    -> <@IO> @Int = \step items i =>
     if i == @vec_len items => 0 else step (@vec_get items i) + failures step items (i + 1)
 
 # `d` as SVG at `out` (none when empty) and as each PNG { path, width }, all

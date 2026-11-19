@@ -48,7 +48,7 @@ $ Forge : @Type = @effect
 # Runs `body` against the host `origin` lives on, or the one `git config
 # thrax.forge` names. A host it cannot tell is `offline`: the hooks that need
 # no forge must work in any clone.
-$ with_forge : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
+$ with_forge : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     let named = output "git config --get thrax.forge" in
     let remote = output "git remote get-url origin 2>/dev/null" in
     let host =
@@ -60,7 +60,7 @@ $ with_forge : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
         | ""        => offline body
         | other     => Fail.fail ("unknown forge `" ++ other ++ "` (thrax.forge)")
 
-$ github : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
+$ github : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     do body {}
     ctl k
     | Forge.issue n            => k (gh_issue n)
@@ -70,7 +70,7 @@ $ github : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     | x                        => x
 
 # No host: issues go unchecked and nothing can be opened.
-$ offline : ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
+$ offline : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     do body {}
     ctl k
     | Forge.issue n            => k Lookup.Unreachable

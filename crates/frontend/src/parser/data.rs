@@ -62,6 +62,9 @@ pub struct Ast {
     /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
     /// `@l`. Only the kernel reads them so far (#406).
     pub level_params: SecondaryMap<Ty, Slice<UseField>>,
+    /// The other `@ctx` fields of a signature, keyed like [`Ast::use_params`],
+    /// in the order written: the types, sizes and rows its type variables are.
+    pub ctx_params: SecondaryMap<Ty, Slice<UseField>>,
     /// Source span of each `Expr` node, for diagnostics. Populated by the parser;
     /// a node absent here (e.g. one synthesized by a later pass) has no span.
     pub expr_spans: SecondaryMap<Expr, Span>,
@@ -498,6 +501,7 @@ pub struct RecField {
 pub struct EffectRow {
     pub entries: Slice<RowEntry>,
     pub tail: Option<StrId>,
+    pub tail_span: Option<Span>,
 }
 
 /// One comma-separated entry of an effect row: an effect label with its type
@@ -761,16 +765,22 @@ pub enum FieldInit {
     Positional(Aol<Expr>),
 }
 
-/// One field of a `@use {name: Type, ...}` parameter. `before` counts the
-/// explicit parameters the signature declares ahead of it, which is where an
-/// explicit `@use {.name = e}` argument goes.
+/// One field of a `@use {name: Type, ...}` or `@ctx {name: Type, ...}`
+/// parameter. `before` counts the explicit parameters the signature declares
+/// ahead of it, which is where an explicit `@use {.name = e}` or
+/// `@ctx {.name = e}` argument goes. `ctx` tells a `@ctx` field.
 #[derive(Clone, Copy, Debug)]
 pub struct UseField {
     pub name: StrId,
     pub ty: Aol<Ty>,
     pub before: u32,
     pub span: Span,
+    pub ctx: bool,
 }
+
+/// The type of a `@ctx {n: @Nat}` field as a value in its definition's
+/// body: `@Size n` holds the natural number `n` stands for.
+pub const SIZE_OF: &str = "@Size";
 
 /// The binding of a `let`: `p: T = value`.
 #[derive(Clone, Copy, Debug)]

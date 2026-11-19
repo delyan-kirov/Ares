@@ -110,6 +110,7 @@ pub fn desugar_program(
                     lw.collect_meta_types(*sig);
                 }
                 let term = lw.watched(*name, |lw| lw.expr(*body));
+                let term = lw.size_params(*body, term);
                 globals.push((*name, term));
                 if ctx.is_some() {
                     ctx_globals.push(*name);
@@ -506,8 +507,10 @@ impl<'a> Desugarer<'a> {
                 let (f, x) = (*f, *x);
                 // An explicit `@use {...}` argument is not applied here: the checker
                 // took it off the spine and recorded it in the head's resolved
-                // context, which `apply_ctx` injects at the head reference.
-                if matches!(self.node(x), Expr::UseArg(_)) {
+                // context, which `apply_ctx` injects at the head reference. A
+                // `@ctx {...}` one fixed types and sizes, which `apply_sizes`
+                // passes where needed.
+                if matches!(self.node(x), Expr::UseArg(_) | Expr::CtxArg(_)) {
                     return self.expr(f);
                 }
                 // Integers are one 64-bit value at runtime, so `@cast x` to a narrower
@@ -908,6 +911,26 @@ impl<'a> Desugarer<'a> {
         self.app(base, arg)
     }
 
+    /// A definition's body with the `@Nat` fields it takes at run time bound
+    /// ahead of its own parameters.
+    fn size_params(&mut self, body: Aol<Expr>, term: Aol<Term>) -> Aol<Term> {
+        let Some(fields) = self.resolved.size_params.get(&body).cloned() else {
+            return term;
+        };
+        fields.iter().rev().fold(term, |t, f| self.terms.lam(*f, t))
+    }
+
+    /// Apply a reference to the sizes it passes at run time.
+    fn apply_sizes(&mut self, site: Aol<Expr>, base: Aol<Term>) -> Aol<Term> {
+        let Some(vals) = self.resolved.size_args.get(&site).cloned() else {
+            return base;
+        };
+        vals.iter().fold(base, |f, v| {
+            let x = self.ctx_term(v);
+            self.app(f, x)
+        })
+    }
+
     /// Build the term for a resolved context value.
     fn ctx_term(&mut self, val: &CtxVal) -> Aol<Term> {
         match val {
@@ -930,6 +953,7 @@ impl<'a> Desugarer<'a> {
                 self.field(base, index.to_string())
             }
             CtxVal::Expr(e) => self.expr(*e),
+            CtxVal::Nat(n) => self.add(Term::Int(*n as i64)),
         }
     }
 
@@ -987,6 +1011,7 @@ impl<'a> Desugarer<'a> {
             return t;
         }
         let base = self.global(module, name);
+        let base = self.apply_sizes(site, base);
         self.apply_ctx(site, base)
     }
 

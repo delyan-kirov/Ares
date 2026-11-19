@@ -32,7 +32,7 @@ impl<'a> Checker<'a> {
         let Some(sig) = def.sig else {
             return Ok(());
         };
-        let mut tvars = HashMap::new();
+        let mut tvars = self.sig_tvars(sig);
         let sig_ty = self.ty_of_ast(sig, &mut tvars);
         let exposed = match (def.ctx, self.unifier.types.node(sig_ty)) {
             (Some(_), TypeNode::Arrow(_, to, _)) => to,
@@ -47,7 +47,7 @@ impl<'a> Checker<'a> {
     pub(super) fn check_def_body(&mut self, def: &Def, decl: Type) -> Result<Option<SigVars>> {
         self.ambient = self.top_level_ambient();
         if let Some(sig) = def.sig {
-            let mut tvars = HashMap::new();
+            let mut tvars = self.sig_tvars(sig);
             self.wildcards.clear();
             let sig_ty = self.ty_of_ast(sig, &mut tvars);
             let wildcards = std::mem::take(&mut self.wildcards);
@@ -68,7 +68,14 @@ impl<'a> Checker<'a> {
             )?;
             let saved_sig = self.current_sig.replace(sig_ty);
             let outer = std::mem::take(&mut self.opaque_vars);
+            self.var_names.insert(def.name, tvars.iter().map(|(n, t)| (*t, *n)).collect());
+            let scoped = std::mem::replace(&mut self.scoped_tvars, tvars.clone());
+            let checking = self.checking_def.replace(def.name);
+            self.bind_size_fields(def.name, sig, def.body, &tvars);
             let r = self.check(def.body, sig_ty).map_err(|d| self.sig_bound_mismatch(def, sig).unwrap_or(d));
+            self.leave_scope();
+            self.checking_def = checking;
+            self.scoped_tvars = scoped;
             let opaque = std::mem::replace(&mut self.opaque_vars, outer);
             self.current_sig = saved_sig;
             r?;
@@ -299,6 +306,10 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn check_node(&mut self, e: Aol<Expr>, expected: Type) -> Result<()> {
+        // The argument of a `(t: @Type) ->` or `(n: @Nat) ->` parameter fixes it.
+        if let Some((nat, v)) = self.dependent_param(expected) {
+            return self.check_dependent_arg(e, nat, v);
+        }
         // A literal aimed at a user type may build it through a blessed `@I*`
         // construction interface; when one applies, that supersedes the built-in default.
         if self.literal_hook_check(e, expected)? {
@@ -327,11 +338,11 @@ impl<'a> Checker<'a> {
                 self.enter_scope();
                 let mut exp = expected;
                 let mut body_eff = self.ambient;
-                let mut tvars = HashMap::new();
+                let mut tvars = self.scoped_tvars.clone();
                 for p in params.iter() {
                     let (param_ty, rest, eff) = self.arrow_parts(exp)?;
                     if let Some(sig) = p.sig {
-                        let sig_ty = self.ty_of_ast(sig, &mut tvars);
+                        let sig_ty = self.ty_reporting(sig, &mut tvars, None);
                         self.unifier.unify(
                             param_ty,
                             sig_ty,
@@ -1045,10 +1056,10 @@ impl<'a> Checker<'a> {
                 let (params, body) = (self.ast.slice(*params), *body);
                 self.enter_scope();
                 let mut param_tys = Vec::with_capacity(params.len());
-                let mut tvars = HashMap::new();
+                let mut tvars = self.scoped_tvars.clone();
                 for p in params.iter() {
                     let pv = match p.sig {
-                        Some(sig) => self.ty_of_ast(sig, &mut tvars),
+                        Some(sig) => self.ty_reporting(sig, &mut tvars, None),
                         None => self.unifier.fresh(),
                     };
                     self.type_pattern(p.pat, pv)?;
@@ -1166,12 +1177,12 @@ impl<'a> Checker<'a> {
                 Ok(self.unifier.fresh())
             }
 
-            // `(inner : T)`: check `inner` against `T` and take `T` as the type. Any
-            // type variable written in `T` is fresh (a local, monomorphic annotation).
+            // `(inner : T)`: check `inner` against `T` and take `T` as the type. A
+            // type variable written in `T` is one the enclosing signature binds.
             Expr::Ascribe { expr, ty } => {
                 let (expr, ty) = (*expr, *ty);
-                let mut tvars = HashMap::new();
-                let t = self.ty_of_ast(ty, &mut tvars);
+                let mut tvars = self.scoped_tvars.clone();
+                let t = self.ty_reporting(ty, &mut tvars, None);
                 self.check(expr, t).map_err(|d| match self.ast.ty_span(ty) {
                     Some(span) if d.root().code == Code::TypeMismatch => {
                         d.with_label(span, "expected because of this annotation")
@@ -1188,13 +1199,17 @@ impl<'a> Checker<'a> {
                 Code::TypeMismatch, self.ast.expr_span(e).unwrap_or(Span::at(0)), 0,
                 "a `@use {{...}}` argument stands only among a call's arguments"
             )),
-            Expr::CtxArg(_) => Err(dependent_only(self.ast.expr_span(e), "a level argument `@ctx {.u = l}`")),
+            Expr::CtxArg(_) => Err(diag!(
+                Code::TypeMismatch, self.ast.expr_span(e).unwrap_or(Span::at(0)), 0,
+                "a `@ctx {{...}}` argument stands only among a call's arguments"
+            )),
             // A type where a value stands is a value of `@Type`, as in
             // `f (@Int -> @Int)`. It is elaborated like an annotation, so an
             // unknown name in it is reported the same way.
             Expr::Type(t) => {
                 let t = *t;
-                self.ty_of_ast(t, &mut HashMap::new());
+                let mut tvars = self.scoped_tvars.clone();
+                self.ty_reporting(t, &mut tvars, None);
                 self.type_terms.insert(e);
                 Ok(self.unifier.types.con(ty::UNIVERSE))
             }
@@ -1451,17 +1466,21 @@ impl<'a> Checker<'a> {
         // against the head's reference site, which is where the context is planned.
         // Each remembers how many explicit arguments precede it, which must be
         // where its fields' parameters stand.
-        let mut uses = Vec::new();
+        let (mut uses, mut ctxs) = (Vec::new(), Vec::new());
         let mut explicit = Vec::with_capacity(args.len());
         for a in args {
             match self.node(a) {
                 Expr::UseArg(inits) => uses.push(UseOverride { at: explicit.len() as u32, inits: *inits, site: a }),
+                Expr::CtxArg(inits) => ctxs.push(UseOverride { at: explicit.len() as u32, inits: *inits, site: a }),
                 _ => explicit.push(a),
             }
         }
         let args = explicit;
         if !uses.is_empty() {
             self.ctx_override.insert(head, uses);
+        }
+        if !ctxs.is_empty() {
+            self.ctx_given.insert(head, ctxs);
         }
         let args = args;
 
@@ -1508,6 +1527,9 @@ impl<'a> Checker<'a> {
         let tf = self.infer(head)?;
         if let Some(uses) = self.ctx_override.remove(&head) {
             return Err(self.use_without_fields(head, &uses));
+        }
+        if let Some(given) = self.ctx_given.remove(&head) {
+            return Err(self.ctx_without_fields(head, &given));
         }
         self.apply_args(head, tf, &args, expected)
     }
@@ -1654,8 +1676,9 @@ impl<'a> Checker<'a> {
         // `.{ .. }` literal resolves its struct from the annotation.
         let value_ty = match b.sig {
             Some(sig) => {
-                let mut tvars = HashMap::new();
-                let sig_ty = self.ty_of_ast(sig, &mut tvars);
+                let mut tvars = self.scoped_tvars.clone();
+                tvars.extend(self.sig_tvars(sig));
+                let sig_ty = self.ty_reporting(sig, &mut tvars, None);
                 self.check(b.value, sig_ty)?;
                 sig_ty
             }
@@ -1723,6 +1746,12 @@ impl<'a> Checker<'a> {
             // A qualified reference to a `@use`-bearing function plans its context
             // just like a bare one, so `LA.dot u v` injects its dictionary rather
             // than staying an under-applied function.
+            let given = self.ctx_given.remove(&site);
+            let sig = self.qualified_ctx_sigs.get(&(m, name)).copied();
+            if given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty()) {
+                let uses = self.qualified_ctx.contains_key(&(m, name));
+                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
+            }
             if let Some(sig) = self.qualified_ctx.get(&(m, name)).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
                 self.plan_ctx(site, name, req, Some(sig))?;
@@ -1759,6 +1788,13 @@ impl<'a> Checker<'a> {
         // variable map and plan the context. The returned type is the plain arrow, so
         // callers apply only the explicit parameters.
         if !self.shadowed_locally(name) {
+            let given = self.ctx_given.remove(&site);
+            let sig = self.ctx_sigs.get(&name).copied();
+            let ambiguous = !self.local_defs.contains(&name) && self.ambiguous_imports.contains_key(&name);
+            if !ambiguous && (given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty())) {
+                let uses = self.global_ctx.contains_key(&name);
+                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
+            }
             if let Some(sig) = self.global_ctx.get(&name).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
                 self.plan_ctx(site, name, req, Some(sig))?;
@@ -1787,7 +1823,19 @@ impl<'a> Checker<'a> {
             }
         }
         if let Some(scheme) = self.lookup(name) {
-            Ok(self.unifier.instantiate(scheme))
+            let t = self.unifier.instantiate(scheme);
+            // A `@ctx {n: @Nat}` field holds the size `n` stands for, a `@Nat`.
+            match self.size_of_req(t) {
+                Some(_) => {
+                    self.note_size_ref(name);
+                    Ok(self.unifier.types.con(ty::NAT))
+                }
+                None => Ok(t),
+            }
+        } else if self.scoped_tvars.get(&name).is_some_and(|t| !self.unifier.is_size_var(*t)) {
+            // A `@ctx {t: @Type}` field as a value is the type, erased.
+            self.type_terms.insert(site);
+            Ok(self.unifier.types.con(ty::UNIVERSE))
         } else if let Some(kind) = self.type_kind(name) {
             self.type_terms.insert(site);
             Ok(kind)
