@@ -1,0 +1,5 @@
+$ @mod TYPE_FUNCTION_UNBOUND_PARAM
+
+# A type-level function's lambda names each parameter of its signature.
+$ Two : @Type -> @Type = \t => {t, t}
+$ Same : @Type -> @Type = Two  #~ error[UNSUPPORTED]: a type-level function binds every parameter with its lambda

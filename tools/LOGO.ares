@@ -44,7 +44,7 @@ $ Rgb : @struct =
     g: @Int,
     b: @Int,
 
-$ Point : @alias = { Real, Real }
+$ Point : @Type = { Real, Real }
 
 # A curve keeps its numbers for the SVG, x0 y0 and then six a cubic segment
 # (two control points and the end), and its flattened corners for the raster.
@@ -148,7 +148,7 @@ $ upto : @Int -> @Vec @Int = \n =>
 # Then one eraser cuts the eye, the gap between crest and dome, and the fold
 # in the cape; the stalk that carries the crest goes back over the gap.
 # `kind` is "fill", "cut" or "stalk".
-$ Part : @alias = { @Str, @Str, @Vec Figure }
+$ Part : @Type = { @Str, @Str, @Vec Figure }
 
 $ spear_shaft : Part = {
     "spear",
@@ -795,7 +795,7 @@ $ deltas : @Str -> @Int -> @Vec @Int -> @Int -> @Int
 # A contour of on-curve (`on`) and off-curve points as a polygon: each
 # quadratic arc in eight chords, with the on-curve point implied between two
 # off-curve ones.
-$ OutlinePoint : @alias = { Real, Real, @Bool }
+$ OutlinePoint : @Type = { Real, Real, @Bool }
 
 $ flatten : @Vec OutlinePoint -> @Vec Point = \pts =>
     let n = @vec_len pts in
@@ -1144,7 +1144,7 @@ $ crossings : Real -> Figure -> @Vec Real = \y f =>
         | Figure.Curve.{ _, ps, lo, hi } => if y > lo.1 && y < hi.1 => edge_crossings y ps else []
 
 # A layer cut down to one row: its color and its outlines' crossings.
-$ Row : @alias = { Opt Rgb, @Vec Real }
+$ Row : @Type = { Opt Rgb, @Vec Real }
 
 $ covers : Real -> @Vec Real -> @Bool = \x xs =>
     (fold (\n c => if c > x => n + 1 else n) 0 xs) % 2 == 1

@@ -347,13 +347,17 @@ pub enum Item {
         splices: Slice<EntrySplice>,
         variants: Slice<VariantDecl>,
     },
-    /// `$ Name : @alias [a b ...] = ty`. `params` are the declared type parameters
-    /// (mandatory: every type variable used in `ty` must be listed). An alias may
-    /// partially instantiate another generic type, e.g. `MapInt : @alias v = Map Int v`.
+    /// A type-level function, a global whose signature ends in `@Type` (#535):
+    /// `$ MapInt : @Type -> @Type = \v => Map @Int v`. The checker reads it as
+    /// a transparent alias: `params` are the lambda's parameters, one per arrow
+    /// of `sig`, and `ty` is the body read as a type. `body` is the definition
+    /// as written, which the kernel reads as any other.
     Alias {
         name: StrId,
         params: Slice<StrId>,
         ty: Aol<Ty>,
+        sig: Aol<Ty>,
+        body: Aol<Expr>,
     },
     /// `$ Name : @effect params = op : ty, ...`. An operation's type may mention
     /// only the effect's parameters: a handler fixes them for every operation it
@@ -463,9 +467,10 @@ pub enum Ty {
     /// A tuple type `{ A, B, ... }` (n >= 1).
     Tuple(Slice<Aol<Ty>>),
     /// A type written as a term no other variant spells: a lambda, `a ~ b`, a
-    /// projection, a constructor. Types are expressions (#406); the frontend's
-    /// checker rejects this one until its elaborator takes types as terms,
-    /// and the kernel reads it as any other term.
+    /// projection, a constructor, an `if`. Types are expressions (#406): a
+    /// `let` or an applied lambda that leaves a type is reduced as it is read,
+    /// the frontend's checker rejects what remains, and the kernel reads it
+    /// as any other term.
     Term(Aol<Expr>),
     /// A record type `{ x: A, y: B }` (closed) or `{ x: A | r }` (open, `tail` is
     /// the row variable). A closed record in parameter
@@ -739,6 +744,7 @@ pub enum Expr {
     CtxArg(Slice<FieldInit>),
     /// A type in term position: a function type `A -> B` or a record type
     /// `{x: A}` where an expression stands, as in a lambda that returns a type.
+    /// Its type is `@Type`, and it erases to `{}`.
     Type(Aol<Ty>),
 }
 

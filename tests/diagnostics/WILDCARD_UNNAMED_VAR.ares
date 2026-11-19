@@ -1,0 +1,6 @@
+$ @mod WILDCARD_UNNAMED_VAR
+
+# A global's type variables are written in its signature, so `_` may not
+# stand for a type that brings in a new one.
+$ fst : {a, b} -> a = \{x, _} => x
+$ w : _ -> @Int = \p => fst p + 1  #~ error[TYPE_ANNOTATION_REQUIRED]: `_` in the signature of `w` stands for `{@Int, a}`

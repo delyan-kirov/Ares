@@ -18,7 +18,7 @@ $ @mod ARES
 
 $ @import ARESxALGO
 
-$ Future : @alias b = @Future b
+$ Future : @Type -> @Type = \b => @Future b
 
 $ par : ({} -> b) -> Future b = \f => @par f
 
@@ -34,7 +34,7 @@ $ wait : Future b -> b = \fut => @await fut
 # message. Messages arrive in the order one task sent them; which receiver
 # gets a message depends on scheduling, so both are `@IO`. With uniqueness, a
 # message is handed over, not copied.
-$ Channel : @alias a = @Chan a
+$ Channel : @Type -> @Type = \a => @Chan a
 
 $ channel : {} -> <@IO | e> Channel a = @chan_new {}
 

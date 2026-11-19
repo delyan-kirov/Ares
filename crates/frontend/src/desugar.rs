@@ -394,7 +394,20 @@ impl<'a> Desugarer<'a> {
             let names = names.clone();
             return self.promote_to_record(e, &names);
         }
+        if self.is_type_term(e) {
+            return self.unit();
+        }
         self.expr_core(e)
+    }
+
+    /// A type in term position, or a type-level function applied to its
+    /// arguments there: either way a type, which lowers to `{}`.
+    fn is_type_term(&self, e: Aol<Expr>) -> bool {
+        match self.node(e) {
+            _ if self.resolved.type_terms.contains(&e) => true,
+            Expr::App(f, _) => self.is_type_term(*f),
+            _ => false,
+        }
     }
 
     /// An anonymous (name-keyed) record literal.

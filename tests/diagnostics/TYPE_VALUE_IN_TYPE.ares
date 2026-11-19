@@ -1,0 +1,4 @@
+$ @mod TYPE_VALUE_IN_TYPE
+
+# A value that is not a type cannot stand in a type.
+$ n : "count" = 3  #~ error[TYPE_MISMATCH]: a value stands where a type is expected

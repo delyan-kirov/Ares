@@ -206,6 +206,13 @@ impl<'a> Checker<'a> {
         }
         self.module_scopes.extend(scopes.iter().copied());
         self.imported_builtins.extend(other.own_builtins.iter().copied());
+        if bare {
+            for (name, body) in &other.nat_consts {
+                if !other.private_names.contains(name) {
+                    self.nat_consts.entry(*name).or_insert(*body);
+                }
+            }
+        }
         self.imported_pending |= other.awaits_splices();
         if !other.private_names.is_empty() {
             for &scope in &scopes {
@@ -255,6 +262,7 @@ impl<'a> Checker<'a> {
             if bare {
                 self.hidden_types.remove(&name);
                 self.alias_types.remove(&name);
+                self.imported_types.insert(name, other.module_name);
             } else {
                 let named_bare = self.is_known_type(name)
                     && !self.hidden_types.contains_key(&name)
@@ -366,7 +374,12 @@ impl<'a> Checker<'a> {
     pub(super) fn finalize_imports(&mut self) {
         let imported = std::mem::take(&mut self.imported);
         for (name, mut cands) in imported {
-            if cands.len() == 1 {
+            let type_owner = self.imported_types.get(&name).filter(|m| cands.iter().all(|(_, c)| c != *m));
+            if let Some(&owner) = type_owner {
+                let mut owners: Vec<StrId> = cands.iter().map(|(_, m)| *m).chain([owner]).collect();
+                owners.sort_unstable_by_key(|m| m.as_str());
+                self.ambiguous_imports.insert(name, owners);
+            } else if cands.len() == 1 {
                 let (ty, module) = cands.pop().expect("one candidate");
                 self.value_module.insert(name, module);
                 self.bind(name, ty);

@@ -1,0 +1,7 @@
+$ @mod TYPE_FUNCTION_CYCLE
+
+# A type-level function unfolds in place, so a cycle through them alone never
+# finishes.
+$ T1 : @Type = T2  #~ error[TYPE_CYCLE]: type `T1` unfolds to itself
+$ T2 : @Type = T1
+$ x : T1 = 1

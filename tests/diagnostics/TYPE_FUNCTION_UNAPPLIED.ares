@@ -1,0 +1,4 @@
+$ @mod TYPE_FUNCTION_UNAPPLIED
+
+# A lambda in a type reduces only when it is applied.
+$ n : (\t => t) = 3  #~ error[TYPE_MISMATCH]: a function stands where a type is expected

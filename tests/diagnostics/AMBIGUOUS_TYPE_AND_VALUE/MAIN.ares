@@ -1,0 +1,10 @@
+$ @mod MAIN
+
+# Types and values share one namespace (#535), so a type from one import and
+# a value from another make the bare name mean neither.
+$ @import A
+$ @import B
+
+$ n : @Int = pair 3  #~ error[AMBIGUOUS_NAME]: `pair` is imported from more than one module
+$ m : @Int = B.pair 3
+$ p : A.pair @Int = {1, 2}

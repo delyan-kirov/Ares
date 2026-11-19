@@ -1,0 +1,3 @@
+$ @mod A
+
+$ pair : @Type -> @Type = \t => {t, t}

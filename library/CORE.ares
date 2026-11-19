@@ -322,7 +322,7 @@ $ @warn : Diag -> <@Meta> {} = @extern "ares"
 
 # `Real` is a friendly alias for the word-size float `@Float64`; the compiler knows
 # only `@Float64`, not `Real`.
-$ Real : @alias = @Float64
+$ Real : @Type = @Float64
 
 $ IAdd : @struct t = add: t -> t -> t,
 $ ISub : @struct t = sub: t -> t -> t,

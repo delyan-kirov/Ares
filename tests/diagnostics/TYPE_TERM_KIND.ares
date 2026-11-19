@@ -1,0 +1,6 @@
+$ @mod TYPE_TERM_KIND
+
+# A type in term position has its kind as its type: `@Vec` takes an element
+# type, so it is `@Type -> @Type`, not a `@Type`.
+$ arity : @Type -> @Int = \_ => 1
+$ n : @Int = arity @Vec  #~ error[TYPE_MISMATCH]: expected @Type, found @Type -> @Type

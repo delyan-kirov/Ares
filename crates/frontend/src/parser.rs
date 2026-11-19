@@ -48,6 +48,10 @@ pub struct Parser<'a> {
     /// A `@ctx T ->` parameter read in the current signature. It is an error,
     /// raised once the body is parsed, so its fix can rewrite both.
     ctx_written: Option<CtxWritten>,
+    /// The names a `let` or an applied lambda binds while an expression is
+    /// read as a type, innermost last: `let u = {t, t} in u -> u` reads `u`
+    /// as `{t, t}`.
+    ty_env: Vec<(StrId, Aol<Ty>)>,
 }
 
 /// Where a signature wrote the reserved `@ctx T ->` parameter.
@@ -86,6 +90,7 @@ impl<'a> Parser<'a> {
             last_end: 0,
             errors: Vec::new(),
             ctx_written: None,
+            ty_env: Vec::new(),
         }
     }
 
@@ -823,12 +828,12 @@ impl<'a> Parser<'a> {
                 body: self.parse_expr(0)?,
             });
         }
-        // After `name :`, an `@struct`/`@union`/`@alias`/`@effect` keyword opens a
+        // After `name :`, an `@struct`/`@union`/`@effect` keyword opens a
         // type declaration; anything else is a type signature on a value.
         if let Kind::At = self.peek_kind()? {
             let at_tok = self.peek()?;
             let kw = self.intrinsic_name(at_tok);
-            if matches!(kw, "struct" | "union" | "alias" | "effect") {
+            if matches!(kw, "struct" | "union" | "effect") {
                 self.require_type_capital(self.text(name_tok), &name_tok)?;
             }
             match kw {
@@ -883,13 +888,6 @@ impl<'a> Parser<'a> {
                         variants,
                     });
                 }
-                "alias" => {
-                    self.bump()?;
-                    let params = self.parse_type_params()?;
-                    expect!(self, Kind::Eq, "expected '=' after '@alias'");
-                    let ty = self.parse_type()?;
-                    return Ok(Item::Alias { name, params, ty });
-                }
                 "effect" => {
                     self.bump()?;
                     let params = self.parse_type_params()?;
@@ -915,16 +913,64 @@ impl<'a> Parser<'a> {
             }
             let body = self.parse_expr(0)?;
             let body = self.bind_signature(sig, body);
+            if let Some(item) = self.type_function(name, sig, body)? {
+                return Ok(item);
+            }
             return Ok(Item::Def { name, sig: Some(sig), ctx, body });
         }
         let body = self.parse_def_body()?;
         let body = self.bind_signature(sig, body);
+        if let Some(item) = self.type_function(name, sig, body)? {
+            return Ok(item);
+        }
         Ok(Item::Def {
             name,
             sig: Some(sig),
             ctx,
             body,
         })
+    }
+
+    /// A definition whose signature ends in `@Type` after pure arrows, with a
+    /// lambda binding a lowercase name per arrow, is a
+    /// type-level function (#535): its body read as a type is what the checker
+    /// unfolds. Any other shape stays a definition.
+    fn type_function(&mut self, name: StrId, sig: Aol<Ty>, body: Aol<Expr>) -> Result<Option<Item>> {
+        if self.ast.use_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() {
+            return Ok(None);
+        }
+        let mut arity = 0;
+        let mut cod = sig;
+        while let Ty::Arrow { effect: None, to, .. } = self.ast.ty(cod) {
+            arity += 1;
+            cod = *to;
+        }
+        let universe = |t: &Ty| matches!(t, Ty::Con { module: None, name } if name.as_str() == "@Type");
+        let is_type = match self.ast.ty(cod) {
+            Ty::App(head, _) => universe(self.ast.ty(*head)),
+            t => universe(t),
+        };
+        if !is_type {
+            return Ok(None);
+        }
+        let mut params = Vec::new();
+        let mut inner = body;
+        while params.len() < arity {
+            let Expr::Lambda { params: ps, body: b } = self.ast.expr(inner) else { return Ok(None) };
+            for p in self.ast.slice(*ps) {
+                match self.ast.pat(p.pat) {
+                    Pattern::Var(v) if !is_upper(v.as_str()) => params.push(*v),
+                    _ => return Ok(None),
+                }
+            }
+            inner = *b;
+        }
+        if params.len() != arity {
+            return Ok(None);
+        }
+        let ty = self.to_ty(inner)?;
+        let params = self.ast.make_slice(params);
+        Ok(Some(Item::Alias { name, params, ty, sig, body }))
     }
 
     /// Parse a definition's type signature. `@use {f: T, ...} ->` parameters may
@@ -1546,8 +1592,25 @@ impl<'a> Parser<'a> {
     /// tuples, records, splices); any other expression is a `Ty::Term`.
     fn to_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
         let span = self.ast.expr_span(e);
+        if let Expr::Var { module: None, name } = self.ast.expr(e) {
+            if let Some((_, ty)) = self.ty_env.iter().rev().find(|(n, _)| n == name) {
+                return Ok(*ty);
+            }
+        }
         let node = match self.ast.expr(e).clone() {
-            Expr::Type(ty) => return Ok(ty),
+            Expr::Type(ty) if self.ty_env.is_empty() => return Ok(ty),
+            Expr::Type(ty) => return self.subst_ty(ty),
+            // `let x = A in B` in a type: `B` with `x` read as `A`, when that
+            // leaves a type; otherwise the term, for the kernel to read.
+            Expr::Let { binding, body } if self.type_binder(binding.pat).is_some() => {
+                let name = self.type_binder(binding.pat).unwrap();
+                let value = self.to_ty(binding.value)?;
+                let reduced = self.to_ty_under(&[(name, value)], body)?;
+                if !self.holds_term(reduced) {
+                    return Ok(reduced);
+                }
+                Ty::Term(e)
+            }
             Expr::Var { module: None, name } if name.as_str() == "@Tensor" => {
                 let span = span.unwrap_or(Span::at(0));
                 return Err(Diagnostic::error(
@@ -1566,6 +1629,8 @@ impl<'a> Parser<'a> {
                     Ty::Con { module: None, name }
                 }
             }
+            // `M.f`: a type-level function of module `M`.
+            Expr::Var { module: Some(m), name } => Ty::Con { module: Some(m), name },
             // `M.T`: a qualified type reads as a variant of `M` with no payload.
             Expr::Variant { module: None, ty: Some(m), tag, fields } if self.ast.slice(fields).is_empty() => {
                 Ty::Con { module: Some(m), name: tag }
@@ -1601,8 +1666,94 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// `body` read as a type with each of `bound` naming its type.
+    fn to_ty_under(&mut self, bound: &[(StrId, Aol<Ty>)], body: Aol<Expr>) -> Result<Aol<Ty>> {
+        let depth = self.ty_env.len();
+        self.ty_env.extend_from_slice(bound);
+        let ty = self.to_ty(body);
+        self.ty_env.truncate(depth);
+        ty
+    }
+
+    /// `ty` with each name `ty_env` binds read as its type. A function type
+    /// or record type is built as it is parsed, before an enclosing `let`
+    /// is known, so its names are replaced here.
+    fn subst_ty(&mut self, ty: Aol<Ty>) -> Result<Aol<Ty>> {
+        let node = match self.ast.ty(ty).clone() {
+            Ty::Var(name) => {
+                let bound = self.ty_env.iter().rev().find(|(n, _)| *n == name);
+                return Ok(bound.map_or(ty, |(_, t)| *t));
+            }
+            Ty::Term(e) => return self.to_ty(e),
+            Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(_) => return Ok(ty),
+            Ty::App(a, b) => Ty::App(self.subst_ty(a)?, self.subst_ty(b)?),
+            Ty::SizeAdd(a, b) => Ty::SizeAdd(self.subst_ty(a)?, self.subst_ty(b)?),
+            Ty::SizeMul(a, b) => Ty::SizeMul(self.subst_ty(a)?, self.subst_ty(b)?),
+            Ty::Sized { size, elem } => Ty::Sized { size: self.subst_ty(size)?, elem: self.subst_ty(elem)? },
+            Ty::Arrow { binder, from, effect, to } => {
+                let from = self.subst_ty(from)?;
+                let to = match binder {
+                    Some(b) => {
+                        let own = self.ty(Ty::Var(b));
+                        self.ty_env.push((b, own));
+                        let to = self.subst_ty(to);
+                        self.ty_env.pop();
+                        to?
+                    }
+                    None => self.subst_ty(to)?,
+                };
+                Ty::Arrow { binder, from, effect, to }
+            }
+            Ty::Tuple(items) => {
+                let items = self.ast.slice(items).to_vec();
+                let items = items.into_iter().map(|t| self.subst_ty(t)).collect::<Result<Vec<_>>>()?;
+                Ty::Tuple(self.ast.make_slice(items))
+            }
+            Ty::Record { fields, tail } => {
+                let fields = self.ast.slice(fields).to_vec();
+                let fields = fields
+                    .into_iter()
+                    .map(|f| Ok(RecField { name: f.name, ty: self.subst_ty(f.ty)? }))
+                    .collect::<Result<Vec<_>>>()?;
+                Ty::Record { fields: self.ast.make_slice(fields), tail }
+            }
+        };
+        let node = self.ty(node);
+        if let Some(span) = self.ast.ty_span(ty) {
+            self.ast.ty_spans.insert(node, span);
+        }
+        if let Some(&span) = self.ast.binder_spans.get(ty) {
+            self.ast.binder_spans.insert(node, span);
+        }
+        Ok(node)
+    }
+
+    /// Whether `ty` keeps an expression inside it. A `let` or lambda whose
+    /// body does is left as a term: its names are bound in that expression,
+    /// which a type cannot substitute into.
+    fn holds_term(&self, ty: Aol<Ty>) -> bool {
+        match self.ast.ty(ty) {
+            Ty::Term(_) | Ty::MetaE(_) => true,
+            Ty::Con { .. } | Ty::Var(_) | Ty::Nat(_) | Ty::Unit => false,
+            Ty::App(a, b) | Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => self.holds_term(*a) || self.holds_term(*b),
+            Ty::Sized { size, elem } => self.holds_term(*size) || self.holds_term(*elem),
+            Ty::Arrow { from, to, .. } => self.holds_term(*from) || self.holds_term(*to),
+            Ty::Tuple(items) => self.ast.slice(*items).iter().any(|t| self.holds_term(*t)),
+            Ty::Record { fields, .. } => self.ast.slice(*fields).iter().any(|f| self.holds_term(f.ty)),
+        }
+    }
+
+    /// The name a `let` or lambda binds in a type: one lowercase variable.
+    fn type_binder(&self, pat: Aol<Pattern>) -> Option<StrId> {
+        match self.ast.pat(pat) {
+            Pattern::Var(v) if !is_upper(v.as_str()) => Some(*v),
+            _ => None,
+        }
+    }
+
     /// An application in type position: `@Tensor n T` at its head is a sized
-    /// tensor, any other head is applied to its arguments one at a time.
+    /// tensor, a lambda at its head is applied by binding its parameters, and
+    /// any other head is applied to its arguments one at a time.
     fn app_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
         let mut args = Vec::new();
         let mut head = e;
@@ -1613,6 +1764,23 @@ impl<'a> Parser<'a> {
         args.reverse();
         let start = self.ast.expr_span(e).map_or(0, |s| s.start);
         let tensor = matches!(self.ast.expr(head), Expr::Var { module: None, name } if name.as_str() == "@Tensor");
+        if let Expr::Lambda { params, body } = *self.ast.expr(head) {
+            let names: Option<Vec<StrId>> = self.ast.slice(params).iter().map(|p| self.type_binder(p.pat)).collect();
+            if let Some(names) = names.filter(|n| n.len() <= args.len()) {
+                let mut bound = Vec::new();
+                for (name, &arg) in names.into_iter().zip(&args) {
+                    bound.push((name, self.to_ty(arg)?));
+                }
+                let mut ty = self.to_ty_under(&bound, body)?;
+                if !self.holds_term(ty) {
+                    for &arg in &args[bound.len()..] {
+                        let a = self.to_ty(arg)?;
+                        ty = self.ty(Ty::App(ty, a));
+                    }
+                    return Ok(ty);
+                }
+            }
+        }
         let (mut ty, rest) = if tensor {
             if args.len() < 2 {
                 let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
@@ -1639,22 +1807,8 @@ impl<'a> Parser<'a> {
         Ok(ty)
     }
 
-    /// A tensor size: a `Nat` literal, a size variable, or `+`/`*` of them.
+    /// A tensor size: any expression, which the checker evaluates (#535).
     fn size_ty(&mut self, e: Aol<Expr>) -> Result<Aol<Ty>> {
-        let ok = match self.ast.expr(e) {
-            Expr::Int(n) => *n >= 0,
-            Expr::Var { module: None, name } => name.as_str().starts_with(|c: char| c.is_ascii_lowercase()),
-            Expr::BinOp { op, .. } => matches!(op.as_str(), "+" | "*"),
-            _ => false,
-        };
-        if !ok {
-            let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
-            let what = match self.ast.expr(e) {
-                Expr::Int(_) => "a tensor size must be non-negative",
-                _ => "expected a size (a Nat literal, a lowercase variable, or `+`/`*` of them)",
-            };
-            return Err(Diagnostic::error(Code::UnexpectedToken, span, 0, what));
-        }
         self.to_ty(e)
     }
 

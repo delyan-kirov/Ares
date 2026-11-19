@@ -61,7 +61,7 @@
 %token UNDERSCORE   /* _ */
 %token HOLE         /* ??? a typed hole: any type, always a compile error naming it */
 
-%token AT_MOD AT_STRUCT AT_UNION AT_ALIAS AT_EFFECT AT_MAIN AT_BUILD
+%token AT_MOD AT_STRUCT AT_UNION AT_EFFECT AT_MAIN AT_BUILD
 %token AT_USE AT_IFACE  /* AT_USE: `@use` */
 %token AT_CTX       /* `@ctx`: level parameters `@ctx {u: @l} ->` and level
                        arguments `f @ctx {.u = 1}` (#406); any other use is
@@ -115,7 +115,9 @@ global
    * `$ Frac : @Type 1 = {Integer, Pos}`, or an inductive type whose
    * signature states its parameters, indices and universe,
    * `$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, ...`.
-   * Only the kernel checks these so far; parser.rs reads them. */
+   * One whose signature ends in `@Type` and whose lambda binds every
+   * parameter is a type-level function the checker unfolds (#535):
+   * `$ MapInt : @Type -> @Type = \v => Map @Int v`. */
   | DOLLAR UIDENT COLON expr EQ expr
   | DOLLAR UIDENT COLON expr EQ AT_UNION union_body
   | DOLLAR UIDENT COLON AT_STRUCT opt_type_params EQ struct_body
@@ -123,7 +125,6 @@ global
   | DOLLAR UIDENT COLON AT_UNION  opt_type_params EQ union_body
   | DOLLAR UIDENT COLON AT_UNION  opt_type_params EQ  /* no variants: uninhabited */
   | DOLLAR UIDENT COLON AT_UNION  AT_EXTERN STR opt_type_params EQ union_body  /* C layout */
-  | DOLLAR UIDENT COLON AT_ALIAS  opt_type_params EQ expr
   | DOLLAR UIDENT COLON AT_EFFECT opt_type_params EQ effect_body
   | DOLLAR AT_IMPORT import
   | DOLLAR AT_PRIVATE
@@ -162,7 +163,7 @@ import       : dotted_name | any_name EQ dotted_name ;  /* `$ @import V = VEC`: 
 dotted_name  : any_name | any_name DOT any_name ;
 any_name     : UIDENT | LIDENT ;
 
-/* Type parameters after `@struct`/`@union`/`@alias`: `@struct a b = ...`.
+/* Type parameters after `@struct`/`@union`/`@effect`: `@struct a b = ...`.
  * They are mandatory: every type variable used in the body must be declared here.
  * `opt_` only because a non-generic type declares none (an empty list). */
 opt_type_params : /* empty */ | opt_type_params LIDENT ;
@@ -383,7 +384,8 @@ plain
   | AT_USE LBRACE use_inits opt_comma RBRACE
   /* Level arguments of a level-polymorphic global (#406). */
   | AT_CTX LBRACE use_inits opt_comma RBRACE
-  /* `_`, an argument the kernel infers from the types around it (#470). */
+  /* `_`, left to elaboration: in a type the checker solves it from the body
+   * (#535); in a term the kernel infers it from the types around it (#470). */
   | UNDERSCORE
   | seq_lit
   /* The byte-array type. `@Array.{ n }` is its literal, the typed struct

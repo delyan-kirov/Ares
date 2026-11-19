@@ -634,8 +634,8 @@ fn parameterized_alias_picks_which_generic() {
     // parameter fills the one left open. Both instantiate the same `Pair`.
     let src = "$ @mod M\n\
                $ Pair : @struct a b = fst: a, snd: b\n\
-               $ KeyInt : @alias b = Pair @Int b\n\
-               $ ValInt : @alias a = Pair a @Int\n\
+               $ KeyInt : @Type -> @Type = \\b => Pair @Int b\n\
+               $ ValInt : @Type -> @Type = \\a => Pair a @Int\n\
                $ p : KeyInt @Str = .{ .fst = 3, .snd = \"x\" }\n\
                $ q : ValInt @Str = .{ .fst = \"y\", .snd = 9 }\n\
                $ r : @Int = p.fst + q.snd";

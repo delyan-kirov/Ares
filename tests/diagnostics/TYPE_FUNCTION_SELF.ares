@@ -1,0 +1,3 @@
+$ @mod TYPE_FUNCTION_SELF
+
+$ L : @Type -> @Type = \a => { head: a, tail: L a }  #~ error[TYPE_CYCLE]: type `L` unfolds to itself

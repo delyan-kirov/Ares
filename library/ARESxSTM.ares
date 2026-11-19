@@ -19,7 +19,7 @@ $ @mod ARES
 $ @import ARESxALGO
 $ @import ARESxOPT
 
-$ TVar : @alias a = @TVar a
+$ TVar : @Type -> @Type = \a => @TVar a
 
 $ Stm : @effect =
     read : TVar a -> a,

@@ -1,5 +1,6 @@
 $ @mod TYPE_CAPITALIZED_VALUE
 
-# A capitalized name with a signature defines a type as a term, which only the
-# kernel checks so far (#406); a value's name starts lowercase.
-$ Foo : @Int = 3  #~ error[UNEXPECTED_TOKEN]: a value or function name must start with a lowercase letter
+# Types are terms (#535), so capitalization is a convention: a value named
+# like a type is a warning, and still a value.
+$ Foo : @Int = 3  #~ warning[CAPITALIZED_VALUE]: a value's name is lowercase by convention
+$ x : @Int = Foo + 1

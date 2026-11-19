@@ -51,6 +51,24 @@ impl<'a> Checker<'a> {
     /// A type this module wrote naming a hidden type: one only an import's
     /// declarations reach. Deferred like the other type-name errors.
     pub(super) fn check_hidden_type(&mut self, ty: Aol<Ty>, name: StrId) {
+        if let (Some(owners), true) = (self.ambiguous_imports.get(&name), self.imported_types.contains_key(&name)) {
+            let qualified = matches!(self.tnode(ty), Ty::Con { module: Some(_), .. });
+            if qualified || self.foreign_tys.contains(&ty) || self.unknown_type.is_some() {
+                return;
+            }
+            let list = owners.iter().map(|m| format!("`{m}.{name}`")).collect::<Vec<_>>().join(" or ");
+            let mut d = diag!(
+                Code::AmbiguousName, Span::at(0), 0,
+                "`{name}` is imported from more than one module";
+                note: "types and values share one namespace: a type is a global of type `@Type`";
+                help: "qualify it as {list}"
+            );
+            if let Some(span) = self.ast.ty_span(ty) {
+                d = d.fill_span(span);
+            }
+            self.unknown_type = Some(d);
+            return;
+        }
         if let Some(&alias) = self.alias_types.get(&name) {
             let qualified = matches!(self.tnode(ty), Ty::Con { module: Some(_), .. });
             if qualified || self.foreign_tys.contains(&ty) || self.unknown_type.is_some() {
@@ -112,11 +130,132 @@ impl<'a> Checker<'a> {
             .then_some(tag)
     }
 
+    /// Whether a lowercase name in a type means a global rather than a type
+    /// variable: a type-level function.
+    pub(super) fn is_type_global(&self, name: StrId) -> bool {
+        self.aliases.contains_key(&name) || self.nat_consts.contains_key(&name)
+    }
+
+    /// The size a `@Nat` constant unfolds to, glued to its name so errors
+    /// show it as written. Only what conversion can decide unfolds: a literal,
+    /// another constant, and `+`/`*` of them. See Note [Glued aliases].
+    fn nat_const(&mut self, name: StrId, span: Option<Span>) -> Type {
+        let body = self.nat_consts[&name];
+        let mut visiting = vec![name];
+        let value = match self.size_of_expr(body, &mut visiting) {
+            Ok(v) => v,
+            Err(what) => {
+                let d = match what {
+                    SizeError::Cycle => diag!(
+                        Code::TypeCycle, span.unwrap_or(Span::at(0)), 0,
+                        "the size `{name}` unfolds to itself"
+                    ),
+                    SizeError::Term(at) => dependent_only(self.ast.expr_span(at).or(span), UNEVALUATED_SIZE)
+                        .with_note(format!("`{name}` stands in a type, so the checker evaluates its definition")),
+                };
+                self.defer_type_error(d);
+                return self.unifier.fresh_nat();
+            }
+        };
+        self.unifier.types.alias(name, Vec::new(), value)
+    }
+
+    /// Evaluate a `@Nat` constant's body to a size.
+    fn size_of_expr(&mut self, e: Aol<Expr>, visiting: &mut Vec<StrId>) -> std::result::Result<Type, SizeError> {
+        match self.node(e) {
+            Expr::Int(n) if *n >= 0 => Ok(self.unifier.types.add(TypeNode::Nat(*n as u64))),
+            Expr::Var { module: None, name } if self.nat_consts.contains_key(name) => {
+                let name = *name;
+                if visiting.contains(&name) {
+                    return Err(SizeError::Cycle);
+                }
+                visiting.push(name);
+                let v = self.size_of_expr(self.nat_consts[&name], visiting)?;
+                visiting.pop();
+                Ok(v)
+            }
+            Expr::BinOp { op, lhs, rhs } if matches!(op.as_str(), "+" | "*") => {
+                let (add, lhs, rhs) = (op.as_str() == "+", *lhs, *rhs);
+                let (a, b) = (self.size_of_expr(lhs, visiting)?, self.size_of_expr(rhs, visiting)?);
+                Ok(self.unifier.types.add(if add { TypeNode::NatAdd(a, b) } else { TypeNode::NatMul(a, b) }))
+            }
+            _ => Err(SizeError::Term(e)),
+        }
+    }
+
     pub(super) fn is_known_type(&self, name: StrId) -> bool {
         is_base_type(name.as_str())
             || self.structs.contains_key(&name)
             || self.unions.contains_key(&name)
             || self.aliases.contains_key(&name)
+    }
+
+    /// The type of a type written in term position: its kind. A declared type
+    /// takes `@Nat` for each parameter it uses as a size and `@Type` for the
+    /// rest; a base type takes its element type. `None` when `name` is not a
+    /// type.
+    pub(super) fn type_kind(&self, name: StrId) -> Option<Type> {
+        let types = &self.unifier.types;
+        let arity = |n: usize| vec![false; n];
+        let params: Vec<bool> = if let Some(info) = self.structs.get(&name) {
+            let mut sizes = Vec::new();
+            info.fields.iter().for_each(|(_, t)| collect_size_vars(self.ast, *t, false, &mut sizes));
+            info.params.iter().map(|p| sizes.contains(p)).collect()
+        } else if let Some(info) = self.unions.get(&name) {
+            let mut sizes = Vec::new();
+            for v in &info.variants {
+                v.payload.iter().for_each(|(_, t)| collect_size_vars(self.ast, *t, false, &mut sizes));
+            }
+            info.params.iter().map(|p| sizes.contains(p)).collect()
+        } else if let Some((params, body)) = self.aliases.get(&name) {
+            let mut sizes = Vec::new();
+            collect_size_vars(self.ast, *body, false, &mut sizes);
+            params.iter().map(|p| sizes.contains(p)).collect()
+        } else if is_base_type(name.as_str()) {
+            arity(usize::from(matches!(name.as_str(), "@Vec" | "@Future" | "@Chan" | "@TVar")))
+        } else {
+            return None;
+        };
+        let universe = types.con(ty::UNIVERSE);
+        Some(params.iter().rev().fold(universe, |to, &nat| {
+            let from = if nat { types.con(ty::NAT) } else { universe };
+            types.arrow(from, to)
+        }))
+    }
+
+    /// Why an expression in type position that did not reduce to a type is
+    /// rejected. Choosing a type by a value (`if`, a match) is a large
+    /// elimination, which needs the kernel; any other expression is a value.
+    fn not_a_type(&self, ty: Aol<Ty>, e: Aol<Expr>) -> Diagnostic {
+        let span = self.ast.ty_span(ty);
+        let d = match self.ast.expr(e) {
+            Expr::If { .. } | Expr::Match { .. } => return dependent_only(span, "a type chosen by a value"),
+            Expr::Lambda { .. } => diag!(
+                Code::TypeMismatch, Span::at(0), 0,
+                "a function stands where a type is expected";
+                help: "apply it to its arguments, or name it as a type-level function `$ f : @Type -> @Type = \\t => ...`"
+            ),
+            Expr::List(items) if self.ast.slice(*items).len() == 1 => {
+                let size = match self.ast.expr(self.ast.slice(*items)[0]) {
+                    Expr::Int(n) => n.to_string(),
+                    _ => "n".to_string(),
+                };
+                diag!(
+                    Code::TypeMismatch, Span::at(0), 0,
+                    "a list stands where a type is expected";
+                    help: "a sized tensor is written `@Tensor {size} T`"
+                )
+            }
+            _ => diag!(
+                Code::TypeMismatch, Span::at(0), 0,
+                "a value stands where a type is expected";
+                note: "a type is a type name, a type-level function applied to its arguments, or a size"
+            ),
+        };
+        match span {
+            Some(s) => d.fill_span(s),
+            None => d,
+        }
     }
 
     /// The type parameters a user-declared type constructor takes, if `name` is
@@ -142,7 +281,7 @@ impl<'a> Checker<'a> {
             count += 1;
             cur = *h;
         }
-        if let Ty::Con { name, .. } = self.tnode(cur) {
+        if let Ty::Con { name, .. } | Ty::Var(name) = self.tnode(cur) {
             let name = *name;
             if let Some(params) = self.type_params(name) {
                 let arity = params.len();
@@ -185,8 +324,12 @@ impl<'a> Checker<'a> {
             args.push(*a);
             cur = *h;
         }
+        // A lowercase name is a global in scope before it is a type variable,
+        // unless the type already binds it (a parameter, or a variable met
+        // earlier in the same signature).
         let name = match self.tnode(cur) {
             Ty::Con { name, .. } => *name,
+            Ty::Var(name) if !tvars.contains_key(name) => *name,
             _ => return None,
         };
         let (params, body) = self.aliases.get(&name)?.clone();
@@ -354,6 +497,10 @@ impl<'a> Checker<'a> {
     pub(super) fn size_ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
         match self.tnode(ty) {
             Ty::Nat(n) => self.unifier.types.add(TypeNode::Nat(*n)),
+            Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
+                let name = *name;
+                self.nat_const(name, self.ast.ty_span(ty))
+            }
             Ty::Var(name) => {
                 let eng = &mut self.unifier;
                 *tvars.entry(*name).or_insert_with(|| eng.fresh_nat())
@@ -373,6 +520,16 @@ impl<'a> Checker<'a> {
                     self.size_ty_of_ast(b, tvars),
                 );
                 self.unifier.types.add(TypeNode::NatMul(x, y))
+            }
+            Ty::Term(e) if is_wildcard(self.ast, *e) => {
+                let t = self.unifier.fresh_nat();
+                self.wildcards.push((self.ast.ty_span(ty).unwrap_or(Span::at(0)), t));
+                t
+            }
+            // Anything else conversion cannot evaluate: a call (`f n`), `-`.
+            Ty::Term(_) | Ty::App(..) => {
+                self.defer_type_error(dependent_only(self.ast.ty_span(ty), UNEVALUATED_SIZE));
+                self.unifier.fresh_nat()
             }
             _ => self.ty_of_ast(ty, tvars),
         }
@@ -457,6 +614,10 @@ impl<'a> Checker<'a> {
                 self.check_type_arity(ty, true);
                 self.con_of_ast(ty)
             }
+            Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
+                let name = *name;
+                self.nat_const(name, self.ast.ty_span(ty))
+            }
             Ty::Var(name) => {
                 *tvars
                     .entry(*name)
@@ -491,9 +652,16 @@ impl<'a> Checker<'a> {
                 let elem_ty = self.ty_of_ast(elem, tvars);
                 tensor_type(&self.unifier.types, size_ty, elem_ty)
             }
-            Ty::Term(_) => {
+            // `_`: a type left to elaboration, a fresh variable whatever uses it
+            // solves.
+            Ty::Term(e) if is_wildcard(self.ast, *e) => {
+                let t = self.unifier.fresh();
+                self.wildcards.push((self.ast.ty_span(ty).unwrap_or(Span::at(0)), t));
+                t
+            }
+            Ty::Term(e) => {
                 if self.unknown_type.is_none() {
-                    self.unknown_type = Some(dependent_only(self.ast.ty_span(ty), "a type written as a term"));
+                    self.unknown_type = Some(self.not_a_type(ty, *e));
                 }
                 self.unifier.fresh()
             }
@@ -535,4 +703,15 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// What conversion evaluates in a size is literals, size variables, `@Nat`
+/// constants, `+` and `*`; anything else waits for the elaborator of #406.
+const UNEVALUATED_SIZE: &str = "a size other than literals, size variables, `@Nat` constants, `+` and `*`";
+
+/// Why a `@Nat` constant does not unfold to a size.
+enum SizeError {
+    Cycle,
+    /// A subterm conversion cannot evaluate (a call, a negative literal).
+    Term(Aol<Expr>),
 }

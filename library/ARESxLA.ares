@@ -22,7 +22,7 @@ $ @import ARESxPAR
 $ impl_IIndex_for_tensor : @IIndex (@Tensor n a) @Int a = .{ .index = \t i => @tensor_index t i }
 
 # A matrix: `m` rows of `n` elements, one tensor of tensors.
-$ Matrix : @alias m n a = @Tensor m (@Tensor n a)
+$ Matrix : @Nat -> @Nat -> @Type -> @Type = \m n a => @Tensor m (@Tensor n a)
 
 # Thin names over the remaining primitives. `len t` is the length (ARESxALGO's `ILen`).
 $ impl_ILen_for_tensor : ILen (@Tensor n a) = .{ .len = \t => @tensor_length t }

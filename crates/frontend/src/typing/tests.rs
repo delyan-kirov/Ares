@@ -109,7 +109,7 @@ fn parameterized_alias_expands() {
     // `MapInt` fixes the key to @Int, so `MapInt @Bool` elaborates to `Map @Int @Bool`.
     let src = "$ @mod M\n\
                $ Map : @struct k v = key: k, val: v\n\
-               $ MapInt : @alias v = Map @Int v\n\
+               $ MapInt : @Type -> @Type = \\v => Map @Int v\n\
                $ m : MapInt @Bool = .{ .key = 1, .val = @true }";
     assert_eq!(type_of(src, "m"), "Map @Int @Bool");
 }
@@ -117,13 +117,13 @@ fn parameterized_alias_expands() {
 #[test]
 fn a_mismatch_shows_the_aliases_written() {
     let src = "$ @mod M\n\
-               $ Pair : @alias a = {a, a}\n\
-               $ Matrix : @alias m n t = @Tensor m (@Tensor n t)\n\
+               $ Pair : @Type -> @Type = \\a => {a, a}\n\
+               $ Matrix : @Nat -> @Nat -> @Type -> @Type = \\m n t => @Tensor m (@Tensor n t)\n\
                $ swap : Pair @Int -> Pair @Int = \\{a, b} => {b, a}\n\
                $ bad : Pair @Int -> @Str = \\p => p\n";
     assert!(errors(src).contains("expected @Str, found Pair @Int"), "{}", errors(src));
     let src = "$ @mod M\n\
-               $ Matrix : @alias m n t = @Tensor m (@Tensor n t)\n\
+               $ Matrix : @Nat -> @Nat -> @Type -> @Type = \\m n t => @Tensor m (@Tensor n t)\n\
                $ flip : Matrix 2 3 @Int -> Matrix 3 2 @Int = \\x => x\n";
     let e = rendered_errors(src);
     assert!(e.contains("expected type `Matrix 3 2 @Int`") && e.contains("found type `Matrix 2 3 @Int`"), "{e}");
@@ -827,7 +827,7 @@ fn crepr_field_follows_alias_to_a_struct() {
     // C-representable as a field: the layout follows the alias to the struct.
     let src = "$ @mod M\n\
         $ Vector4 : @struct @extern \"C\" = x: @Float32, y: @Float32, z: @Float32, w: @Float32,\n\
-        $ Quaternion : @alias = Vector4\n\
+        $ Quaternion : @Type = Vector4\n\
         $ Transform : @struct @extern \"C\" = rotation: Quaternion, scale: @Float32,\n\
         $ x : @Int = 0";
     let t = crepr_layout(src, "Transform");
@@ -1439,7 +1439,7 @@ fn a_row_prints_its_labels_and_an_unhandled_one_by_name() {
 #[test]
 fn a_row_names_only_effects() {
     let e = errors(&format!(
-        "{ROW_EFFECTS}$ N : @alias = @Int\n$ f : @Int -> <N> @Int = \\x => x\n"
+        "{ROW_EFFECTS}$ N : @Type = @Int\n$ f : @Int -> <N> @Int = \\x => x\n"
     ));
     assert!(e.contains("type alias `N` is not an effect"), "got: {e:?}");
     let e = errors(&format!("{ROW_EFFECTS}$ f : @Int -> <Log e> @Int = \\x => x\n"));

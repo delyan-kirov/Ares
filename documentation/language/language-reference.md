@@ -177,8 +177,8 @@ $ @mod MAIN
 ## 2.2 Global definitions `$`
 `$ name : Type = expr`. The annotation is always required, with no exceptions:
 a global's type is its contract with every importer. Leaving it out is a
-`TYPE_ANNOTATION_REQUIRED` error whose fix inserts the inferred type. `$a` and
-`$ a` are the same.
+`TYPE_ANNOTATION_REQUIRED` error whose fix inserts the inferred type. Parts of
+it may be left to the body with `_` (3.11). `$a` and `$ a` are the same.
 
 Simple:
 ```ares
@@ -350,7 +350,7 @@ is a dependent function type, which comes with dependent types (#406).
 
 ## 3.6 Type variables
 A lowercase name free in a signature is a type variable, universally quantified
-over the whole signature. The same lowercase name repeated is the same variable;
+over the whole signature, unless a global of that name is in scope (3.10). The same lowercase name repeated is the same variable;
 there is no separate backtick spelling.
 
 ```ares
@@ -395,8 +395,10 @@ $ tag   : { x: @Int | r } -> { x: @Int, t: @Int | r } = \p => { .t = 99, ..p }
 `@Tensor n T` is a vector of `n` elements; `n` is a type-level natural (its own
 kind). A matrix is a tensor of tensors, `@Tensor m (@Tensor n T)`, which `LA`
 names `Matrix m n T`. `@Tensor` heads its application (as an argument it is
-parenthesized). A size is a literal, a size variable, or parenthesized arithmetic
-(`@Tensor (n + m) a`), decided by a canonical form. See section 9.
+parenthesized). A size is a `@Nat` term the checker evaluates: a literal, a size
+variable, a `@Nat` constant (unfolded to its value), or parenthesized `+` and
+`*` of them (`@Tensor (n + m) a`), decided by a canonical form. Any other term,
+such as a call, needs dependent types (section 16). See section 9.
 
 A size is inferred when it has exactly one solution once equal terms cancel:
 passing a `@Tensor 5 @Int` where `@Tensor (n + 1) @Int` is expected makes `n` 4.
@@ -406,27 +408,88 @@ one of its variables, and is an error if the definition ends first.
 ```ares
 $ v : @Tensor 3 @Int = [10, 20, 30]
 $ g : @Tensor 2 (@Tensor 2 @Int) = [ [1,2], [3,4] ]
+$ dim : @Nat = 2
+$ h : @Tensor (dim + 1) @Int = [1, 2, 3]
 ```
 
-## 3.10 Type aliases `@alias`
-`$ Name : @alias params = Type` names a type. It may take parameters and
-partially instantiate another generic type. An alias is transparent (unifies
-with its expansion).
+## 3.10 Type-level functions
+Types are expressions (#406), so a type is named by a global whose type is
+`@Type`, and a type with parameters by a function returning one. Its
+signature lists the parameters, each a type (`@Type`) or a size (`@Nat`), and
+its lambda binds every one. It is transparent: it unifies with its unfolding,
+and errors show it as written.
 
 Simple:
 ```ares
-$ Count : @alias = @Int
+$ Count : @Type = @Int
 ```
 
-Involved (partial instantiation):
+A lowercase name works too (`$ pair : @Type -> @Type = \t => {t, t}`). In a
+type, a lowercase name means a global in scope before it means a type
+variable, unless the same type already binds it: a type-level function, or a
+`@Nat` constant, which a size unfolds to its value (3.9).
+
+Involved (partial instantiation, a size parameter):
 ```ares
 $ Pair : @struct a b = fst: a, snd: b,
-$ IntPair : @alias b = Pair @Int b               # fix the first arg, keep the second open
+$ IntPair : @Type -> @Type = \b => Pair @Int b    # fix the first arg, keep the second open
 $ ip : IntPair @Str = .{ .fst = 3, .snd = "z" }  # same as Pair @Int @Str
+$ Square : @Nat -> @Type -> @Type = \n t => @Tensor n (@Tensor n t)
 ```
 
-An alias names a type. A row has no alias: an effect row or a record row is
-written out where it is used.
+A type may be computed where it is written. A `let` names a part of it, and
+an applied lambda reduces to its body:
+```ares
+$ endo : @Type -> @Type = \t => let p = {t, t} in p -> p
+$ Point : @Type = (\t => {x: t, y: t}) @Float64
+```
+Choosing a type by a value (`if`, a match) waits for dependent types (#406).
+
+A type may also stand where a value does. Its type is its kind: `@Int` and
+`@Int -> @Bool` are `@Type`, `pair` and `@Vec` are `@Type -> @Type`, and a
+size parameter takes a `@Nat`. A type carries nothing at run time, so it
+erases to `{}`:
+```ares
+$ pair : @Type -> @Type = \t => {t, t}
+$ arity : @Type -> @Int = \_ => 1
+$ n : @Int = arity (pair @Str) + arity (@Int -> @Bool)
+```
+In term position `{@Str, @Str}` is a tuple whose two items are types, of type
+`{@Type, @Type}`; the product type stands there through a name, as `pair @Str`
+does.
+A parameter of type `@Type` is not yet in scope in the types that follow it;
+that needs dependent function types (#406).
+
+Types and values share one namespace, since a type is a global of type
+`@Type`: a module may not name a type and a value alike, as it may not define
+a value twice. When one import brings in a type and another a value of the
+same name, the bare name is ambiguous in types and terms alike; `A.pair @Int`
+and `B.pair 3` name each.
+
+A row is not a type: an effect row or a record row is written out where it
+is used.
+
+## 3.11 Types left to elaboration `_`
+`_` in a type is solved by the checker. In a global's signature it makes the
+signature a shape that the body fills in (a partial signature), and the
+global's type is the filled-in one. Each `_` is its own unknown.
+
+```ares
+$ succ : _ -> @Int = \x => x + 1        # succ : @Int -> @Int
+$ same : a -> _ = \x => x               # same : a -> a
+$ n : @Int = let p : {_, @Bool} = {3, @true} in p.0
+```
+
+What `_` comes out as may use the signature's own type variables but no new
+one: `$ k : _ -> @Int = \x => 3` is a `TYPE_ANNOTATION_REQUIRED` error, since
+the signature would hide a type variable it never wrote. A type declaration
+(`@struct`, `@union`, `@effect`, a type-level function), a foreign or builtin
+signature and a signature with `@use` parameters have no body to solve one, so
+`_` there is an error too. A definition whose signature has `_` cannot recurse
+at another type, as one without a signature cannot.
+
+`_` in a term (a value left to elaboration) waits for dependent types (#406).
+`???` (4.12) is different: it is always an error, reporting the type it needs.
 
 ---
 
@@ -1495,7 +1558,7 @@ $ is55  : @Int -> @Bool = \ | &fib 10 => @true | _ => @false   # pattern
 ```
 
 A type splice may stand at any type position: a signature, a struct field, a
-union payload, an alias body, an effect operation, an effect-row argument, a
+union payload, a type-level function's body, an effect operation, an effect-row argument, a
 `@use` field, or an annotation inside a body (`let x : T`, `\(x : T)`,
 `(e : T)`). Effect-row entries themselves can be spliced too, as `<&X>`; a
 `&` right after an operator lexes on its own, so `<&X>` is `<` then `&X`.
@@ -1806,7 +1869,7 @@ A quick index of the `@`-forms and where each is documented above.
 | `@mod` | module header | 2.1 |
 | `@main` | program entry | 2.5 |
 | `@build` | compile-time entry | 11.3 |
-| `@struct` `@union` `@effect` `@alias` | type declarations | 6, 8.1, 3.10 |
+| `@struct` `@union` `@effect` | type declarations | 6, 8.1 |
 | `@extern` | foreign binding, builtin declaration | 10 |
 | `@use` | instance (interface) parameter and explicit argument | 7.4 |
 | `@ctx` | level parameters and arguments; any other use is reserved | 16, 7.4 |

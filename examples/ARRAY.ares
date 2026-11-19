@@ -19,10 +19,10 @@ $ buf3 : @Array = @Array.{ n * 4 }
 $ make : @Int -> @Array = \k => let extra = 16 in @Array.{ k + extra }
 $ buf4 : @Array = make 32
 
-$ Count: @alias = @Int
+$ Count : @Type = @Int
 
 # `@Vec` is the prelude type (its `[..]`/`::` sugar is hardwired to that name).
-$ IntList: @alias = @Vec @Int
+$ IntList : @Type = @Vec @Int
 
 $ list: IntList = 1 :: []
 

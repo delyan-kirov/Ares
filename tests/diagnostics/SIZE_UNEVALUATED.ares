@@ -1,0 +1,6 @@
+$ @mod SIZE_UNEVALUATED
+
+# A size is a term the checker evaluates; it unfolds literals, size variables,
+# `@Nat` constants, `+` and `*`, and no function yet (#406).
+$ double : @Nat -> @Nat = \n => n * 2
+$ v : @Tensor (double 1) @Int = [1, 2]  #~ error[UNSUPPORTED]: a size other than literals, size variables

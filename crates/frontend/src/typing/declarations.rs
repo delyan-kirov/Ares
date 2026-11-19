@@ -49,6 +49,10 @@ impl<'a> Checker<'a> {
             collect_tyvars(self.ast, ty, &mut vs);
             let span = self.ty_span_or_none(ty);
             for v in vs {
+                // A lowercase name may be a global instead: it needs no declaring.
+                if self.is_type_global(v) {
+                    continue;
+                }
                 if !out.iter().any(|(n, _)| *n == v) {
                     out.push((v, span));
                 }
@@ -63,6 +67,14 @@ impl<'a> Checker<'a> {
 impl<'a> Checker<'a> {
     pub(super) fn register_types(&mut self, program: &Program) -> Result<()> {
         self.reject_dependent_defs(program)?;
+        self.reject_declared_wildcards(program)?;
+        for item in self.ast.slice(program.items) {
+            if let Item::Def { name, sig: Some(sig), ctx: None, body } = item {
+                if matches!(self.ast.ty(*sig), Ty::Con { module: None, name } if name.as_str() == "@Nat") {
+                    self.nat_consts.insert(*name, *body);
+                }
+            }
+        }
         for item in self.ast.slice(program.items).iter() {
             match item {
                 Item::Struct {
@@ -171,7 +183,8 @@ impl<'a> Checker<'a> {
                     self.own_type_names.push(name);
                     self.pend_entry_splices(name, splices);
                 }
-                Item::Alias { name, params, ty } => {
+                Item::Alias { name, params, ty, sig, .. } => {
+                    self.check_type_function_sig(*sig)?;
                     let params = self.ast.slice(*params);
                     let collected = self.tyvars_with_spans([*ty]);
                     let name = *name;
@@ -188,19 +201,90 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    /// A definition only the kernel reads yet (#406): a capitalized one, which
-    /// defines a type as a term, or one whose signature binds levels.
-    fn reject_dependent_defs(&self, program: &Program) -> Result<()> {
+    /// A type-level function's parameters are types or sizes, and it returns
+    /// a type of data: `@Type -> @Nat -> @Type`. Anything else is a family
+    /// indexed by values, or a universe level, which only the kernel checks.
+    fn check_type_function_sig(&self, sig: Aol<Ty>) -> Result<()> {
+        let is_con = |t: Aol<Ty>, want: &str| matches!(self.ast.ty(t), Ty::Con { module: None, name } if name.as_str() == want);
+        let mut cur = sig;
+        while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+            if !is_con(*from, "@Type") && !is_con(*from, "@Nat") {
+                return Err(dependent_only(self.ast.ty_span(*from), "a type indexed by a value other than a size"));
+            }
+            cur = *to;
+        }
+        if !is_con(cur, "@Type") {
+            return Err(dependent_only(self.ast.ty_span(cur), "a universe level"));
+        }
+        Ok(())
+    }
+
+    /// A `_` stands where a definition's body can solve it. A type
+    /// declaration has no body, so its types are written out; so is the
+    /// signature of a foreign or builtin definition, and of one with `@use`
+    /// parameters, which every use elaborates again.
+    fn reject_declared_wildcards(&self, program: &Program) -> Result<()> {
+        let ast = self.ast;
+        for item in ast.slice(program.items) {
+            let (tys, what): (Vec<Aol<Ty>>, &str) = match item {
+                Item::Struct { fields, .. } => (ast.slice(*fields).iter().map(|f| f.ty).collect(), "a type declaration"),
+                Item::Union { variants, .. } => (
+                    ast.slice(*variants).iter().flat_map(|v| payload_fields(ast, &v.payload)).map(|(_, t)| t).collect(),
+                    "a type declaration",
+                ),
+                Item::Effect { ops, .. } => (ast.slice(*ops).iter().map(|f| f.ty).collect(), "an effect declaration"),
+                Item::Alias { ty, .. } => (vec![*ty], "a type-level function"),
+                Item::Def { sig: Some(sig), body, .. } if matches!(ast.expr(*body), Expr::Extern { .. } | Expr::Builtin) => {
+                    (vec![*sig], "a foreign or builtin signature")
+                }
+                Item::Def { sig: Some(sig), ctx: Some(_), .. } => (vec![*sig], "a signature with `@use` parameters"),
+                _ => continue,
+            };
+            if let Some(span) = tys.into_iter().find_map(|t| first_wildcard(ast, t)) {
+                return Err(diag!(
+                    Code::TypeAnnotationRequired, span, 0,
+                    "{what} writes its types out, so it cannot leave one to elaboration with `_`";
+                    note: "`_` stands in a definition's signature or an annotation inside a body, which the body solves"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a signature ends in a universe after its arrows.
+    fn returns_type(&self, sig: Aol<Ty>) -> bool {
+        let mut cur = sig;
+        while let Ty::Arrow { to, .. } = self.ast.ty(cur) {
+            cur = *to;
+        }
+        if let Ty::App(head, _) = self.ast.ty(cur) {
+            cur = *head;
+        }
+        matches!(self.ast.ty(cur), Ty::Con { module: None, name } if name.as_str() == "@Type")
+    }
+
+    /// A definition the checker cannot take yet (#406): a type-level function
+    /// whose lambda leaves parameters unbound, or one whose signature binds
+    /// levels. A capitalized value is only a warning: capitalization is a
+    /// convention.
+    fn reject_dependent_defs(&mut self, program: &Program) -> Result<()> {
         let items = self.ast.slice(program.items);
         let spans = self.ast.slice(program.spans);
         for (item, at) in items.iter().zip(spans) {
             let Item::Def { name, sig, .. } = item else { continue };
             let span = at.name.unwrap_or(at.full);
-            if name.as_str().starts_with(|c: char| c.is_ascii_uppercase()) {
+            if sig.is_some_and(|s| self.returns_type(s)) {
                 return Err(diag!(
-                    Code::UnexpectedToken, span, 0,
-                    "a value or function name must start with a lowercase letter (a capitalized name is a type or constructor)";
-                    note: "a type defined as a term needs dependent types, which only the kernel checks so far (#406)"
+                    Code::Unsupported, span, 0,
+                    "a type-level function binds every parameter with its lambda";
+                    help: "write `\\a b => ...`, one name per arrow of the signature"
+                ));
+            }
+            if name.as_str().starts_with(|c: char| c.is_ascii_uppercase()) {
+                self.warnings.push(diag!(
+                    Code::CapitalizedValue, span, 0,
+                    "a value's name is lowercase by convention; a capitalized name reads as a type";
+                    help: "rename `{name}` to `{}`", lower_first(name.as_str())
                 ));
             }
             if let Some(levels) = sig.and_then(|s| self.ast.level_params.get(s)) {
@@ -245,9 +329,9 @@ impl<'a> Checker<'a> {
                 let span = checker.ast.ty_span(*body).unwrap_or_else(|| Span::at(0));
                 return Err(diag!(
                     Code::TypeCycle, span, 0,
-                    "type alias `{name}` expands to itself";
+                    "type `{name}` unfolds to itself";
                     note: "{}", chain.join(" -> ");
-                    help: "an alias only renames a type; make one of them a `@struct` or `@union`"
+                    help: "a type-level function only unfolds; make one of them a `@struct` or `@union`"
                 ));
             }
             path.push(name);
@@ -824,6 +908,29 @@ pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
     }
 }
 
+/// Collect the type variables `ty` uses as sizes: in the size of a
+/// `@Tensor n T`, or under `+` and `*`. They are the parameters of kind `@Nat`.
+pub(super) fn collect_size_vars(ast: &Ast, ty: Aol<Ty>, in_size: bool, out: &mut Vec<StrId>) {
+    match ast.ty(ty) {
+        Ty::Var(name) if in_size && !out.contains(name) => out.push(*name),
+        Ty::App(a, b) | Ty::Arrow { from: a, to: b, .. } => {
+            collect_size_vars(ast, *a, in_size, out);
+            collect_size_vars(ast, *b, in_size, out);
+        }
+        Ty::Tuple(items) => ast.slice(*items).iter().for_each(|t| collect_size_vars(ast, *t, in_size, out)),
+        Ty::Record { fields, .. } => ast.slice(*fields).iter().for_each(|f| collect_size_vars(ast, f.ty, in_size, out)),
+        Ty::Sized { size, elem } => {
+            collect_size_vars(ast, *size, true, out);
+            collect_size_vars(ast, *elem, in_size, out);
+        }
+        Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => {
+            collect_size_vars(ast, *a, true, out);
+            collect_size_vars(ast, *b, true, out);
+        }
+        _ => {}
+    }
+}
+
 /// Collect the type-constructor names `ty` mentions in a STRICT position: one
 /// that must be built to build a value of `ty`. Used for the type dependency
 /// graph behind the lazy-slot decision.
@@ -891,7 +998,19 @@ pub(super) fn undeclared_param(kind: &str, name: StrId, v: &StrId, declared: &[S
             declared.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(" ")
         )
     };
+    let help = if kind == "alias" {
+        let params: String = declared.iter().map(|d| format!("{d} ")).collect();
+        format!("bind it with the lambda, `\\{params}{v} => ...`, and add an `@Type ->` to the signature")
+    } else {
+        format!("declare every one after the keyword, e.g. `@{kind} {v} = ...`")
+    };
     Diagnostic::error(Code::TypeUnbound, Span::at(0), 0, msg)
         .with_note("type parameters are mandatory")
-        .with_help(format!("declare every one after the keyword, e.g. `@{kind} {v} = ...`"))
+        .with_help(help)
+}
+
+/// `name` with its first letter lowercased.
+fn lower_first(name: &str) -> String {
+    let mut cs = name.chars();
+    cs.next().map_or_else(String::new, |c| c.to_ascii_lowercase().to_string() + cs.as_str())
 }

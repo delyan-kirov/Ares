@@ -317,6 +317,9 @@ impl Types {
 // The `@`-sigil builtins' internal name IS their source spelling (no translation
 // layer); only `Real`/`Str` keep a friendly spelling.
 pub const INT: &str = "@Int";
+pub const NAT: &str = "@Nat";
+/// The universe of types: what a type written in term position has as its type.
+pub const UNIVERSE: &str = "@Type";
 pub const REAL: &str = "@Float64";
 pub const STR: &str = "@Str";
 pub const BOOL: &str = "@Bool";
@@ -605,7 +608,7 @@ pub fn is_build_type(types: &Types, ty: Type) -> bool {
 pub const BASE_TYPES: &[&str] = &[
     "@Int", "@Nat", "@Int8", "@Int16", "@Int32", "@Int64", "@Nat8", "@Nat16", "@Nat32", "@Nat64",
     "@Float32", "@Float64", "@Str", "@Ptr", "@Bool", "@Array", "@Vec", "@Code", "@Future",
-    "@Chan", "@TVar",
+    "@Chan", "@TVar", "@Type",
 ];
 
 pub(crate) fn is_base_type(name: &str) -> bool {

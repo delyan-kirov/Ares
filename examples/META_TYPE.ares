@@ -30,7 +30,7 @@ $ xs : @Vec (&elem_type {}) = [3, 4, 5]
 # --- declaration members ------------------------------------------------------
 $ Point : @struct = x: &elem_type {}, y: &number_type "narrow"
 $ Shape : @union = Dot: {}, Square: &elem_type {}
-$ Count : @alias = &elem_type {}
+$ Count : @Type = &elem_type {}
 $ Cell : @effect = read : {} -> &elem_type {}
 
 $ pt : Point = { .x = 3, .y = 4 }
