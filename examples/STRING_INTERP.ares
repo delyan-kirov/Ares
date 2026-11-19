@@ -12,7 +12,7 @@ $ @mod STRING_INTERP
 #       escaping); `\?` is a literal `?`. Interpolants are full expressions and
 #       may nest strings, parens, and braces.
 
-$ Point : @struct = x: @Int, y: @Int
+$ Point : @Type = @struct x: @Int, y: @Int
 
 # One interpolant, and interpolation at the very start / end of the literal.
 $ greet : @Str -> @Str = \who => "hello ?(who)!"

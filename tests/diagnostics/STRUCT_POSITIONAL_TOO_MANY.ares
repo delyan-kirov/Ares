@@ -2,5 +2,5 @@ $ @mod STRUCT_POSITIONAL_TOO_MANY
 
 $ @import ARESxALGO
 
-$ P : @struct = x: @Int, y: @Int,
+$ P : @Type = @struct x: @Int, y: @Int,
 $ p : P = P.{ 1, 2, 3 }  #~ error[TYPE_MISMATCH]: struct `P` has 2 fields, so there is no field 2

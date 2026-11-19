@@ -16,7 +16,7 @@ $ @import ARESxVEC
 $ @import ARESxMATH
 $ @import ARESxSTR
 
-$ Map : @struct k v =
+$ Map : (k: @Type) -> (v: @Type) -> @Type = @struct
     count: @Int,
     root: Tree k v,
 
@@ -88,7 +88,7 @@ $ empty_map : Map k v = Map.{ .count = 0, .root = Tree.Leaf }
 
 $ map_has : @use { o: IOrd k } -> Map k v -> k -> @Bool = \m k => is_some (tget k m.root)
 
-$ Tree : @union k v =
+$ Tree : (k: @Type) -> (v: @Type) -> @Type = @union
     Leaf: {},
     Node: { k, v, Tree k v, Tree k v, @Int }, # key, value, left, right, height
 

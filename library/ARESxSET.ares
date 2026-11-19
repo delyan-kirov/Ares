@@ -14,7 +14,7 @@ $ @import ARESxVEC
 $ @import ARESxMATH
 $ @import ARESxSTR
 
-$ Set : @struct t =
+$ Set : (t: @Type) -> @Type = @struct
     m: Map t {},
 
 # ---- set algebra ----

@@ -60,15 +60,15 @@ fn declaration_errors_carry_a_location() {
     let cases = [
         // a field declared twice
         "$ @mod M
-$ P : @struct = a: @Int, a: @Int,
+$ P : @Type = @struct a: @Int, a: @Int,
 $ x : @Int = 1",
         // a variant declared twice
         "$ @mod M
-$ U : @union = A: @Int, A: @Str,
+$ U : @Type = @union A: @Int, A: @Str,
 $ x : @Int = 1",
         // an undeclared type parameter
         "$ @mod M
-$ P : @struct = v: a,
+$ P : @Type = @struct v: a,
 $ x : @Int = 1",
         // one name defined twice
         "$ @mod M
@@ -76,15 +76,15 @@ $ f : @Int = 1
 $ f : @Int = 2",
         // a C-repr field that has no C representation
         "$ @mod M
-$ P : @struct @extern \"C\" = v: List @Int,
+$ P : @Type = @struct @extern \"C\" v: List @Int,
 $ x : @Int = 1",
         // a C-repr struct that contains itself by value
         "$ @mod M
-$ P : @struct @extern \"C\" = v: P,
+$ P : @Type = @struct @extern \"C\" v: P,
 $ x : @Int = 1",
         // a blessed interface declared outside CORE
         "$ @mod M
-$ @IRange : @struct a b = range: a -> a -> b,
+$ @IRange : (a: @Type) -> (b: @Type) -> @Type = @struct range: a -> a -> b,
 $ x : @Int = 1",
     ];
     for src in cases {
@@ -100,7 +100,7 @@ $ x : @Int = 1",
 #[test]
 fn undeclared_type_param_is_error() {
     // Parameters are mandatory: a free tyvar with no declared list is rejected.
-    let e = errors("$ @mod M\n$ Box : @struct = val: t\n$ x : @Int = 0");
+    let e = errors("$ @mod M\n$ Box : @Type = @struct val: t\n$ x : @Int = 0");
     assert!(e.contains("declares no type parameters"), "{e}");
 }
 
@@ -108,7 +108,7 @@ fn undeclared_type_param_is_error() {
 fn parameterized_alias_expands() {
     // `MapInt` fixes the key to @Int, so `MapInt @Bool` elaborates to `Map @Int @Bool`.
     let src = "$ @mod M\n\
-               $ Map : @struct k v = key: k, val: v\n\
+               $ Map : (k: @Type) -> (v: @Type) -> @Type = @struct key: k, val: v\n\
                $ MapInt : @Type -> @Type = \\v => Map @Int v\n\
                $ m : MapInt @Bool = .{ .key = 1, .val = @true }";
     assert_eq!(type_of(src, "m"), "Map @Int @Bool");
@@ -211,7 +211,7 @@ fn unbound_name_is_reported() {
 #[test]
 fn struct_field_access_is_typed() {
     let src = "$ @mod M\n\
-                   $ P : @struct = x: @Int, y: @Str\n\
+                   $ P : @Type = @struct x: @Int, y: @Str\n\
                    $ p : P = P.{ .x = 1, .y = \"s\" }\n\
                    $ gx : @Int = p.x\n\
                    $ gy : @Str = p.y";
@@ -222,7 +222,7 @@ fn struct_field_access_is_typed() {
 #[test]
 fn generic_struct_instantiates_per_use() {
     let src = "$ @mod M\n\
-                   $ Box : @struct t = val: t\n\
+                   $ Box : (t: @Type) -> @Type = @struct val: t\n\
                    $ b : Box @Str = Box.{ .val = \"hi\" }\n\
                    $ out : @Str = b.val";
     assert_eq!(type_of(src, "b"), "Box @Str");
@@ -232,7 +232,7 @@ fn generic_struct_instantiates_per_use() {
 #[test]
 fn union_constructor_and_match() {
     let src = "$ @mod M\n\
-                   $ Maybe : @union t = Just: t, None: {}\n\
+                   $ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}\n\
                    $ m : Maybe @Int = Maybe.Just.{ 7 }\n\
                    $ get : a -> Maybe a -> a = \\d => \\o => o |> \\ | Maybe.Just.{x} => x | _ => d";
     assert_eq!(type_of(src, "m"), "Maybe @Int");
@@ -281,7 +281,7 @@ fn a_name_defined_twice_is_an_error() {
 #[test]
 fn an_interface_covers_several_types() {
     let src = "$ @mod M\n\
-                   $ IBump : @struct t = bump: t -> t,\n\
+                   $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
                    $ bump : @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x + 1 }\n\
                    $ bump_str : IBump @Str = .{ .bump = \\x => x ++ \"!\" }\n\
@@ -298,7 +298,7 @@ fn overload_deferred_until_signature_pins_operands() {
     // `p1.x + p2.x` cannot resolve until the signature makes the params
     // structs; bidirectional checking + the pending fixpoint handle it.
     let src = "$ @mod M\n\
-                   $ P : @struct = x: @Int, y: @Int\n\
+                   $ P : @Type = @struct x: @Int, y: @Int\n\
                    $ add : P -> P -> P = \\p1 p2 => P.{ .x = p1.x + p2.x, .y = p1.y + p2.y }";
     assert_eq!(type_of(src, "add"), "P -> P -> P");
 }
@@ -318,7 +318,7 @@ fn sized_literal_arithmetic_takes_the_result_type() {
 #[test]
 fn a_type_with_no_instance_is_reported() {
     let src = "$ @mod M\n\
-                   $ IBump : @struct t = bump: t -> t,\n\
+                   $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
                    $ bump : @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x }\n\
                    $ bad = bump 1.0";
@@ -333,7 +333,7 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
             err.helps().iter().map(|h| h.msg.clone()).collect::<Vec<_>>().join("\n")
         })
     };
-    let m = "$ @mod M\n$ Money : @struct = c: @Int,\n";
+    let m = "$ @mod M\n$ Money : @Type = @struct c: @Int,\n";
     let missing = helps(&format!("{m}$ m : Money = Money.{{1}} + Money.{{2}}"));
     assert!(missing.contains("`(+) @use {.d = value} a b`"), "{missing}");
     let several = helps(&format!(
@@ -342,7 +342,7 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
          $ m : Money = Money.{{1}} + Money.{{2}}"
     ));
     assert!(several.contains("`(+) @use {.d = add_a} a b`"), "{several}");
-    let named = "$ @mod M\n$ IBump : @struct t = bump: t -> t,\n\
+    let named = "$ @mod M\n$ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
                  $ bump : @use {b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
     assert!(helps(named).contains("`bump @use {.b = value} ...`"), "{}", helps(named));
 }
@@ -350,7 +350,7 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
 #[test]
 fn cross_module_import_brings_in_types_and_values() {
     let dep_src = "$ @mod OPT\n\
-                       $ Option : @union t = Some: t, None: {}\n\
+                       $ Option : (t: @Type) -> @Type = @union Some: t, None: {}\n\
                        $ is_some : Option t -> @Bool = \\o => \
                        o |> \\ | Option.Some.{_} => @true | _ => @false\n\
                        $ unwrap_or : Option t -> t -> t = \\o d => \
@@ -427,7 +427,7 @@ fn private_type_is_not_importable() {
     let dep = "$ @mod A\n\
         $ mk : @Int -> Secret = \\n => Secret.{ .v = n }\n\
         $ @private\n\
-        $ Secret : @struct = v: @Int";
+        $ Secret : @Type = @struct v: @Int";
     // Naming the private type in the importer fails; only its public constructor's
     // result type leaks (opaquely).
     assert!(!cross_module_errors(dep, "$ @mod B\n$ @import A\n$ x : Secret = mk 3").is_empty());
@@ -491,7 +491,7 @@ fn effect_operation_is_bound_and_handler_types_result() {
     // its arrow carries the `<State>` row; the `do/ctl` handler discharges it and
     // types to the clause/`else` bodies' common type.
     let src = "$ @mod M\n\
-                   $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
+                   $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
                    $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x\n\
                    $ run : @Int = do tick {} ctl k | get u => k 0 | put n => k {} | x => x";
     assert_eq!(type_of(src, "tick"), "{} -> <State> @Int");
@@ -567,7 +567,7 @@ fn type_variable_and_sized_and_declared_types_are_accepted() {
     // `a` is a type variable; `@Int8`/`@Ptr` are base types; a declared union
     // name is known. None of these is an "unknown type".
     let src = "$ @mod M\n\
-               $ Box : @union = Wrap: { @Int },\n\
+               $ Box : @Type = @union Wrap: { @Int },\n\
                $ id : a -> a = \\x => x\n\
                $ n : @Int8 = 5\n\
                $ p : @Ptr -> @Ptr = \\x => x\n\
@@ -582,7 +582,7 @@ fn unhandled_effect_is_a_compile_error() {
     // A function that performs an effect but declares a pure (or too-small) type
     // is rejected: the latent `<State>` cannot be subsumed into the empty ambient.
     let src = "$ @mod M\n\
-                   $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
+                   $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
                    $ bad : {} -> @Int = get {}";
     assert!(
         errors(src).contains("not handled"),
@@ -596,7 +596,7 @@ fn top_level_unhandled_effect_is_rejected() {
     // Performing an effect at the top level (no handler in scope) is a compile
     // error, since a top-level body is typed under the empty closed row.
     let src = "$ @mod M\n\
-                   $ Yield : @effect = yield : @Int -> {},\n\
+                   $ Yield : @Type = @effect yield : @Int -> {},\n\
                    $ oops : {} = yield 1";
     assert!(
         errors(src).contains("not handled"),
@@ -611,7 +611,7 @@ fn open_row_entry_may_perform_any_effect() {
     // perform any effect without a handler (the runtime is the top handler). A
     // pure `<>` would reject this (see `unhandled_effect_is_a_compile_error`).
     let src = "$ @mod MAIN\n\
-               $ Yell : @effect = shout : @Int -> {},\n\
+               $ Yell : @Type = @effect shout : @Int -> {},\n\
                $ main : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "", "open-row main should type-check");
     assert_eq!(type_of(src, "main"), "{} -> <Yell | a> @Int");
@@ -632,7 +632,7 @@ fn signed_member_recurses_at_another_type() {
 fn signature_row_tail_stays_open() {
     // Unlike a type variable, a row tail may be extended by the body (#270).
     let src = "$ @mod M\n\
-               $ Yell : @effect = shout : @Int -> {},\n\
+               $ Yell : @Type = @effect shout : @Int -> {},\n\
                $ f : {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "");
 }
@@ -773,8 +773,8 @@ fn same_operation_in_two_effects_resolves_by_result_type() {
     // `ask` is declared by two effects (@Int and @Str result); a bare use is an
     // overload resolved by how the result is used, and `Effect.op` disambiguates.
     let src = "$ @mod M\n\
-                   $ Reader : @effect = ask : {} -> @Int,\n\
-                   $ Config : @effect = ask : {} -> @Str,\n\
+                   $ Reader : @Type = @effect ask : {} -> @Int,\n\
+                   $ Config : @Type = @effect ask : {} -> @Str,\n\
                    $ n : @Int = do (ask {}) + 1 ctl k | Reader.ask u => k 10\n\
                    $ s : @Str = do Config.ask {} ctl k | Config.ask u => k \"hi\"";
     assert_eq!(type_of(src, "n"), "@Int");
@@ -810,8 +810,8 @@ fn crepr_layout(src: &str, name: &str) -> utilities::CLayout {
 #[test]
 fn crepr_struct_layout_vector2_and_color() {
     let src = "$ @mod M\n\
-        $ Vector2 : @struct @extern \"C\" = x: @Float32, y: @Float32,\n\
-        $ Color : @struct @extern \"C\" = r: @Nat8, g: @Nat8, b: @Nat8, a: @Nat8,\n\
+        $ Vector2 : @Type = @struct @extern \"C\" x: @Float32, y: @Float32,\n\
+        $ Color : @Type = @struct @extern \"C\" r: @Nat8, g: @Nat8, b: @Nat8, a: @Nat8,\n\
         $ x : @Int = 0";
     let v = crepr_layout(src, "Vector2");
     assert_eq!((v.size, v.align), (8, 4));
@@ -826,9 +826,9 @@ fn crepr_field_follows_alias_to_a_struct() {
     // A nullary alias to a C-repr struct (`Quaternion = Vector4`) is itself
     // C-representable as a field: the layout follows the alias to the struct.
     let src = "$ @mod M\n\
-        $ Vector4 : @struct @extern \"C\" = x: @Float32, y: @Float32, z: @Float32, w: @Float32,\n\
+        $ Vector4 : @Type = @struct @extern \"C\" x: @Float32, y: @Float32, z: @Float32, w: @Float32,\n\
         $ Quaternion : @Type = Vector4\n\
-        $ Transform : @struct @extern \"C\" = rotation: Quaternion, scale: @Float32,\n\
+        $ Transform : @Type = @struct @extern \"C\" rotation: Quaternion, scale: @Float32,\n\
         $ x : @Int = 0";
     let t = crepr_layout(src, "Transform");
     // rotation is a 16-byte/4-align Vector4, so `scale` starts at offset 16.
@@ -840,7 +840,7 @@ fn crepr_field_follows_alias_to_a_struct() {
 fn c_union_layout_overlaps() {
     // `@union @extern "C"` is a C union: members share offset 0, size is the largest.
     let src = "$ @mod M\n\
-        $ U : @union @extern \"C\" = i: @Int32, d: @Float64,\n\
+        $ U : @Type = @union @extern \"C\" i: @Int32, d: @Float64,\n\
         $ x : @Int = 0";
     let u = crepr_layout(src, "U");
     assert!(u.is_union);
@@ -851,13 +851,13 @@ fn c_union_layout_overlaps() {
 
 #[test]
 fn crepr_struct_rejects_non_c_field() {
-    let e = errors("$ @mod M\n$ Bad : @struct @extern \"C\" = s: @Str,");
+    let e = errors("$ @mod M\n$ Bad : @Type = @struct @extern \"C\" s: @Str,");
     assert!(e.contains("not C-representable"), "{e}");
 }
 
 #[test]
 fn crepr_struct_rejects_generic() {
-    let e = errors("$ @mod M\n$ Bad : @struct @extern \"C\" a = v: a,");
+    let e = errors("$ @mod M\n$ Bad : (a: @Type) -> @Type = @struct @extern \"C\" v: a,");
     assert!(e.contains("may not be generic"), "{e}");
 }
 
@@ -866,7 +866,7 @@ fn real_literal_takes_real32_width() {
     // A `@Float64` literal checks against a `@Float32` expected type (like an integer
     // literal takes its width), so a float C struct binds with plain literals.
     let src = "$ @mod M\n\
-        $ Vector2 : @struct @extern \"C\" = x: @Float32, y: @Float32,\n\
+        $ Vector2 : @Type = @struct @extern \"C\" x: @Float32, y: @Float32,\n\
         $ v : Vector2 = Vector2.{ .x = 1.0, .y = 2.5 }\n\
         $ f : @Float32 = 3.5\n\
         $ g : @Float64 = 3.5";
@@ -878,8 +878,8 @@ fn real_literal_takes_real32_width() {
 #[test]
 fn crepr_struct_nested() {
     let src = "$ @mod M\n\
-        $ Vector2 : @struct @extern \"C\" = x: @Float32, y: @Float32,\n\
-        $ Line : @struct @extern \"C\" = a: Vector2, b: Vector2,\n\
+        $ Vector2 : @Type = @struct @extern \"C\" x: @Float32, y: @Float32,\n\
+        $ Line : @Type = @struct @extern \"C\" a: Vector2, b: Vector2,\n\
         $ x : @Int = 0";
     let l = crepr_layout(src, "Line");
     assert_eq!((l.size, l.align), (16, 4));
@@ -904,7 +904,7 @@ fn int_nat_friendly_spellings_are_dropped() {
 /// reach CORE's per-type overload.
 #[test]
 fn comparison_is_extended_by_an_instance() {
-    let src = "$ @mod M\n$ T : @struct = v: @Int\n\
+    let src = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
                $ ord_t : IOrd T = .{ .lt = \\a b => a.v < b.v }\n\
                $ custom : @Bool = T.{ .v = 1 } < T.{ .v = 2 }\n\
                $ prim : @Bool = 1 < 2";
@@ -918,11 +918,11 @@ fn comparison_is_extended_by_an_instance() {
 /// arity), so the aggregates stay comparable without a definition of their own.
 #[test]
 fn equality_needs_an_instance() {
-    let bare = "$ @mod M\n$ T : @struct = v: @Int\n\
+    let bare = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
                 $ same : @Bool = T.{ .v = 1 } == T.{ .v = 1 }";
     assert!(errors(bare).contains("no value of type `IEq T`"), "{}", errors(bare));
 
-    let src = "$ @mod M\n$ T : @struct = v: @Int\n\
+    let src = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
                $ eq_t : IEq T = .{ .eq = \\a b => a.v == b.v }\n\
                $ same : @Bool = T.{ .v = 1 } == T.{ .v = 1 }\n\
                $ pair : @Bool = {1, \"a\"} == {1, \"a\"}";
@@ -947,7 +947,7 @@ fn generic_comparison_declares_its_context() {
 /// brackets in type position; a signature carrying a row still parses and checks.
 #[test]
 fn comparison_operators_coexist_with_effect_rows() {
-    let src = "$ @mod M\n$ Fail : @effect = fail : {} -> @Int\n\
+    let src = "$ @mod M\n$ Fail : @Type = @effect fail : {} -> @Int\n\
                $ f : @Int -> <Fail | e> @Bool = \\n => n < 3\n\
                $ g : @Int -> <| e> @Bool = \\n => n > 3";
     assert_eq!(errors(src), "");
@@ -966,7 +966,7 @@ fn concat_on_an_unsupported_type_is_a_type_error() {
     // domain the operator does not have.
     let e = errors(
         "$ @mod M\n\
-         $ P : @struct = x: @Int\n\
+         $ P : @Type = @struct x: @Int\n\
          $ h : @Int = (P.{.x=1} ++ P.{.x=2}).x",
     );
     assert!(e.contains("no value of type `ICat P`"), "{e}");
@@ -977,7 +977,7 @@ fn a_user_concat_instance_joins_the_existing_ones() {
     // An instance EXTENDS the interface, so `"a" ++ "b"` keeps working in the
     // module that adds one for its own type.
     let src = "$ @mod M\n\
-               $ P : @struct = x: @Int\n\
+               $ P : @Type = @struct x: @Int\n\
                $ cat_p : ICat P = .{ .cat = \\a b => P.{ .x = a.x + b.x } }\n\
                $ s : @Str = \"a\" ++ \"b\"\n\
                $ p : P = P.{.x=1} ++ P.{.x=2}";
@@ -988,7 +988,7 @@ fn a_user_concat_instance_joins_the_existing_ones() {
 fn an_unknown_variant_tag_is_a_type_error() {
     let e = errors(
         "$ @mod M\n\
-         $ U : @union = A: {}, B: {@Int},\n\
+         $ U : @Type = @union A: {}, B: {@Int},\n\
          $ h : @Int = U.A |> \\ | .Nope.{q} => q | _ => 0",
     );
     assert!(e.contains("no union has a variant `Nope`"), "{e}");
@@ -1000,7 +1000,7 @@ fn a_variant_pattern_on_a_non_union_is_a_type_error() {
     // unified with the scrutinee, so the arm could claim any type.
     let e = errors(
         "$ @mod M\n\
-         $ P : @struct = x: @Int\n\
+         $ P : @Type = @struct x: @Int\n\
          $ h : P -> @Int = \\p => p |> \\ | P.Zzz.{a, b} => a | _ => 0",
     );
     assert!(e.contains("`P` is not a union"), "{e}");
@@ -1010,7 +1010,7 @@ fn a_variant_pattern_on_a_non_union_is_a_type_error() {
 fn an_unknown_field_is_a_type_error() {
     let e = errors(
         "$ @mod M\n\
-         $ P : @struct = x: @Int\n\
+         $ P : @Type = @struct x: @Int\n\
          $ h : P -> @Int = \\v => v.nonexistent",
     );
     assert!(e.contains("has no field `nonexistent`"), "{e}");
@@ -1020,7 +1020,7 @@ fn an_unknown_field_is_a_type_error() {
 fn a_struct_literal_with_an_unknown_field_is_a_type_error() {
     let e = errors(
         "$ @mod M\n\
-         $ P : @struct = x: @Int, y: @Int\n\
+         $ P : @Type = @struct x: @Int, y: @Int\n\
          $ p : P = { .x = 1, .nope = 2 }",
     );
     assert!(e.contains("struct `P` has no field `nope`"), "{e}");
@@ -1041,10 +1041,10 @@ fn a_recursive_slot_is_lazy_and_an_arrow_slot_is_not() {
     // already a suspension, so thunking it again would leave callers applying a
     // thunk instead of the function (this is what `Task.Susp` relies on).
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
-               $ Task : @union = Fin: {}, Susp: { @Int, {} -> Task },\n\
-               $ S : @struct t = head : t, tail : S t\n\
-               $ P : @struct = x: @Int, y: @Int\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
+               $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
+               $ S : (t: @Type) -> @Type = @struct head : t, tail : S t\n\
+               $ P : @Type = @struct x: @Int, y: @Int\n\
                $ z : @Int = 0";
     let (lazy, m) = with_checker(src, |checker, prog| {
         checker.check_program(prog).expect("check");
@@ -1064,7 +1064,7 @@ fn a_literal_must_give_every_field() {
         assert!(text.contains("--> test.ares:"), "no caret:\n{text}");
         text
     };
-    let p = "$ @mod M\n$ P : @struct = a: @Int, b: @Int,\n";
+    let p = "$ @mod M\n$ P : @Type = @struct a: @Int, b: @Int,\n";
 
     // Too few: the value would be missing a field its type promises, and reading
     // that field faults at run time.
@@ -1085,7 +1085,7 @@ fn a_literal_must_give_every_field() {
 
 #[test]
 fn a_c_union_literal_picks_one_member() {
-    let u = "$ @mod M\n$ U : @union @extern \"C\" = i: @Int, d: @Float64,\n";
+    let u = "$ @mod M\n$ U : @Type = @union @extern \"C\" i: @Int, d: @Float64,\n";
     // Members share offset 0, so a literal names exactly one; completeness would
     // be wrong here, and two members would be nonsense.
     assert!(rendered_errors(&format!("{u}$ y : U = U.{{ .i = 42 }}")).is_empty());
@@ -1095,7 +1095,7 @@ fn a_c_union_literal_picks_one_member() {
 
 #[test]
 fn a_pattern_may_bind_fewer_fields_but_never_more() {
-    let p = "$ @mod M\n$ P : @struct = a: @Int, b: @Int,\n";
+    let p = "$ @mod M\n$ P : @Type = @struct a: @Int, b: @Int,\n";
     // Fewer is the point of a pattern.
     assert!(rendered_errors(&format!("{p}$ y : @Int = P.{{1,2}} |> \\ | P.{{x}} => x | _ => 0")).is_empty());
     assert!(rendered_errors(&format!("{p}$ y : @Int = P.{{1,2}} |> \\ | P.{{ .b = v }} => v | _ => 0")).is_empty());
@@ -1131,7 +1131,7 @@ fn coverage(src: &str) -> (String, Vec<String>) {
     })
 }
 
-const L: &str = "$ @mod T\n$ L : @union = A, B, C,\n";
+const L: &str = "$ @mod T\n$ L : @Type = @union A, B, C,\n";
 
 #[test]
 fn missing_variant_is_an_error() {
@@ -1152,7 +1152,7 @@ fn every_variant_or_a_catch_all_is_exhaustive() {
 
 #[test]
 fn no_arms_cover_only_a_variantless_union() {
-    let empty = "$ @mod T\n$ E : @union =\n$ f : E -> @Int = \\e => e |> @absurd\n";
+    let empty = "$ @mod T\n$ E : @Type = @union\n$ f : E -> @Int = \\e => e |> @absurd\n";
     assert_eq!(coverage(empty), (String::new(), vec![]));
     let (err, _) = coverage(&format!("{L}$ f : L -> @Int = \\l => l |> @absurd\n"));
     assert!(err.contains("NON_EXHAUSTIVE_MATCH"), "{err}");
@@ -1168,7 +1168,7 @@ fn guarded_arms_do_not_cover() {
 
 #[test]
 fn nested_witness_is_named() {
-    let src = "$ @mod T\n$ M : @union a = No, Yes: {a},\n\
+    let src = "$ @mod T\n$ M : (a: @Type) -> @Type = @union No, Yes: {a},\n\
                $ f : M @Bool -> @Int = \\m => m |> \\ | .No => 0 | .Yes.{ @true } => 1\n";
     let (err, _) = coverage(src);
     assert!(err.contains("`M.Yes.{ false }`"), "{err}");
@@ -1195,7 +1195,7 @@ fn bools_tuples_and_structs() {
     let (err, _) = coverage("$ @mod T\n$ f : {@Bool, @Bool} -> @Int = \\p => p |> \\ | {@true, _} => 0 | {_, @true} => 1\n");
     assert!(err.contains("`{ false, false }`"), "{err}");
     let (err, _) = coverage(
-        "$ @mod T\n$ P : @struct = x: @Bool, y: @Int,\n$ f : P -> @Int = \\p => p |> \\ | P.{ .x = @true } => 0\n",
+        "$ @mod T\n$ P : @Type = @struct x: @Bool, y: @Int,\n$ f : P -> @Int = \\p => p |> \\ | P.{ .x = @true } => 0\n",
     );
     assert!(err.contains("`P.{ .x = false }`"), "{err}");
 }
@@ -1226,7 +1226,7 @@ fn unreachable_arms_warn() {
 
 #[test]
 fn handler_value_arms_are_checked() {
-    let src = "$ @mod T\n$ Exn : @effect = throw : @Str -> a,\n$ M : @union = Hit: {@Int}, Miss,\n\
+    let src = "$ @mod T\n$ Exn : @Type = @effect throw : @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
                $ g : {} -> <Exn> M = M.Miss\n\
                $ f : @Int = do g {} ctl k | Exn.throw m => 0 | .Hit.{ v } => v\n";
     let (err, _) = coverage(src);
@@ -1253,21 +1253,21 @@ fn dead_alternatives_warn_separately() {
 
 #[test]
 fn refutable_let_and_lambda_patterns_are_errors() {
-    let m = "$ @mod T\n$ M : @union a = No, Yes: {a},\n";
+    let m = "$ @mod T\n$ M : (a: @Type) -> @Type = @union No, Yes: {a},\n";
     let (err, _) = coverage(&format!("{m}$ f : M @Int -> @Int = \\.Yes.{{ x }} => x\n"));
     assert!(err.contains("refutable pattern in a lambda parameter") && err.contains("`M.No`"), "{err}");
     let (err, _) = coverage(&format!("{m}$ g : M @Int -> @Int = \\m => let .Yes.{{ x }} = m in x\n"));
     assert!(err.contains("refutable pattern in a `let` binding"), "{err}");
     let (err, _) = coverage("$ @mod T\n$ h : @Nat8 -> @Int = \\0 => 1\n");
     assert!(err.contains("`1 ...`"), "{err}");
-    let ok = "$ @mod T\n$ P : @struct = x: @Int, y: @Int,\n\
+    let ok = "$ @mod T\n$ P : @Type = @struct x: @Int, y: @Int,\n\
               $ f : P -> {@Int, @Int} -> @Int = \\P.{ x, _ } {a, b} => let {c, _} = {a, b} in x + c\n";
     assert_eq!(coverage(ok), (String::new(), vec![]));
 }
 
 #[test]
 fn a_refutable_sole_parameter_fixes_to_a_multi_arm_lambda() {
-    let m = "$ @mod T\n$ M : @union a = No, Yes: {a},\n";
+    let m = "$ @mod T\n$ M : (a: @Type) -> @Type = @union No, Yes: {a},\n";
     let fixed = |src: &str| {
         with_checker(src, |checker, prog| {
             let err = checker.check_program(prog).err().expect("a refutable parameter");
@@ -1285,7 +1285,7 @@ fn a_refutable_sole_parameter_fixes_to_a_multi_arm_lambda() {
 
 #[test]
 fn a_refutable_let_fixes_to_a_match() {
-    let m = "$ @mod T\n$ M : @union a = No, Yes: {a},\n";
+    let m = "$ @mod T\n$ M : (a: @Type) -> @Type = @union No, Yes: {a},\n";
     let fixed = |src: &str| {
         with_checker(src, |checker, prog| {
             let err = checker.check_program(prog).err().expect("a refutable `let`");
@@ -1327,7 +1327,7 @@ fn a_lambda_over_a_signature_bound_parameter_fixes_by_dropping_it() {
     );
 }
 
-const ROPE: &str = "$ @mod T\n$ Rope : @union = Leaf: {@Int}, Node: {Rope, Rope},\n\
+const ROPE: &str = "$ @mod T\n$ Rope : @Type = @union Leaf: {@Int}, Node: {Rope, Rope},\n\
     $ impl_ISeqView_for_Rope : @ISeqView Rope @Int = .{\n\
     \t.view = \\r => r |> \\ | Rope.Leaf.{ n } => SeqView.More.{ n, Rope.Node.{ r, r } } | _ => SeqView.Empty,\n}\n";
 
@@ -1383,7 +1383,7 @@ fn a_mismatch_names_expected_and_found_the_right_way_round() {
 
 #[test]
 fn an_unknown_type_is_reported_before_the_errors_it_causes() {
-    let ty = "$ @mod M\n$ MyTyp : @struct = a: @Int, b: @Int\n";
+    let ty = "$ @mod M\n$ MyTyp : @Type = @struct a: @Int, b: @Int\n";
     for body in ["$ x = Mytype.{1, 2}\n", "$ foo : MyType = .{1, 2}\n", "$ foo : MyType = .{.a = 1, .b = 2}\n"] {
         let text = rendered_errors(&format!("{ty}{body}"));
         assert!(text.contains("unknown type `My"), "{text}");
@@ -1425,8 +1425,8 @@ fn a_near_miss_instance_is_named_instead_of_none_in_scope() {
 }
 
 const ROW_EFFECTS: &str = "$ @mod M\n\
-     $ Log : @effect = log : @Int -> {},\n\
-     $ Gpu : @effect = draw : @Int -> {},\n";
+     $ Log : @Type = @effect log : @Int -> {},\n\
+     $ Gpu : @Type = @effect draw : @Int -> {},\n";
 
 #[test]
 fn a_row_prints_its_labels_and_an_unhandled_one_by_name() {
@@ -1448,7 +1448,7 @@ fn a_row_names_only_effects() {
 
 // -- effect parameters (#291) ---------------------------------------------
 
-const BOX_EFFECT: &str = "$ @mod M\n$ Box : @effect a = take : @Int -> a,\n";
+const BOX_EFFECT: &str = "$ @mod M\n$ Box : (a: @Type) -> @Type = @effect take : @Int -> a,\n";
 
 #[test]
 fn an_effect_parameter_is_fixed_by_its_row() {
@@ -1467,17 +1467,17 @@ fn one_handler_serves_one_instance() {
 
 #[test]
 fn an_operation_variable_is_opaque_in_the_handler() {
-    let ok = "$ @mod M\n$ Put : @effect = put : a -> {},\n\
+    let ok = "$ @mod M\n$ Put : @Type = @effect put : a -> {},\n\
               $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => k {} | u => 0\n";
     assert_eq!(errors(ok), "");
-    let bad = "$ @mod M\n$ Put : @effect = put : a -> {},\n\
+    let bad = "$ @mod M\n$ Put : @Type = @effect put : a -> {},\n\
                $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => x + 0 | u => 0\n";
     assert!(errors(bad).contains("`a` of `Put.put`"), "got: {:?}", errors(bad));
 }
 
 #[test]
 fn a_handler_cannot_resume_with_a_value_of_its_own() {
-    let src = "$ @mod M\n$ Exn : @effect = throw : @Int -> a,\n\
+    let src = "$ @mod M\n$ Exn : @Type = @effect throw : @Int -> a,\n\
                $ ok : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => n\n\
                $ bad : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => k n\n";
     let e = errors(src);
@@ -1487,7 +1487,7 @@ fn a_handler_cannot_resume_with_a_value_of_its_own() {
 #[test]
 fn mutual_recursion_keeps_a_row_parameter_open() {
     let src = "$ @mod M\n\
-               $ St : @union e = Done: @Int, More: ({} -> <e> St e),\n\
+               $ St : (e: @Row) -> @Type = @union Done: @Int, More: ({} -> <e> St e),\n\
                $ serve : St e -> @Int -> <e> @Int = \\st s =>\n\
                \tst |> \\ | St.Done.{ r } => r + s | St.More.{ k } => step k s\n\
                $ step : ({} -> <e> St e) -> @Int -> <e> @Int = \\k s => serve (k {}) s\n";
@@ -1501,9 +1501,9 @@ fn mutual_recursion_keeps_a_row_parameter_open() {
 #[test]
 fn reflection_reports_member_sources_and_pending_types() {
     let src = "$ @mod M\n\
-               $ Big : @union a = D: {}, C: { n: @Int, a }, B: @Vec (@Vec a), A\n\
-               $ P : @struct b e n = f: b -> <Log, State @Int | e> @Int, g: @Vec (@Tensor (2 * n + 1) {@Int, {}})\n\
-               $ Q : @struct = &gen {}, x: @Int\n";
+               $ Big : (a: @Type) -> @Type = @union D: {}, C: { n: @Int, a }, B: @Vec (@Vec a), A\n\
+               $ P : (b: @Type) -> (e: @Row) -> (n: @Nat) -> @Type = @struct f: b -> <Log, State @Int | e> @Int, g: @Vec (@Tensor (2 * n + 1) {@Int, {}})\n\
+               $ Q : @Type = @struct &gen {}, x: @Int\n";
     let (ast, prog) = crate::parse_into(Ast::new(), src).expect("parse");
     let mut checker = Checker::new(&ast, std::rc::Rc::new(crate::Types::new()));
     checker.set_lenient(true);

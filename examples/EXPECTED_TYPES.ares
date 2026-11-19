@@ -10,7 +10,7 @@ $ @mod EXPECTED_TYPES
 $ @import ARESxOPT
 
 # Tenths: an integer literal counts whole units.
-$ Tenths : @struct = n: @Int
+$ Tenths : @Type = @struct n: @Int
 $ impl_IIntLit_for_Tenths : @IIntLit Tenths = .{ .of_int = \k => Tenths.{ k * 10 } }
 
 $ id : t -> t = \x => x

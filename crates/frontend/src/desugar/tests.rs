@@ -49,7 +49,7 @@ fn a_multi_parameter_lambda_curries() {
 
 #[test]
 fn a_positional_struct_literal_is_labelled_in_declaration_order() {
-    let p = lower("$ @mod M\n$ P : @struct = x: @Int, y: @Int\n$ p : P = P.{ 1, 2 }\n");
+    let p = lower("$ @mod M\n$ P : @Type = @struct x: @Int, y: @Int\n$ p : P = P.{ 1, 2 }\n");
     let Term::Struct { name, base, fields } = p.terms.get(global(&p, "p")) else {
         panic!("expected a struct");
     };

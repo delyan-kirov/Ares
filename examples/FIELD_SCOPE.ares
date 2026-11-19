@@ -12,8 +12,8 @@ $ @mod FIELD_SCOPE
 $ @import ARESxALGO
 $ @import ARESxVEC
 
-$ Point : @struct = x: @Int, y: @Int
-$ Named : @struct = name: @Str, age: @Int
+$ Point : @Type = @struct x: @Int, y: @Int
+$ Named : @Type = @struct name: @Str, age: @Int
 
 $ p : Point = Point.{ .x = 3, .y = 4 }
 $ who : Named = Named.{ .name = "Bo", .age = 41 }

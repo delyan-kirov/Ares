@@ -118,10 +118,10 @@ type that declares it is lazy**, in a `@struct` and in a `@union` alike. A
 union; neither needs its own kind.
 
 ```
-$ Stream : @struct t = head : t, tail : Stream t
+$ Stream : (t: @Type) -> @Type = @struct head : t, tail : Stream t
 $ from : @Int -> Stream @Int = \n => { .head = n, .tail = from (n + 1) }
 
-$ List : @union a = Nil: {}, Cons: {a, List a},
+$ List : (a: @Type) -> @Type = @union Nil: {}, Cons: {a, List a},
 $ count : @Int -> List @Int = \n => List.Cons.{ n, count (n + 1) }
 ```
 
@@ -767,7 +767,7 @@ The M2 (untyped) surface. The current implemented surface is in the language
 reference (documentation/language/language-reference.md section 8). Chosen to reuse Ares's existing grammar and spend as few keywords as possible;
 the result is **closest to Flix**.
 
-- **Declaration.** `$ Eff : @effect = op : A -> B, ...` an `@effect` annotation
+- **Declaration.** `$ Eff : @Type = @effect op : A -> B, ...` an `@effect` annotation
   parallel to `@struct` / `@union`. Effect = TypeName, operations = lowercase
   vars. Each op is `arg-type -> resume-type`; every op takes exactly one argument
   and names one result. The new **unit** type/value `{}` (empty record, added to

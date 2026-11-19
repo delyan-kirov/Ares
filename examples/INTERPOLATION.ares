@@ -15,8 +15,8 @@ $ @import ARESxSTR
 # --- a prepared statement ----------------------------------------------------
 # The text carries `$1`, `$2`, ... where the holes were, and the values travel
 # beside it, so a hole can never change the statement.
-$ Param : @union = PInt: @Int, PStr: @Str
-$ Sql : @struct = text: @Str, params: @Vec Param
+$ Param : @Type = @union PInt: @Int, PStr: @Str
+$ Sql : @Type = @struct text: @Str, params: @Vec Param
 
 $ impl_IInterp_for_Sql : @IInterp Sql Sql =
     .{ .interp = \build => build Sql.{ .text = "", .params = [] } }
@@ -41,7 +41,7 @@ $ placeholders : Sql -> @Int = \q => @vec_len q.params
 $ two : @Int = placeholders "UPDATE t SET a = ?(1), b = ?("x")"
 
 # --- escaped HTML ------------------------------------------------------------
-$ Html : @struct = src: @Str
+$ Html : @Type = @struct src: @Str
 
 $ escape : @Str -> @Str = \s =>
     ARES.replace ">" "&gt;" (ARES.replace "<" "&lt;" (ARES.replace "&" "&amp;" s))

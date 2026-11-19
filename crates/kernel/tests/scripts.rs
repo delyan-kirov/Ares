@@ -116,7 +116,7 @@ fn every_script_pins_its_axioms() {
 fn axioms_used_only_inside_a_proof_are_reported() {
     let src = "\
 $ @mod AXIOMS
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 $ ax : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom
 $ pr : (p2: Nat -> @Type 0) -> p2 Nat.Zero -> p2 Nat.Succ.{ Nat.Zero } = \\p => @transp Nat.Zero (\\x => p2 x) p Nat.Succ.{ Nat.Zero } ax
 $ uses_pr : (p: Nat -> @Type 0) -> p Nat.Zero -> p Nat.Succ.{ Nat.Zero } = pr p

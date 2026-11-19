@@ -67,7 +67,9 @@ impl<'a> Checker<'a> {
                 &format!("against the signature of `{}`", def.name),
             )?;
             let saved_sig = self.current_sig.replace(sig_ty);
+            let outer = std::mem::take(&mut self.opaque_vars);
             let r = self.check(def.body, sig_ty).map_err(|d| self.sig_bound_mismatch(def, sig).unwrap_or(d));
+            let opaque = std::mem::replace(&mut self.opaque_vars, outer);
             self.current_sig = saved_sig;
             r?;
             // A row tail stays open on purpose: `<| e>` lets the body perform
@@ -79,7 +81,7 @@ impl<'a> Checker<'a> {
                 .filter(|(name, _)| !tails.contains(name))
                 .filter_map(|(name, span)| tvars.get(&name).map(|&ty| (name, span, ty)))
                 .collect();
-            Ok(Some(SigVars { def: def.name, vars, wildcards }))
+            Ok(Some(SigVars { def: def.name, vars, wildcards, opaque }))
         } else {
             let inferred = self.infer(def.body)?;
             self.unifier.unify(
@@ -198,6 +200,25 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+        }
+        for v in &sig.opaque {
+            let zonked = self.unifier.zonk(v.ty);
+            let found = match self.unifier.types.node(zonked) {
+                TypeNode::Var(id) => match seen.iter().find(|(s, _)| *s == id) {
+                    Some(&(_, other)) => format!("the same as `{other}`"),
+                    None => {
+                        seen.push((id, v.name));
+                        continue;
+                    }
+                },
+                _ => format!("`{}`", self.show(zonked)),
+            };
+            return Err(diag!(
+                Code::TypeMismatch, v.span, 0,
+                "the body of `{}` needs `{}` of `{}` to be {found}", sig.def, v.name, v.tag;
+                note: "a match does not tell which `{}` the value was built with: \
+                       refining it is dependent matching (#543)", v.name
+            ));
         }
         Ok(())
     }
@@ -1979,7 +2000,7 @@ impl<'a> Checker<'a> {
                 Some((name, info)) => {
                     self.struct_lit_names.insert(site, name);
                     struct_name = name;
-                    let (args, subst) = self.instantiate_params(&info.params);
+                    let (args, subst) = self.instantiate_params(&info.params, &info.kinds);
                     (info, applied(&self.unifier.types, name, &args), subst)
                 }
                 // No fresh() escape hatch: a struct literal whose type cannot be
@@ -2086,11 +2107,11 @@ impl<'a> Checker<'a> {
             Some(n) => Some(n),
             None => self.find_union_by_tag(tag),
         };
-        let resolved = union.and_then(|u| self.variant_sig(u, tag));
+        let resolved = union.and_then(|u| self.variant_sig(u, tag, false));
         // No fresh() escape hatch, for the same reason `infer_struct_lit` has none:
         // a fresh variable unifies with anything, so an unresolvable constructor
         // would type-check here and fault at run time.
-        let Some((result, payload)) = resolved else {
+        let Some((result, payload, _)) = resolved else {
             self.infer_field_inits(fields)?;
             return Err(match ty {
                 Some(n) if !self.unions.contains_key(&n) => diag!(
@@ -2560,6 +2581,8 @@ pub(super) struct SigVars {
     vars: Vec<(StrId, Span, Type)>,
     /// Each `_` the signature wrote, and the variable standing for it.
     wildcards: Vec<(Span, Type)>,
+    /// The variables of the constructors the body matched.
+    opaque: Vec<OpaqueVar>,
 }
 
 /// Collect the type variables appearing in `ty`, in order of first appearance.

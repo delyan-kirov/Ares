@@ -12,8 +12,8 @@ $ @mod META_TEMPLATE
 
 $ @import ARESxSTR
 
-$ Param : @union = PInt: @Int, PStr: @Str
-$ Query : @struct = text: @Str, params: @Vec Param
+$ Param : @Type = @union PInt: @Int, PStr: @Str
+$ Query : @Type = @struct text: @Str, params: @Vec Param
 
 # The tables a statement may read, known at build time.
 $ schema : @Vec @Str = ["users", "orders"]

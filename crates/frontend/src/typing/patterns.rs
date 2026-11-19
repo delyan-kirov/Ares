@@ -207,7 +207,7 @@ impl<'a> Checker<'a> {
                 "`{ty}.{{ .. }}` is not a struct pattern: `{ty}` is {what}"
             ));
         };
-        let (args, mut subst) = self.instantiate_params(&info.params);
+        let (args, mut subst) = self.instantiate_params(&info.params, &info.kinds);
         self.unifier
             .unify(expected, applied(&self.unifier.types, ty, &args), "in a struct pattern")?;
         // A pattern may bind fewer fields than the struct has, but never more: a
@@ -249,10 +249,10 @@ impl<'a> Checker<'a> {
             Some(n) => Some(n),
             None => self.find_union_for(tag, expected),
         };
-        let resolved = union.and_then(|u| self.variant_sig(u, tag));
+        let resolved = union.and_then(|u| self.variant_sig(u, tag, true));
         // As in `type_struct_pattern`, an unresolvable tag is an error rather than
         // an arm that binds fresh variables and constrains nothing.
-        let Some((result, payload)) = resolved else {
+        let Some((result, payload, own)) = resolved else {
             return Err(match ty {
                 Some(n) if !self.unions.contains_key(&n) => diag!(
                     Code::TypeMismatch, Span::at(0), 0,
@@ -270,6 +270,8 @@ impl<'a> Checker<'a> {
             });
         };
         self.unifier.unify(expected, result, "in a variant pattern")?;
+        let span = self.ast.pat_span(pat).unwrap_or(Span::at(0));
+        self.opaque_vars.extend(own.into_iter().map(|(name, ty)| OpaqueVar { name, tag, span, ty }));
         if let Some(u) = union {
             self.variant_pattern_unions.insert(pat, u);
         }

@@ -8,7 +8,7 @@ $ @mod RC_LOOP
 #       zero live allocations (the generated main's leak check enforces this).
 #       A wrong sum divides by zero, so the test fails loudly.
 
-$ Pair : @struct =
+$ Pair : @Type = @struct
     fst: @Int,
     snd: @Int,
 

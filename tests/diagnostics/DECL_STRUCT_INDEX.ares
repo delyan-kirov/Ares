@@ -1,0 +1,3 @@
+$ @mod DECL_STRUCT_INDEX
+
+$ Row : @Nat -> @Type = @struct x: @Int,  #~ error[UNEXPECTED_TOKEN]: a struct has no indices

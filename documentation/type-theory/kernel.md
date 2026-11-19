@@ -47,14 +47,14 @@ elaborator takes types as terms. Every argument is explicit except where a
 ```ares
 $ @mod NAT
 $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 $ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
 $ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
 $ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl (add two two)
 ```
 
 - `$ name : T = e` defines and `$ name : T = @axiom` postulates. A signature's leading named parameters `(x: A) ->` are bound by the signature, as in every Ares definition (#437): `id`'s body binds only `x`. A capitalized name defines a type, `$ Frac : @Type 1 = {Integer, Pos}`.
-- An inductive type is a union. `$ D : @union = Tag: payload, ...` is in `@Type 1`; with parameters, indices or another universe, the signature states them and the body is the union, `$ D : (params) -> @Type l = @union ...`. A constructor may state its result, `Tag: {fields} -> D params indices`; the leading binders every constructor passes through unchanged are parameters, the rest indices: `$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }`. A payload is `{}`, a bare type, or braced fields, named or not.
+- An inductive type is a union, its signature stating its parameters, indices and universe: `$ D : @Type 1 = @union Tag: payload, ...`, `$ D : (params) -> @Type l = @union ...`. A constructor may state its result, `Tag: {fields} -> D params indices`; the leading binders every constructor passes through unchanged are parameters, the rest indices: `$ Vec : (a: @Type 1) -> (n: Nat) -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }`. A payload is `{}`, a bare type, or braced fields, named or not.
 - Constructor `Tag` of `D` is the global `D.Tag`, written `D.Tag.{ fields }` (positional or `.f = e`) or `.Tag.{ fields }` when one constructor has that tag; its parameters are inferred. Each declaration adds `D.elim`, and, with parameters, the projections `D.eq_Tag_f` (`D.eq_Tag_argN` for an unnamed field).
 - `@ctx {u: @l, ...} ->` at the start of a signature binds levels; a use passes them as `name @ctx {.u = l}`, or leaves them out. Kernel levels range over every level, `0` included; the surface default `n >= 1` is a kernel `k + 1`.
 - Terms: `\x => e`, `\(x: A) => e`, `(x: A) -> B`, `A -> B`, `let x: T = e in b`, `(e : T)`, `a ~ b`, `f <| x` and `x |> f`. `{a, b}` is a pair where a pair type is expected and otherwise the type of pairs; `{x: A, y: B x}` is a dependent pair type; `p.0` and `p.1` project.

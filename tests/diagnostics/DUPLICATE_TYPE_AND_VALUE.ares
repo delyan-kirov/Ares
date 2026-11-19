@@ -5,7 +5,7 @@ $ @mod DUPLICATE_TYPE_AND_VALUE
 $ pair : @Type -> @Type = \t => {t, t}
 $ pair : @Int = 3  #~ error[DUPLICATE_SYMBOL]: `pair` is defined twice in module `DUPLICATE_TYPE_AND_VALUE`
 
-$ Point : @struct =
+$ Point : @Type = @struct
     x: @Int,
     y: @Int
 

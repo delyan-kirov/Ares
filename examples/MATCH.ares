@@ -13,11 +13,11 @@ $ @mod MATCH
 #       after its pattern (see WHEN_GUARDS.ares); a failed guard falls through to
 #       the next arm.
 
-$ Person : @struct =
+$ Person : @Type = @struct
     name: @Str,
     age: @Int,
 
-$ Point : @struct =
+$ Point : @Type = @struct
     x: @Int,
     y: @Int,
 
@@ -59,7 +59,7 @@ $ d5 : @Int = describe 5
 # An exhaustive union match needs no catch-all: the three constructors cover the
 # type, so TC accepts the match with no fallthrough. Adding a fourth variant
 # without extending this match would then be a compile error.
-$ Light : @union = Red: {}, Yellow: {}, Green: {}
+$ Light : @Type = @union Red: {}, Yellow: {}, Green: {}
 
 $ go : Light -> @Int = \l =>
     l |> \
@@ -73,8 +73,8 @@ $ lg : @Int = go Light.Green
 # Exhaustiveness reasons recursively through nested payloads: matching the empty
 # `Opt.None` and the full `Opt.Some.{ _ }` inside `Wrap.W` covers `Wrap`, so this
 # needs no catch-all even though the arms destructure a nested union.
-$ Opt : @union = None: {}, Some: { @Int }
-$ Wrap : @union = Empty: {}, W: { Opt }
+$ Opt : @Type = @union None: {}, Some: { @Int }
+$ Wrap : @Type = @union Empty: {}, W: { Opt }
 
 $ unwrap : Wrap -> @Int = \w =>
     w |> \
@@ -98,7 +98,7 @@ $ u_some : @Int = unwrap Wrap.W.{ Opt.Some.{ 42 } }
 # `depth` peeks up to three `Succ`s; the fourth arm's `Succ.{Succ.{Succ._}}`
 # mops up everything deeper, so Zero + the three exact depths + that catch-all
 # cover `Peano` with no gap. (`@Nat` is a built-in numeric type, hence `Peano`.)
-$ Peano : @union = Zero: {}, Succ: { Peano }
+$ Peano : @Type = @union Zero: {}, Succ: { Peano }
 
 $ depth : Peano -> @Int = \n =>
     n |> \
@@ -115,7 +115,7 @@ $ p5 : Peano = Peano.Succ.{ Peano.Succ.{ Peano.Succ.{ Peano.Succ.{ Peano.Succ.{ 
 # --- 2. Binary trees: matching the SHAPE two levels down. --------------------
 # Each `Fork` child is itself a `Tip` or a `Fork`; the four arms partition all
 # four left/right shape combinations (Tip|Fork x Tip|Fork), so no catch-all.
-$ Tree : @union = Tip: {}, Fork: { Tree, Tree }
+$ Tree : @Type = @union Tip: {}, Fork: { Tree, Tree }
 
 $ shape : Tree -> @Int = \t =>
     t |> \
@@ -131,7 +131,7 @@ $ t3 : Tree = Tree.Fork.{ Tree.Fork.{ Tree.Tip, Tree.Tip }, Tree.Tip }
 # --- 3. A GENERIC box, nested three deep: `NestingDoll (NestingDoll (NestingDoll @Int))`. -------
 # `peel` unwraps each `Skin` down to the `Core` at the bottom; the innermost
 # `Skin.{ n }` binds the payload. Generic + three levels, still exhaustive.
-$ NestingDoll : @union t = Core: {}, Skin: { t }
+$ NestingDoll : (t: @Type) -> @Type = @union Core: {}, Skin: { t }
 
 $ peel : NestingDoll (NestingDoll (NestingDoll @Int)) -> @Int = \o =>
     o |> \
@@ -148,10 +148,10 @@ $ k7 : NestingDoll (NestingDoll (NestingDoll @Int)) =
 # `Cell.Set` carries a `Flags` STRUCT whose two fields are themselves unions.
 # The checker descends union -> struct -> union: `Blank` plus the four Sign x Bit
 # combinations exhaust `Cell` with no catch-all, even though nothing here recurses.
-$ Sign : @union = Plus: {}, Minus: {}
-$ Bit : @union = Off: {}, On: {}
-$ Flags : @struct = sign: Sign, bit: Bit
-$ Cell : @union = Blank: {}, Set: { Flags }
+$ Sign : @Type = @union Plus: {}, Minus: {}
+$ Bit : @Type = @union Off: {}, On: {}
+$ Flags : @Type = @struct sign: Sign, bit: Bit
+$ Cell : @Type = @union Blank: {}, Set: { Flags }
 
 $ decode : Cell -> @Int = \c =>
     c |> \

@@ -251,7 +251,7 @@ fn comparison_intrinsics_match_interpreter() {
 /// per-type overload for a primitive.
 #[test]
 fn user_comparison_instance_compiles() {
-    let src = "$ @mod M\n$ T : @struct = v: @Int\n               $ ord_t : IOrd T = .{ .lt = \\x y => x.v < y.v }\n               $ a : @Int = if (T.{ .v = 1 } < T.{ .v = 2 }) && (2 < 3) => 1 else 0";
+    let src = "$ @mod M\n$ T : @Type = @struct v: @Int\n               $ ord_t : IOrd T = .{ .lt = \\x y => x.v < y.v }\n               $ a : @Int = if (T.{ .v = 1 } < T.{ .v = 2 }) && (2 < 3) => 1 else 0";
     assert_matches(src, "a");
 }
 
@@ -336,7 +336,7 @@ fn user_operator_instance_matches_interpreter() {
     // backend too (resolved via the runtime string-keyed global table), while the
     // `@Int + @Int` inside finds CORE's instance.
     let src = "$ @mod M\n\
-               $ V : @struct = x: @Int, y: @Int\n\
+               $ V : @Type = @struct x: @Int, y: @Int\n\
                $ add_v : IAdd V = .{ .add = \\a b => V.{ .x = a.x + b.x, .y = a.y + b.y } }\n\
                $ r : @Int = let s = V.{ .x = 1, .y = 2 } + V.{ .x = 10, .y = 20 } in s.x + s.y";
     assert_matches(src, "r");
@@ -407,7 +407,7 @@ fn one_operation_over_two_types_matches_interpreter() {
     // One operation covering two types is an interface plus two instances. The C
     // backend must project and call the same instance the interpreter does.
     let src = "$ @mod M\n\
-               $ IKind : @struct t = kind: t -> @Int,\n\
+               $ IKind : (t: @Type) -> @Type = @struct kind: t -> @Int,\n\
                $ kind : @use {d: IKind t} -> t -> @Int = \\x => d.kind x\n\
                $ kind_int : IKind @Int = .{ .kind = \\x => 1 }\n\
                $ kind_bool : IKind @Bool = .{ .kind = \\b => 2 }\n\
@@ -421,11 +421,11 @@ fn ctx_context_parameter_passing() {
     // instance built from another instance to a nested one; the C backend must do it
     // exactly as the interpreter does.
     let src = "$ @mod M\n\
-               $ Ord : @struct t = gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
-               $ Box : @union t = Wrap: {t},\n\
+               $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
                $ ord_box : @use {o: Ord t} -> Ord (Box t) = \n\
                \t.{ .gt = \\p q => p |> \\ | Box.Wrap.{a} => (q |> \\ | Box.Wrap.{b} => o.gt a b) }\n\
                $ unbox : Box @Int -> @Int = \\b => b |> \\ | Box.Wrap.{n} => n\n\
@@ -441,8 +441,8 @@ fn open_row_record_param() {
     // Row-polymorphic record param over the C backend: field access resolves the
     // same by-name as the interpreter, regardless of the concrete struct passed.
     let src = "$ @mod M\n\
-               $ Point  : @struct = x: @Int, y: @Int,\n\
-               $ Point3 : @struct = x: @Int, y: @Int, z: @Int,\n\
+               $ Point  : @Type = @struct x: @Int, y: @Int,\n\
+               $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int,\n\
                $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
                $ test : @Int = (area Point.{ .x=3, .y=4 }) + (area Point3.{ .x=5, .y=6, .z=9 })\n";
     assert_matches(src, "test");
@@ -477,7 +477,7 @@ fn lazy_recursive_struct_streams() {
     // A recursive struct field is a thunk the C runtime forces on access; the C
     // backend must drive the lazy infinite stream the same as the interpreter.
     let src = "$ @mod M\n\
-               $ Stream : @struct t = head : t, tail : Stream t\n\
+               $ Stream : (t: @Type) -> @Type = @struct head : t, tail : Stream t\n\
                $ from : @Int -> Stream @Int = \\n => { .head = n, .tail = from (n + 1) }\n\
                $ smap : (a -> b) -> Stream a -> Stream b = \\f s => { .head = f s.head, .tail = smap f s.tail }\n\
                $ nth : @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
@@ -491,7 +491,7 @@ fn record_update_forces_a_lazy_base() {
     // #310: `| base` read from an unforced recursive field must be forced
     // before its fields are copied, in both engines.
     let src = "$ @mod M\n\
-               $ Node : @struct = v : @Int, next : Node\n\
+               $ Node : @Type = @struct v : @Int, next : Node\n\
                $ mk : @Int -> Node = \\n => { .v = n, .next = mk (n + 1) }\n\
                $ test : @Int = let b = Node.{ .v = 5 | (mk 0).next } in b.v * 100 + b.next.v\n";
     assert_eq!(c_run(src, "test"), "test = 502");
@@ -526,7 +526,7 @@ fn ffi_struct_by_value_return() {
     // emits a `typedef struct` and rebuilds the Ares struct from the C result,
     // byte-identical to the interpreter.
     let src = "$ @mod M\n\
-        $ LDivT : @struct @extern \"C\" = quot: @Int, rem: @Int,\n\
+        $ LDivT : @Type = @struct @extern \"C\" quot: @Int, rem: @Int,\n\
         $ lldiv : {numer: @Int, denom: @Int} -> LDivT = @extern \"C\" \"lldiv\" \"libc\"\n\
         $ test : @Int = let d = lldiv {17, 5} in d.quot * 100 + d.rem";
     assert_matches(src, "test");
@@ -540,7 +540,7 @@ fn ffi_loads_from_c_memory() {
     let src = "$ @mod M\n\
         $ malloc : @Int -> @Ptr = @extern \"C\" \"malloc\" \"libc\"\n\
         $ p2i : @Ptr -> @Int = @extern \"C\" \"arx_p2i\" \"\"\n\
-        $ Pt : @struct @extern \"C\" = x: @Int32, y: @Int32,\n\
+        $ Pt : @Type = @struct @extern \"C\" x: @Int32, y: @Int32,\n\
         $ fill : { dst: @Ptr, src: @Str, n: @Int } -> @Ptr = @extern \"C\" \"memcpy\" \"libc\"\n\
         $ pt_at : { p: @Ptr, i: @Int } -> Pt = @extern \"load\"\n\
         $ i32_at : { p: @Ptr, i: @Int } -> @Int32 = @extern \"load\"\n\
@@ -586,7 +586,7 @@ fn ffi_struct_by_value_argument() {
 
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
          $ sum_p : P -> @Int = @extern \"C\" \"sum_p\" \"{}\"\n\
          $ test : @Int = sum_p (P.{{ .x = 40, .y = 2 }})",
         arx_path(&so_path)
@@ -644,7 +644,7 @@ fn ffi_struct_array() {
 
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
          $ sum_ps : {{ps: @Vec P, n: @Int}} -> @Int = @extern \"C\" \"sum_ps\" \"{lib}\"\n\
          $ test : @Int = sum_ps {{[P.{{ .x = 1, .y = 2 }}, P.{{ .x = 3, .y = 4 }}, P.{{ .x = 5, .y = 6 }}], 3}}",
         lib = arx_path(&so_path)
@@ -797,7 +797,7 @@ fn ffi_c_union_by_value() {
 
     let src = format!(
         "$ @mod M\n\
-         $ U : @union @extern \"C\" = i: @Int, d: @Float64,\n\
+         $ U : @Type = @union @extern \"C\" i: @Int, d: @Float64,\n\
          $ u_as_long : U -> @Int = @extern \"C\" \"u_as_long\" \"{lib}\"\n\
          $ u_from_long : @Int -> U = @extern \"C\" \"u_from_long\" \"{lib}\"\n\
          $ built : @Int = u_as_long (U.{{ .i = 42 }})\n\
@@ -855,8 +855,8 @@ fn ffi_nested_struct_by_value() {
 
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
-         $ Seg : @struct @extern \"C\" = a: P, b: P,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
+         $ Seg : @Type = @struct @extern \"C\" a: P, b: P,\n\
          $ seg_sum : Seg -> @Int = @extern \"C\" \"seg_sum\" \"{lib}\"\n\
          $ seg_make : @Int -> Seg = @extern \"C\" \"seg_make\" \"{lib}\"\n\
          $ test : @Int = seg_sum (seg_make 1)",
@@ -928,7 +928,7 @@ fn higher_order_and_let() {
 #[test]
 fn structs_and_fields() {
     let src = "$ @mod T\n\
-               $ Point : @struct = x: @Int, y: @Int,\n\
+               $ Point : @Type = @struct x: @Int, y: @Int,\n\
                $ p : Point = Point.{ .x = 3, .y = 4 }\n\
                $ sx : @Int = p.x + p.y\n\
                $ test : @Int = sx\n";
@@ -939,7 +939,7 @@ fn structs_and_fields() {
 #[test]
 fn variants_and_when() {
     let src = "$ @mod T\n\
-               $ Shape : @union = Dot: {}, Seg: { @Int }\n\
+               $ Shape : @Type = @union Dot: {}, Seg: { @Int }\n\
                $ size : Shape -> @Int = \\s =>\n\
                \ts |> \\ | Shape.Dot => 0 | Shape.Seg.{n} => n\n\
                $ test : @Int = size (Shape.Seg.{7}) - size Shape.Dot\n";
@@ -1014,8 +1014,8 @@ fn effects_multi_shot_through_a_stored_continuation() {
     // Nothing in the clause bounds the uses of a stashed `k`, so driving the same
     // suspension twice must run the remainder twice (1 + 2 + 2).
     let src = "$ @mod M\n\
-               $ Co : @effect = step : @Int -> {},\n\
-               $ Task : @union = Fin: {}, Susp: { @Int, {} -> Task },\n\
+               $ Co : @Type = @effect step : @Int -> {},\n\
+               $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
                $ spawn : ({} -> <Co> {}) -> Task =\n\
                \t\\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
                $ drive : Task -> @Int =\n\
@@ -1091,9 +1091,9 @@ fn literal_construction_hooks_match_interpreter() {
     // the interpreter: the literal builds the user type (wrapped in the resolved
     // instance's method), while a default-typed literal stays folded.
     let src = "$ @mod M\n\
-               $ Wrap : @struct = n: @Int\n\
+               $ Wrap : @Type = @struct n: @Int\n\
                $ il : @IIntLit Wrap = .{ .of_int = \\x => Wrap.{ .n = x } }\n\
-               $ Bag : @union a = Items: {@Vec a}\n\
+               $ Bag : (a: @Type) -> @Type = @union Items: {@Vec a}\n\
                $ ql : @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
                $ w : Wrap = 40\n\
                $ bag : Bag @Int = [1, 2]\n\
@@ -1119,7 +1119,7 @@ fn tensor_of_structs_matches_interpreter() {
     // A tensor element that is a STRUCT is not a nested tensor. The C runtime used
     // to tell the two apart by tag alone (every struct shares it) and faulted here.
     let src = "$ @mod M\n\
-               $ P : @struct = x: @Float64, y: @Float64,\n\
+               $ P : @Type = @struct x: @Float64, y: @Float64,\n\
                $ ps : @Tensor 2 P = [P.{ 1.0, 2.0 }, P.{ 3.0, 4.0 }]\n\
                $ zs : @Tensor 2 Cpx = [Cpx.{ 1.0, 0.0 } + 1.0i, Cpx.{ 2.0, 0.0 }]\n\
                $ r : @Str = to_string (@tensor_index ps 1).y\n\
@@ -1132,7 +1132,7 @@ fn bracket_hooks_match_interpreter() {
     // The rest of the `[..]` surface is interface-driven too: ranges, `::`, slices,
     // and `@Array` literals/patterns must lower the same on the C backend.
     let src = "$ @mod M\n\
-               $ Span : @struct = lo: @Int, hi: @Int\n\
+               $ Span : @Type = @struct lo: @Int, hi: @Int\n\
                $ rg : @IRange @Int Span = .{ .range = \\lo hi => Span.{ lo, hi } }\n\
                $ s : Span = [2 ... 6]\n\
                $ v : @Vec @Int = [1 ... 4]\n\
@@ -1149,11 +1149,11 @@ fn pattern_hooks_match_interpreter() {
     // Literal patterns (via `IEq`) and sequence patterns (via `@ISeqView`) on user
     // types must lower the same on the C backend as on the interpreter.
     let src = "$ @mod M\n\
-               $ Stack : @struct a = items: @Vec a\n\
+               $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
                $ sv : @ISeqView (Stack a) a = .{\n\
                \t.view = \\s => s.items |> \\ | h :: t => SeqView.More.{ h, Stack.{ .items = t } } | _ => SeqView.Empty,\n\
                }\n\
-               $ MyStr : @struct = bytes: @Str\n\
+               $ MyStr : @Type = @struct bytes: @Str\n\
                $ sl : @IStrLit MyStr = .{ .of_str = \\s => MyStr.{ .bytes = s } }\n\
                $ eq_mystr : IEq MyStr = .{ .eq = \\a b => a.bytes == b.bytes }\n\
                $ tag : MyStr -> @Int = \\s => s |> \\ | \"hi\" => 1 | _ => 0\n\
@@ -1169,7 +1169,7 @@ fn recursive_union_slot_is_lazy() {
     // The C backend forces a thunk where a value is scrutinised, the same as the
     // interpreter; without it this diverges.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ from : @Int -> L @Int = \\n => L.C.{ n, from (n + 1) }\n\
                $ hd : L @Int -> @Int = \\l => l |> \\ | L.C.{h, t} => h | _ => 0\n\
                $ test : @Int = hd (from 7)";
@@ -1181,7 +1181,7 @@ fn a_lazy_slot_is_forced_once() {
     // Forcing patches the cell in place (ARESxVALUE_patch_box), so the second walk
     // finds the spine already built.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
                $ sum : L @Int -> @Int -> @Int = \\l acc => l |> \\ | L.C.{h, t} => sum t (acc + h) | _ => acc\n\
                $ xs : L @Int = mk 5\n\
@@ -1192,7 +1192,7 @@ fn a_lazy_slot_is_forced_once() {
 #[test]
 fn a_self_referential_lazy_global_is_not_a_cycle_at_definition() {
     let src = "$ @mod M\n\
-               $ S : @struct t = head : t, tail : S t\n\
+               $ S : (t: @Type) -> @Type = @struct head : t, tail : S t\n\
                $ ones : S @Int = { .head = 1, .tail = ones }\n\
                $ test : @Int = ones.tail.tail.tail.head";
     assert_matches(src, "test");
@@ -1203,7 +1203,7 @@ fn walking_a_lazy_list_stops_early() {
     // A List tail is lazy, so an unbounded list is fine as long as the walk
     // stops: only the cells reached are ever built.
     let src = "$ @mod M\n\
-               $ Acc : @effect = add : @Int -> {},\n\
+               $ Acc : @Type = @effect add : @Int -> {},\n\
                $ from : @Int -> List @Int = \\n => List.Cons.{ n, from (n + 1) }\n\
                $ walk : List @Int -> <Acc> {} = \\l =>\n\
                \tl |> \\ | List.Cons.{ x, t } => (if x > 5 => {} else (Acc.add x; walk t)) | _ => {}\n\
@@ -1260,7 +1260,7 @@ const PAR_SRC: &str = "$ @mod M\n\
     \tlet a = @par (\\u => sum_from v 0 (n / 2) 0) in\n\
     \tlet b = @par (\\u => sum_from v (n / 2) n 0) in\n\
     \t@await a + @await b\n\
-    $ L : @union a = N: {}, C: {a, L a},\n\
+    $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
     $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
     $ lsum : L @Int -> @Int -> @Int = \\l acc => l |> \\ | L.C.{h, t} => lsum t (acc + h) | _ => acc\n\
     $ shared_list : @Int -> @Int = \\n =>\n\
@@ -1347,8 +1347,8 @@ fn tsan_clean(src: &str) {
 /// A continuation captured inside a task and resumed on another thread: a
 /// generator a task suspends and the main thread drains, and one resumed twice.
 const PAR_RESUME_SRC: &str = "$ @mod M\n\
-    $ Yield : @effect = yield : @Int -> {},\n\
-    $ Gen : @union = Done: {}, More: {@Int, {} -> Gen},\n\
+    $ Yield : @Type = @effect yield : @Int -> {},\n\
+    $ Gen : @Type = @union Done: {}, More: {@Int, {} -> Gen},\n\
     $ gen : ({} -> <Yield> {}) -> Gen = \\t =>\n\
     \tdo t {} ctl k | Yield.yield v => Gen.More.{ v, k } | _ => Gen.Done.{}\n\
     $ count : @Int -> @Int -> <Yield> {} = \\i n => if i > n => {} else (Yield.yield i; count (i + 1) n)\n\
@@ -1425,8 +1425,8 @@ fn constructor_reuse_never_overwrites_a_shared_cell() {
     // through intact; the second is used once and is rebuilt in place. A
     // non-recursive type is strict, so `step` reuses with no thunk in between.
     let src = "$ @mod M\n\
-               $ Lst : @union = Nl: {}, Cn: { @Int, Lst },\n\
-               $ St : @union = St: { @Int, @Int },\n\
+               $ Lst : @Type = @union Nl: {}, Cn: { @Int, Lst },\n\
+               $ St : @Type = @union St: { @Int, @Int },\n\
                $ build : @Int -> Lst -> Lst = \\n acc => if n == 0 => acc else build (n - 1) (Lst.Cn.{ n, acc })\n\
                $ inc : Lst -> Lst = \\xs => xs |> \\ | Lst.Nl => Lst.Nl | Lst.Cn.{ h, t } => Lst.Cn.{ h + 1, inc t }\n\
                $ total : Lst -> @Int -> @Int = \\xs acc => xs |> \\ | Lst.Nl => acc | Lst.Cn.{ h, t } => total t (acc + h)\n\
@@ -1448,7 +1448,7 @@ fn a_shallow_arm_with_wildcard_fields_binds_the_right_slots() {
     // Constructor and literal arms with plain binders compile to one multi-way
     // case; a wildcard still occupies its field's binder slot.
     let src = "$ @mod M\n\
-               $ T : @union = L: {}, N: { @Int, @Int, @Int, @Int },\n\
+               $ T : @Type = @union L: {}, N: { @Int, @Int, @Int, @Int },\n\
                $ pick : T -> @Int = \\t => t |> \\ | T.N.{ _, b, _, d } => b * 10 + d | T.L => 0\n\
                $ lit : @Int -> @Int = \\n => n |> \\ | 1 => 10 | 2 => 20 | m => m\n\
                $ test : @Int = pick (T.N.{ 1, 2, 3, 4 }) * 1000 + lit 2 + lit 7 + pick T.L\n";
@@ -1463,7 +1463,7 @@ fn a_shallow_arm_with_wildcard_fields_binds_the_right_slots() {
 #[test]
 fn direct_functions_match_interpreter() {
     let src = "$ @mod M\n\
-               $ Acc : @effect = add : @Int -> {},\n\
+               $ Acc : @Type = @effect add : @Int -> {},\n\
                $ fib : @Int -> @Int = \\n => if n < 2 => n else fib (n - 1) + fib (n - 2)\n\
                $ go : @Int -> @Int -> @Int = \\i acc => if i == 0 => acc else go (i - 1) (acc + i % 7)\n\
                $ even : @Int -> @Bool = \\n => if n == 0 => @true else odd (n - 1)\n\

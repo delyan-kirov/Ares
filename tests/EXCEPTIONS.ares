@@ -12,7 +12,7 @@ $ @mod EXCEPTIONS
 $ @import ARESxALGO
 $ @import ARESxVEC
 
-$ Exception : @struct =
+$ Exception : @Type = @struct
     module: @Str,
     os: @Str,
     reason: @Str,

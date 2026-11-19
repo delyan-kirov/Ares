@@ -62,7 +62,7 @@ $ ck_stream : @Int = if foldl (\a x => a + x) 0 (take 2 odds) == 7 => 0 else 409
 # A bare range builds a `List`, lazy in the tail, so a range you only walk part of
 # costs only the part you walk: this one stops after five of 10^14 cells. Where a
 # `@Vec` is expected (`ns` above) the range materializes every element up front.
-$ Seen : @effect = saw : @Int -> {},
+$ Seen : @Type = @effect saw : @Int -> {},
 $ walked : @Int =
     do for [1 ... 100000000000000] (\i => if i > 5 => break {} else Seen.saw i)
     ctl k | Seen.saw n => n + k {} | r => 0

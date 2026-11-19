@@ -18,7 +18,7 @@ parameter: a record of named fields, each an instance the function needs. The
 fields are in scope by name in the body, and call sites do not write them.
 
 ```
-$ IToString : @struct t = show: t -> @Str,
+$ IToString : (t: @Type) -> @Type = @struct show: t -> @Str,
 
 $ to_string : @use {d: IToString t} -> t -> @Str = \x => d.show x
 
@@ -115,7 +115,7 @@ instances for the base types, tuples, `@Vec`, `@Array` and `Cpx`.
 
 The rest: `IToString` / `IFromString` (which `"?(e)"` interpolation uses), `ICat`
 (`++`), `ICons` (`::`), `IFor` / `IFormap` (`for` / `formap`, whose effect row is an
-ordinary interface parameter: `$ IFor : @struct s a e = ...`), and `DERIVE`'s
+ordinary interface parameter: `$ IFor : (s: @Type) -> (a: @Type) -> (e: @Row) -> @Type = @struct ...`), and `DERIVE`'s
 three-way `ICmp`.
 
 `ARES.min` / `max` / `clamp` / `abs` / `pow` are ONE definition each over these
@@ -129,7 +129,7 @@ declares them, and each has exactly one field (validated at the declaration), so
 the compiler needs the type name and never the method name.
 
 ```
-$ @IRange : @struct b t = range: b -> b -> t,          # in CORE
+$ @IRange : (b: @Type) -> (t: @Type) -> @Type = @struct range: b -> b -> t,          # in CORE
 
 $ range_span : @IRange @Int Span = .{ .range = \lo hi => Span.{ lo, hi } }
 ```

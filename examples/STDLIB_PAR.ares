@@ -69,7 +69,7 @@ $ ck_tensor : @Int =
 
 # A task that performs an effect takes its handler along (`par_with`): the
 # handler runs on the task's thread, so the effect never crosses threads.
-$ Emit : @effect = emit : @Int -> {},
+$ Emit : @Type = @effect emit : @Int -> {},
 
 $ total : ({} -> <Emit> {}) -> @Int = \body =>
     let run =

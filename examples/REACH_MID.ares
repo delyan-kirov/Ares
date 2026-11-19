@@ -6,7 +6,7 @@ $ @mod REACH_MID
 
 $ @import REACH_LIB
 
-$ Bag : @struct = items : @Vec Item, best : Item
+$ Bag : @Type = @struct items : @Vec Item, best : Item
 
 $ bag : {} -> Bag = Bag.{
     .items = @vec_new {} |> \v => @vec_push v Item.{ 40 } |> \v => @vec_push v Item.{ 2 },

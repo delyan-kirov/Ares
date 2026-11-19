@@ -31,13 +31,13 @@ $ utf_esc : @Str = "\u{1F600} \u{4e16}\u{754c} \u{e9}"
 
 # Strings as aggregate fields, so the native backend's constructors retain them
 # and the exit-time leak check must release them.
-$ Tagged : @struct =
+$ Tagged : @Type = @struct
     label: @Str,
     note: @Str,
 
 $ rec : Tagged = Tagged.{ .label = "key\tval", .note = "π \u{2248} 3.14" }
 
-$ StrList : @union =
+$ StrList : @Type = @union
     Cons: { @Str, StrList },
     Nil: {},
 

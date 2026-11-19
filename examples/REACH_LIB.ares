@@ -4,7 +4,7 @@ $ @mod REACH_LIB
 # \info The bottom of a three-module chain (see `REACH`): declares the type the
 #       middle module's struct holds.
 
-$ Item : @struct = v : @Int,
+$ Item : @Type = @struct v : @Int,
 
 $ test : @Int = 0
 

@@ -203,7 +203,7 @@ Compiler messages, send:
 `@lookup` is total (LANDED, #146): it returns a CORE `Decl`,
 
 ```
-$ Decl : @union =
+$ Decl : @Type = @union
     Struct: { params: @Vec @Str, fields: @Vec { @Str, @Str } },
     Union: { params: @Vec @Str, variants: @Vec { @Str, @Str } },
     Value: @Str,
@@ -332,7 +332,7 @@ then `&x`.
 $ &assert (fib 10 == 55) "fib 10 should be 55"           # item
 $ fib10 : @Int = &fib 10                                 # expression: inserts `55`
 $ n : &wide {} = 1024                                    # type
-$ Point3 : @struct = &ARES.fields_of "Point", z: @Int  # member
+$ Point3 : @Type = @struct &ARES.fields_of "Point", z: @Int  # member
 $ run : {} -> <&logging {}, State @Int> @Int = ...      # row
 x |> \ | &answer => a                                   # pattern: a constant
        | answer  => b                                    # always binds

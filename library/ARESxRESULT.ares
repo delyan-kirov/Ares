@@ -42,7 +42,7 @@ $ ok_opt : Result t e -> Opt t = \r => r |> \ | Result.Ok.{ x } => Opt.Some.{ x 
 
 # ---- the effect shape ----
 
-$ Fail : @effect = fail : @Str -> a, # never resumes -> polymorphic result
+$ Fail : @Type = @effect fail : @Str -> a, # never resumes -> polymorphic result
 
 # Run a computation that may Fail, reifying the outcome as a Result.
 $ try : ({} -> <Fail> t) -> Result t @Str = \action =>

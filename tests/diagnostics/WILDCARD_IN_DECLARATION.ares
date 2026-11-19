@@ -1,4 +1,4 @@
 $ @mod WILDCARD_IN_DECLARATION
 
 # A type declaration has no body to solve a `_`.
-$ P : @struct = x: _  #~ error[TYPE_ANNOTATION_REQUIRED]: a type declaration writes its types out
+$ P : @Type = @struct x: _  #~ error[TYPE_ANNOTATION_REQUIRED]: a type declaration writes its types out

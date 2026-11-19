@@ -5,7 +5,7 @@ use crate::recheck;
 use crate::signature::{GlobalKind, Signature};
 use crate::term::Term;
 
-const NAT: &str = "\n$ Nat : @union = Zero: {}, Succ: Nat\n$ ok : Nat.Zero ~ Nat.Zero = @refl Nat.Zero\n$ bad : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom\n$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }\n";
+const NAT: &str = "\n$ Nat : @Type 1 = @union Zero: {}, Succ: Nat\n$ ok : Nat.Zero ~ Nat.Zero = @refl Nat.Zero\n$ bad : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom\n$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }\n";
 
 /// `name`'s definition body.
 fn body(sig: &Signature, name: &str) -> Rc<Term> {

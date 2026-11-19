@@ -349,7 +349,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     out.push_str(types.name(name));
                     for arg in args {
                         out.push(' ');
-                        go(types, arg, namer, out, 2);
+                        go(types, arg, namer, out, 4);
                     }
                 });
             }
@@ -379,7 +379,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     paren(out, wrap, |out| {
                         go(types, head, namer, out, 1);
                         out.push(' ');
-                        go(types, arg, namer, out, 2);
+                        go(types, arg, namer, out, 4);
                     });
                 }
             }
@@ -658,7 +658,7 @@ pub(crate) const IF_EQ: &str = "IEq";
 // ## Blessed interfaces
 
 /// The interface types the COMPILER resolves. Each is declared in CORE as a
-/// one-field `@struct` under its `@`-sigilled name (`$ @IRange : @struct b t =
+/// one-field `@struct` under its `@`-sigilled name (`$ @IRange : (b: @Type) -> (t: @Type) -> @Type = @struct
 /// range: b -> b -> t,`); a desugar site resolves a value of that type by type and
 /// projects the single field. The names are fixed here because the desugars name
 /// them; the method name stays CORE's choice.

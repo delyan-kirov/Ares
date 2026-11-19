@@ -28,10 +28,10 @@ $ n : &number_type "wide" = 1000 + 24
 $ xs : @Vec (&elem_type {}) = [3, 4, 5]
 
 # --- declaration members ------------------------------------------------------
-$ Point : @struct = x: &elem_type {}, y: &number_type "narrow"
-$ Shape : @union = Dot: {}, Square: &elem_type {}
+$ Point : @Type = @struct x: &elem_type {}, y: &number_type "narrow"
+$ Shape : @Type = @union Dot: {}, Square: &elem_type {}
 $ Count : @Type = &elem_type {}
-$ Cell : @effect = read : {} -> &elem_type {}
+$ Cell : @Type = @effect read : {} -> &elem_type {}
 
 $ pt : Point = { .x = 3, .y = 4 }
 $ side : Shape -> Count = \ | Shape.Square.{ s } => s | Shape.Dot => 0
@@ -40,14 +40,14 @@ $ side : Shape -> Count = \ | Shape.Square.{ s } => s | Shape.Dot => 0
 $ annotated : @Int =
     let a : &elem_type {} = 5 in let sq = \(b : &elem_type {}) => b * b in sq (a : &elem_type {})
 
-$ State : @effect s = get : {} -> s
+$ State : (s: @Type) -> @Type = @effect get : {} -> s
 $ peek : {} -> <State (&elem_type {})> @Int = State.get {}
 $ peeked : @Int =
     do peek {}
     ctl k | State.get u => k 7 | v => v
 
 # A whole row entry, or several, can come from a generator too: `<&X>`.
-$ Log : @effect = log : @Int -> {}
+$ Log : @Type = @effect log : @Int -> {}
 $ row : {} -> @Code = "Log, State @Int"
 $ logged : {} -> <&row {}> @Int = Log.log 1; State.get {}
 $ logged_value : @Int =

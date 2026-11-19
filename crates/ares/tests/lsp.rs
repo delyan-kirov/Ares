@@ -537,8 +537,8 @@ fn members_a_splice_generates_are_not_errors_while_editing() {
     let dir = std::env::temp_dir().join(format!("ares-lsp-splice-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("COPY.ares");
-    let src = "$ @mod COPY\n\n$ @import ARESxDERIVE\n\n$ Point : @struct = x: @Int, y: @Int\n\
-               $ Point3 : @struct = &ARES.fields_of \"Point\", z: @Int\n\n\
+    let src = "$ @mod COPY\n\n$ @import ARESxDERIVE\n\n$ Point : @Type = @struct x: @Int, y: @Int\n\
+               $ Point3 : @Type = @struct &ARES.fields_of \"Point\", z: @Int\n\n\
                $ sum : Point3 -> @Int = \\p => p.x + p.z\n";
     std::fs::write(&path, src).unwrap();
     let path = path.canonicalize().unwrap();
@@ -584,7 +584,7 @@ fn a_kernel_project_is_checked_by_the_kernel() {
         "$ @mod BUILD\n$ @build : {} -> <@Meta, @IO> @Code = @option \"check.checker\" \"kernel\"; \"\"\n",
     )
     .unwrap();
-    let wrong = "$ @mod NAT\n$ Nat : @union = Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @tt\n";
+    let wrong = "$ @mod NAT\n$ Nat : @Type 1 = @union Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @tt\n";
     std::fs::write(dir.join("NAT.ares"), wrong).unwrap();
     let uri = ares::lsp::path_to_uri(&dir.join("NAT.ares"));
 
@@ -610,7 +610,7 @@ fn a_kernel_project_is_checked_by_the_kernel() {
     let messages: Vec<&str> = diags.iter().filter_map(|d| d.get("message").as_str()).collect();
     assert!(messages.len() == 1 && messages[0].contains("expected `@Bottom`, found `@Top`"), "{diags:?}");
 
-    let fixed = "$ @mod NAT\n$ Nat : @union = Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Zero = @tt\n";
+    let fixed = "$ @mod NAT\n$ Nat : @Type 1 = @union Zero: {}, Succ: Nat\n$ p : Nat.Zero ~ Nat.Zero = @tt\n";
     c.notify(
         "textDocument/didChange",
         Json::obj([

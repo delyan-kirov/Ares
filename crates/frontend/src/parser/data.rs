@@ -317,15 +317,16 @@ pub enum Item {
         ctx: Option<Aol<Ty>>,
         body: Aol<Expr>,
     },
-    /// `$ Name : @struct [@extern "abi"] [a b ...] = field, ...`. `params` are the
-    /// declared type parameters, in order; when omitted they are inferred from the
-    /// free type variables in the fields. `splices` are the `&X` entries whose
+    /// `$ Name : sig = @struct [@extern "abi"] field, ...`. `sig` states the
+    /// parameters, `(a: @Type) -> (n: @Nat) -> @Type`, and `params` are their
+    /// names, in order. `splices` are the `&X` entries whose
     /// generated fields the expand loop splices in before the final compile. `abi` is set when
     /// the struct is a C-layout foreign type (`@struct @extern "C"`): its runtime
     /// representation is a flat, unboxed C struct, so it can cross the `@extern`
     /// boundary by value. The string names the ABI, matching the function form.
     Struct {
         name: StrId,
+        sig: Aol<Ty>,
         params: Slice<StrId>,
         splices: Slice<EntrySplice>,
         fields: Slice<FieldDecl>,
@@ -335,14 +336,14 @@ pub enum Item {
         /// handled as a C-repr struct, so it reuses construction and access.
         c_union: bool,
     },
-    /// `$ Name : @union [a b ...] = Tag : payload, ...`. `params` are the declared
-    /// type parameters (inferred from the variants when omitted). `splices` are
-    /// `&X` entries generating variants, as for structs. `sig` is set for the
-    /// dependent form `$ Name : (a: A) -> @Type l = @union ...`, whose
-    /// parameters and universe the signature states (#406).
+    /// `$ Name : sig = @union Tag: payload, ...`. `params` name the leading
+    /// binders of `sig` that every constructor's stated result passes through
+    /// as themselves; the binders after them are indices, which a constructor
+    /// states after its payload, `Cons: {a, Vec a n} -> Vec a (n + 1)`.
+    /// `splices` are `&X` entries generating variants, as for structs.
     Union {
         name: StrId,
-        sig: Option<Aol<Ty>>,
+        sig: Aol<Ty>,
         params: Slice<StrId>,
         splices: Slice<EntrySplice>,
         variants: Slice<VariantDecl>,
@@ -359,11 +360,12 @@ pub enum Item {
         sig: Aol<Ty>,
         body: Aol<Expr>,
     },
-    /// `$ Name : @effect params = op : ty, ...`. An operation's type may mention
-    /// only the effect's parameters: a handler fixes them for every operation it
-    /// serves.
+    /// `$ Name : sig = @effect op : ty, ...`, `sig` stating the parameters as
+    /// for a struct. An operation's type may mention only the effect's
+    /// parameters: a handler fixes them for every operation it serves.
     Effect {
         name: StrId,
+        sig: Aol<Ty>,
         params: Slice<StrId>,
         ops: Slice<FieldDecl>,
     },
@@ -406,6 +408,8 @@ pub struct EntrySplice {
 #[derive(Clone, Debug)]
 pub struct VariantDecl {
     pub tag: StrId,
+    /// Where the tag is written.
+    pub tag_span: Span,
     pub payload: Payload,
     pub result: Option<Aol<Ty>>,
 }

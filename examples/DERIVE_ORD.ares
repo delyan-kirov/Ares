@@ -10,11 +10,11 @@ $ @mod DERIVE_ORD
 
 $ @import ARESxDERIVE
 
-$ Coord : @struct =
+$ Coord : @Type = @struct
     x: @Int,
     y: @Int,
 
-$ Geom : @union =
+$ Geom : @Type = @union
     Dot: {},
     Circle: { @Int },
     Rect: { @Int, @Int },

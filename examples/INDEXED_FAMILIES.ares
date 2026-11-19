@@ -1,0 +1,51 @@
+$ @mod INDEXED_FAMILIES
+
+# \file INDEXED_FAMILIES.ares
+# \info Typed parameters and indexed families (#536). A declaration's
+#       signature states what each parameter ranges over: a type, a size
+#       (`@Nat`) or a row. A union may go on with indices, and each of its
+#       constructors states the result it builds. Indices are erased: a
+#       `Vec` is a list at run time.
+
+# A struct over a size: the signature says `n` is a `@Nat`.
+$ Window : (n: @Nat) -> (t: @Type) -> @Type = @struct samples: @Tensor n t, label: @Str,
+
+# A struct over a row: `e` is the effects a step may perform.
+$ Step : (e: @Row) -> @Type = @struct run: @Int -> <e> @Int,
+
+# A vector indexed by its length. `a` is a parameter, the same in every
+# result; the `@Nat` after it is an index, which each constructor states.
+$ Vec : (a: @Type) -> @Nat -> @Type = @union
+    Nil: {} -> Vec a 0,
+    Cons: { a, Vec a n } -> Vec a (n + 1)
+
+$ cons : a -> Vec a n -> Vec a (n + 1) = \x xs => Vec.Cons.{ x, xs }
+
+# The lengths are checked as the vectors are built.
+$ three : Vec @Int 3 = cons 1 <| cons 2 <| cons 3 Vec.Nil
+
+# Matching does not refine the index yet (#543): the tail's length is the
+# constructor's own, so a function over every length is what can be written.
+$ to_list : Vec a n -> List a = \v => v |> \ | Vec.Cons.{ h, t } => h :: to_list t | Vec.Nil => []
+
+# An index may be a type: each constructor says which.
+$ Expr : @Type -> @Type = @union
+    Num: { @Int } -> Expr @Int,
+    Flag: { @Bool } -> Expr @Bool,
+    Both: { Expr a, Expr b } -> Expr { a, b }
+
+$ both : Expr { @Int, @Bool } = Expr.Both.{ Expr.Num.{ 1 }, Expr.Flag.{ @true } }
+
+$ size : Expr a -> @Int = \e => e |> \ | Expr.Both.{ l, r } => size l + size r | _ => 1
+
+$ window : Window 2 @Int = { .samples = [4, 5], .label = "w" }
+
+$ twice : Step e = Step.{ .run = \x => 2 * x }
+
+$ sum : List @Int -> @Int = \l => l |> \ | List.Cons.{ h, t } => h + sum t | _ => 0
+
+$ test : @Int =
+    (if sum (to_list three) == 6 => 0 else 1) + (if size both == 2 => 0 else 2)
+        + (if window.label == "w" && twice.run 1 == 2 => 0 else 4)
+
+$ &assert (test == 0) "INDEXED_FAMILIES: a check failed"

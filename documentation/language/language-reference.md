@@ -116,7 +116,7 @@ $ greet : @Str -> @Str = \who => "hello ?(who)!"
 
 Involved (a user type interpolates by defining an `IToString` instance):
 ```ares
-$ Point : @struct = x: @Int, y: @Int
+$ Point : @Type = @struct x: @Int, y: @Int
 $ impl_IToString_for_Point : IToString Point = .{ .show = \p => "(?(p.x), ?(p.y))" }
 $ msg : @Str = "at ?(Point.{ .x = 3, .y = 4 }), n=?(40 + 2)"   # "at (3, 4), n=42"
 ```
@@ -127,9 +127,9 @@ escaping, quoting. Three blessed CORE interfaces make up the protocol:
 
 ```ares-fragment
 # Declared in CORE, which alone may declare a blessed interface.
-$ @IInterp     : @struct b t = interp: (b -> b) -> t,   # start a builder, finish it
-$ @IInterpText : @struct b   = text: b -> @Str -> b,    # append a literal piece
-$ @IInterpHole : @struct b h = hole: b -> h -> b,       # append one hole
+$ @IInterp     : (b: @Type) -> (t: @Type) -> @Type = @struct interp: (b -> b) -> t,   # start a builder, finish it
+$ @IInterpText : (b: @Type) -> @Type = @struct text: b -> @Str -> b,    # append a literal piece
+$ @IInterpHole : (b: @Type) -> (h: @Type) -> @Type = @struct hole: b -> h -> b,       # append one hole
 ```
 
 `"a ?(x) b"` expected as `t` is `@IInterp`'s `interp` applied to a chain that
@@ -141,8 +141,8 @@ must be known at the literal (a signature, a parameter, an annotation); a string
 whose type is still open is a `@Str`.
 
 ```ares
-$ Param : @union = PInt: @Int, PStr: @Str
-$ Sql : @struct = text: @Str, params: @Vec Param
+$ Param : @Type = @union PInt: @Int, PStr: @Str
+$ Sql : @Type = @struct text: @Str, params: @Vec Param
 
 $ impl_IInterp_for_Sql : @IInterp Sql Sql =
     .{ .interp = \build => build Sql.{ .text = "", .params = [] } }
@@ -321,7 +321,7 @@ call may perform: `A -> <E> B`. A bare arrow is pure (empty row). `<| e>` is an
 open row (a row variable), which is what makes a function effect-polymorphic.
 
 ```ares
-$ State : @effect = get : {} -> @Int, put : @Int -> {},
+$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 $ pure : @Int -> @Int = \x => x                       # pure (empty row)
 $ act  : {} -> <State> @Int = get {}                  # may perform State
 $ poly : (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
@@ -431,7 +431,7 @@ variable, unless the same type already binds it: a type-level function, or a
 
 Involved (partial instantiation, a size parameter):
 ```ares
-$ Pair : @struct a b = fst: a, snd: b,
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,
 $ IntPair : @Type -> @Type = \b => Pair @Int b    # fix the first arg, keep the second open
 $ ip : IntPair @Str = .{ .fst = 3, .snd = "z" }  # same as Pair @Int @Str
 $ Square : @Nat -> @Type -> @Type = \n t => @Tensor n (@Tensor n t)
@@ -503,7 +503,7 @@ parens, `(x: T)`, even when it is the only parameter, so the type ends at `)`.
 swallow the next parameter as its argument.)
 
 ```ares
-$ Person : @struct = name: @Str, age: @Int,
+$ Person : @Type = @struct name: @Str, age: @Int,
 $ inc : @Int -> @Int = \x => x + 1
 $ add : @Int -> @Int -> @Int = \a b => a + b                  # curried
 $ name_of : Person -> @Str = \Person.{ name, _ } => name       # destructuring parameter
@@ -570,7 +570,7 @@ comparison intrinsics (`@ieq`, `@ilt`, `@ult`, `@feq`, `@flt`, `@seq`, `@slt`).
 A type of your own joins them with an instance:
 
 ```ares
-$ Money : @struct = cents: @Int
+$ Money : @Type = @struct cents: @Int
 
 $ impl_IOrd_for_Money : IOrd Money = .{ .lt = \a b => a.cents < b.cents }
 $ cheaper : @Bool = Money.{ .cents = 150 } < Money.{ .cents = 900 }
@@ -766,8 +766,8 @@ $ total : { @Int, @Int } -> @Int = \ | { 0, acc } => acc | { n, acc } => total {
 
 Involved (nested union patterns, exhaustive so no catch-all, see 5.9):
 ```ares
-$ Wrap : @union = Empty: {}, W: { Opt }
-$ Opt  : @union = None: {}, Some: { @Int }
+$ Wrap : @Type = @union Empty: {}, W: { Opt }
+$ Opt  : @Type = @union None: {}, Some: { @Int }
 $ unwrap : Wrap -> @Int = \
     | Wrap.Empty                => 0
     | Wrap.W.{ Opt.None }       => 1
@@ -800,8 +800,8 @@ $ tag : @Int -> @Int = \n => n |> \ | 0 => 100 | m => m + 1
 or named (dotted, any order, others ignored; a lone `.name` puns).
 
 ```ares
-$ Point  : @struct = x: @Int, y: @Int,
-$ Person : @struct = name: @Str, age: @Int,
+$ Point  : @Type = @struct x: @Int, y: @Int,
+$ Person : @Type = @struct name: @Str, age: @Int,
 $ sum_xy : Point -> @Int = \p => p |> \ | Point.{ x, y } => x + y
 $ who    : Person -> @Str = \p => p |> \ | Person.{ .name } => name
 ```
@@ -811,7 +811,7 @@ $ who    : Person -> @Str = \p => p |> \ | Person.{ .name } => name
 the union inferred from the arms. Payloads nest.
 
 ```ares
-$ Maybe : @union t = Just: t, None: {}
+$ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}
 $ get : @Int -> Maybe @Int -> @Int = \d m => m |> \ | Maybe.Just.{ x } => x | _ => d
 $ isJust : Maybe t -> @Bool = \m => m |> \ | .Just.{ _ } => @true | _ => @false
 ```
@@ -879,7 +879,7 @@ $ small : @Int -> @Int = \n => n |> \ | 0 | 1 | 2 => 1 | _ => 0
 
 Guards falling through the same constructor:
 ```ares
-$ Box : @union = Some: @Int, Nil: {},
+$ Box : @Type = @union Some: @Int, Nil: {},
 $ grade : Box -> @Int = \x =>
 	x |> \ | Box.Some.{ v } if v > 100 => 3
 	     | Box.Some.{ v } if v > 0   => 2
@@ -910,7 +910,7 @@ inference. A match that misses a value is a compile error
   matched from the back (`r ++ [z]`) is not modeled, so it needs a `_` arm.
 
 ```ares
-$ Light : @union = Red: {}, Yellow: {}, Green: {}
+$ Light : @Type = @union Red: {}, Yellow: {}, Green: {}
 $ go : Light -> @Int = \l =>
 	l |> \ | Light.Red => 0 | Light.Yellow => 1 | Light.Green => 2   # no catch-all needed
 ```
@@ -927,9 +927,9 @@ the error carries that rewrite as a fix: `\P => B` becomes
 sugar for applying a lambda.
 
 ```ares
-$ Point  : @struct = x: @Int, y: @Int,
-$ Person : @struct = name: @Str, age: @Int,
-$ Line   : @struct = from: Point, to: Point,
+$ Point  : @Type = @struct x: @Int, y: @Int,
+$ Person : @Type = @struct name: @Str, age: @Int,
+$ Line   : @Type = @struct from: Point, to: Point,
 $ person : Person = Person.{ .name = "A", .age = 30 }
 $ age : @Int = let Person.{ .age = a } = person in a
 $ start : Line -> @Int = \Line.{ .from = Point.{ x, _ }, .to = _ } => x
@@ -940,21 +940,28 @@ $ start : Line -> @Int = \Line.{ .from = Point.{ x, _ }, .to = _ } => x
 # 6. Algebraic data types
 
 ## 6.1 Structs `@struct`
-A named record type: `$ Name : @struct params = field: Type, ...`. Built with a
+A named record type: `$ Name : @Type = @struct field: Type, ...`. Built with a
 literal (`Type.{ .f = e }`, bare `.{ ... }`, or positional `Type.{ a, b }`);
 read with `.field`. Nominal (unifies by name).
 
+A type with parameters states them in its signature, each with what it ranges
+over: a type (`@Type`), a size (`@Nat`, for `@Tensor n T`) or a row (`@Row`,
+for an effect row or a record's open tail). Every parameter is named and
+written; a type variable used in the body that the signature does not bind is
+an error, and one used as something other than what it ranges over is too.
+
 Simple:
 ```ares
-$ Person : @struct = name: @Str, age: @Int,
+$ Person : @Type = @struct name: @Str, age: @Int,
 $ p : Person = Person.{ .name = "Will", .age = 21 }
 $ who : @Str = p.name
 ```
 
-Involved (generic, applied by juxtaposition, nested field types):
+Involved (generic, applied by juxtaposition, nested field types, a size):
 ```ares
-$ Box : @struct t = val: t,
-$ Wrap : @struct t = inner: Box t,
+$ Box : (t: @Type) -> @Type = @struct val: t,
+$ Samples : (n: @Nat) -> @Type = @struct data: @Tensor n @Float64,
+$ Wrap : (t: @Type) -> @Type = @struct inner: Box t,
 $ w : Wrap @Int = .{ .inner = Box.{ .val = 7 } }
 $ deep : @Int = w.inner.val
 ```
@@ -964,29 +971,47 @@ $ deep : @Int = w.inner.val
 comes last; a listed field may read from `base`.
 
 ```ares
-$ Person : @struct = name: @Str, age: @Int,
+$ Person : @Type = @struct name: @Str, age: @Int,
 $ base : Person = Person.{ .name = "A", .age = 30 }
 $ older : Person = Person.{ .age = base.age + 1 | base }
 $ clone : Person = .{ | base }
 ```
 
 ## 6.3 Unions `@union`
-A tagged sum: `$ Name : @union params = Tag: Payload, ...`. A `{}` payload is a
-unit variant. Recursive and generic. Non-strict data constructors (lazy
-payloads).
+A tagged sum: `$ Name : @Type = @union Tag: Payload, ...`. A `{}` payload is a
+unit variant. Recursive, and generic with parameters stated as for a struct.
+Non-strict data constructors (lazy payloads).
 
 Simple:
 ```ares
-$ Maybe : @union t = Just: t, None: {}
+$ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}
 $ some : Maybe @Int = Maybe.Just.{ 5 }
 $ none : Maybe @Int = .None
 ```
 
 Involved (recursive, multi-field payload, positional or named):
 ```ares
-$ Tree : @union a = Leaf: a, Node: { Tree a, Tree a }
+$ Tree : (a: @Type) -> @Type = @union Leaf: a, Node: { Tree a, Tree a }
 $ t : Tree @Int = Tree.Node.{ Tree.Leaf.{ 1 }, Tree.Leaf.{ 2 } }
 ```
+
+An indexed family's signature goes on after the parameters with indices, and
+each constructor states the result it builds after its payload. The leading
+binders every result passes through as themselves are the parameters; the rest
+are indices. Building a value checks its index:
+
+```ares
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)
+$ two : Vec @Int 2 = Vec.Cons.{ 1, Vec.Cons.{ 2, Vec.Nil } }
+$ length : Vec a n -> @Int = \v => v |> \ | Vec.Cons.{ _, t } => 1 + length t | Vec.Nil => 0
+```
+
+A variable of a stated result that is not a parameter, `n` above, belongs to
+the constructor. A match does not tell what it was built with yet (dependent
+matching, #543): in `Vec.Cons.{ _, t }`, `t` has the type `Vec a n` for an `n`
+of its own, which the arm may not take for any other size. Indices are erased,
+so a `Vec` is a list at run time.
 
 ## 6.4 Generated members `&`
 An entry `&X` of a `@struct` or `@union` runs `X` at build time and splices the
@@ -998,10 +1023,10 @@ duplicate member is an error.
 
 ```ares
 $ @import ARESxDERIVE
-$ Point  : @struct = x: @Int, y: @Int
-$ Point3 : @struct = &ARES.fields_of "Point", z: @Int   # x, y, then z
-$ Base   : @union  = Red: {}, Green: {}
-$ Color  : @union  = &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
+$ Point  : @Type = @struct x: @Int, y: @Int
+$ Point3 : @Type = @struct &ARES.fields_of "Point", z: @Int   # x, y, then z
+$ Base   : @Type = @union Red: {}, Green: {}
+$ Color  : @Type = @union &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 ```
 
 ## 6.5 Recursive types are lazy
@@ -1017,7 +1042,7 @@ plain function.
 
 Simple (an unbounded sequence, a recursive `@struct`):
 ```ares
-$ Seq : @struct t = first : t, rest : Seq t
+$ Seq : (t: @Type) -> @Type = @struct first : t, rest : Seq t
 $ from : @Int -> Seq @Int = \n => { .first = n, .rest = from (n + 1) }
 $ third : @Int = (from 1).rest.rest.first
 ```
@@ -1081,8 +1106,8 @@ backends need no support.
 
 Simple:
 ```ares
-$ Ordering : @union = LT: {}, EQ: {}, GT: {}
-$ IOrder : @struct t = compare: t -> t -> Ordering,
+$ Ordering : @Type = @union LT: {}, EQ: {}, GT: {}
+$ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
@@ -1108,8 +1133,8 @@ rest are still searched) and goes where its parameter stands, before the explici
 argument that follows it:
 
 ```ares
-$ Ordering : @union = LT: {}, EQ: {}, GT: {}
-$ IOrder : @struct t = compare: t -> t -> Ordering,
+$ Ordering : @Type = @union LT: {}, EQ: {}, GT: {}
+$ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
@@ -1136,7 +1161,7 @@ over such interfaces: `+ - * / %` over `IAdd`/`ISub`/`IMul`/`IDiv`/`IMod`, `^` o
 `to_string` over `IToString`. A type joins any of them by defining an instance:
 
 ```ares
-$ Money : @struct = cents: @Int
+$ Money : @Type = @struct cents: @Int
 $ impl_IAdd_for_Money : IAdd Money = .{ .add = \a b => Money.{ .cents = a.cents + b.cents } }
 $ total : Money = Money.{ .cents = 1 } + Money.{ .cents = 2 }
 ```
@@ -1158,27 +1183,27 @@ $ sum_to : @Int -> @Int -> @Int = \n acc =>
 # 8. Algebraic effects and handlers
 
 ## 8.1 Declaring an effect `@effect`
-`$ Name : @effect = op : Arg -> Resume, ...`. Each operation takes one argument
+`$ Name : @Type = @effect op : Arg -> Resume, ...`. Each operation takes one argument
 and names its resume type. An operation whose handler never resumes (an
 exception) names a type variable as its result.
 
 ```ares
-$ State : @effect = get : {} -> @Int, put : @Int -> {},
-$ Exn   : @effect = throw : @Str -> a,
-$ Yield : @effect = yield : @Int -> {},
+$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ Exn   : @Type = @effect throw : @Str -> a,
+$ Yield : @Type = @effect yield : @Int -> {},
 ```
 
-An effect may take type parameters, written after `@effect` like a struct's.
+An effect may take parameters, stated in its signature like a struct's.
 In a row the effect is applied to its arguments, `<State @Str>`. One handler
 serves every operation the body performs on it, so it fixes the parameters for
 all of them: under one `State` handler every `get` and `put` is at one type. A
-parameter may be a row variable, for an operation that takes an effectful
+parameter may be a row, `(e: @Row)`, for an operation that takes an effectful
 function, and a bare mention of the effect inside its own declaration stands for
 its parameters. Arguments left out of a row (`<State>`) are inferred.
 
 ```ares
-$ State : @effect s = get : {} -> s, put : s -> {},
-$ Async : @effect m e = spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
+$ State : (s: @Type) -> @Type = @effect get : {} -> s, put : s -> {},
+$ Async : (m: @Type) -> (e: @Row) -> @Type = @effect spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
 $ count : {} -> <State @Int> @Int = let n = get {} in put (n + 1); n
 ```
 
@@ -1189,7 +1214,7 @@ store it), but it cannot make one up or inspect it. A clause that needs a
 concrete type takes it from an effect parameter instead.
 
 ```ares
-$ Exn : @effect = throw : @Str -> a,
+$ Exn : @Type = @effect throw : @Str -> a,
 $ safe : @Int = do 1 + Exn.throw "no" ctl k | Exn.throw m => 0     # aborts: fine
 # `| Exn.throw m => k 0` is an error: `k` wants `a` of `Exn.throw`, not @Int
 ```
@@ -1199,7 +1224,7 @@ Just call it; there is no `perform` keyword. A use injects the effect into the
 ambient row.
 
 ```ares
-$ State : @effect = get : {} -> @Int, put : @Int -> {},
+$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x
 ```
 
@@ -1214,7 +1239,7 @@ operation name is qualified in a clause head.
 
 Exception (ignores `k`, so it resumes zero times):
 ```ares
-$ Exn : @effect = throw : @Str -> @Int,
+$ Exn : @Type = @effect throw : @Str -> @Int,
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
 	do if b == 0 => Exn.throw "div0" else a / b
 	ctl k | Exn.throw msg => -1
@@ -1235,7 +1260,7 @@ before use, which is what coroutines need. Handlers are deep (a resumed
 computation is still governed by the same handler).
 
 ```ares
-$ Task : @union = Fin: {}, Susp: { @Int, {} -> Task }
+$ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task }
 $ spawn : ({} -> <Yield> {}) -> Task = \t =>
 	do t {}
 	ctl k | Yield.yield v => Task.Susp.{ v, k }     # store k, resume later
@@ -1441,13 +1466,13 @@ $ getchar : {} -> @Int = @extern "C" "getchar" "libc"
 ```
 
 ## 10.3 C structs and unions by value
-`Name : @struct @extern "C" = ...` is a C-layout foreign type (fields must be
+`Name : @Type = @struct @extern "C" ...` is a C-layout foreign type (fields must be
 C-representable, not generic). Built and read with the ordinary struct literal
 and `.field`, and it crosses the boundary by value. A C union is
-`Name : @union @extern "C" = ...` (members share offset 0).
+`Name : @Type = @union @extern "C" ...` (members share offset 0).
 
 ```ares
-$ Color : @struct @extern "C" = r: @Nat8, g: @Nat8, b: @Nat8, a: @Nat8,
+$ Color : @Type = @struct @extern "C" r: @Nat8, g: @Nat8, b: @Nat8, a: @Nat8,
 $ clear : Color -> {} = @extern "C" "ClearBackground" "libraylib.so"
 $ go : {} = clear Color.{ .r = 0, .g = 0, .b = 0, .a = 255 }
 ```
@@ -1458,7 +1483,7 @@ A function-typed parameter is a C function pointer: pass a Ares closure. A
 count.
 
 ```ares
-$ Vector2 : @struct @extern "C" = x: @Float32, y: @Float32,
+$ Vector2 : @Type = @struct @extern "C" x: @Float32, y: @Float32,
 $ sort : {@Ptr, @Int, (@Int -> @Int -> @Int)} -> {} = @extern "C" "qsort_r" "libc"
 $ draw : {@Vec Vector2, @Int} -> {} = @extern "C" "DrawLineStrip" "lib"
 ```
@@ -1497,7 +1522,7 @@ C memory reaches Ares two ways, both copies:
 
 ```ares
 $ @import ARESxVEC
-$ Point : @struct @extern "C" = x: @Int32, y: @Int32,
+$ Point : @Type = @struct @extern "C" x: @Int32, y: @Int32,
 $ point_at : { p: @Ptr, i: @Int } -> Point = @extern "load"
 $ arg_at : { p: @Ptr, i: @Int } -> @Str = @extern "load"      # a `char**`
 
@@ -1565,7 +1590,7 @@ union payload, a type-level function's body, an effect operation, an effect-row 
 
 ```ares
 $ pick : {} -> @Code = "@Int"
-$ Point : @struct = x: &pick {}, y: &pick {}
+$ Point : @Type = @struct x: &pick {}, y: &pick {}
 ```
 
 In a pattern, `&X` is how a value the compiler can compute stands as a
@@ -1661,7 +1686,7 @@ shows; operators and effect operations resolve at the site.
 A string literal expected as CORE's `Template` is a **macro argument**:
 
 ```ares
-$ Template : @struct = pieces: @Vec @Str, holes: @Vec @Code
+$ Template : @Type = @struct pieces: @Vec @Str, holes: @Vec @Code
 ```
 
 Its pieces stay text and its holes are **quoted**, not evaluated, since they
@@ -1964,7 +1989,7 @@ prints each global with its type; such a module is not compiled.
 
 ```ares-fragment
 $ @mod NAT
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 $ add : Nat -> Nat -> Nat = \m n => Nat.elim (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
 $ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
 $ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl (add two two)
@@ -1999,10 +2024,10 @@ project. `$ name : T = @axiom` postulates `name`.
 
 ## 16.3 Inductive types
 
-An inductive type is a union. `$ D : @union = Tag: payload, ...` is in
-`@Type 1`. With parameters, indices or another universe, the signature states
-them and the body is the union. A constructor of an indexed family states its
-result after its payload:
+An inductive type is a union, declared as in section 6.3; the kernel needs its
+universe's level, `$ D : @Type 1 = @union Tag: payload, ...`. A constructor's
+fields may depend on the earlier ones, so a field can carry what its result's
+index is built from:
 
 ```ares-fragment
 $ Vec : (a: @Type 1) -> Nat -> @Type 1 =

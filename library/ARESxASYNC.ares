@@ -23,9 +23,9 @@ $ @import ARESxALGO
 $ @import ARESxOPT
 
 # A channel of the group, carrying messages of type `m`.
-$ Chan : @struct m = id: @Int,
+$ Chan : (m: @Type) -> @Type = @struct id: @Int,
 
-$ Async : @effect m e =
+$ Async : (m: @Type) -> (e: @Row) -> @Type = @effect
     spawn : ({} -> <Async m e | e> {}) -> {},
     yield : {} -> {},
     chan : @Int -> Chan m,
@@ -53,7 +53,7 @@ $ @private
 # What a task did when it stopped: finished (with `main`'s result, if it is
 # `main`), or performed an operation, which the scheduler serves with the
 # continuation `k` it hands over.
-$ Step : @union m e a =
+$ Step : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @union
     Done: Opt a,
     Yielded: ({} -> <e> Step m e a),
     Spawned: { {} -> <Async m e | e> {}, {} -> <e> Step m e a },
@@ -86,7 +86,7 @@ $ step_child : ({} -> <Async m e | e> {}) -> <e> Step m e a = \t =>
 
 # A FIFO queue: pushed onto `back`, popped from `front`, `back` reversed into
 # `front` when it runs dry.
-$ Queue : @struct t =
+$ Queue : (t: @Type) -> @Type = @struct
     front: List t,
     back: List t,
 
@@ -108,7 +108,7 @@ $ q_rev_onto : List t -> List t -> List t = \l acc =>
 
 # A channel's state: its buffered values (at most `cap`), and the tasks parked
 # on it.
-$ Mailbox : @struct m e a =
+$ Mailbox : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
     cap: @Int,
     size: @Int,
     buf: Queue m,
@@ -116,14 +116,14 @@ $ Mailbox : @struct m e a =
     receivers: Queue (m -> <e> Step m e a),
 
 # A task parked on a descriptor until it is ready for `events`.
-$ Waiter : @struct m e a =
+$ Waiter : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
     fd: @Int,
     events: @Int,
     k: {} -> <e> Step m e a,
 
 # `poll` takes the parked descriptors as `{fd, events}` pairs and answers which
 # are ready, by index; an empty answer means none ever will be.
-$ Sched : @struct m e a =
+$ Sched : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
     ready: Queue ({} -> <e> Step m e a),
     chans: @Vec (Mailbox m e a),
     waiting: @Vec (Waiter m e a),
@@ -241,7 +241,7 @@ $ recv_from : @Int -> (m -> <e> Step m e a) -> Sched m e a -> <e> Opt a = \c k s
 
 # ---- poll(2) ----
 
-$ PollFd : @struct @extern "C" = fd: @Int32, events: @Int16, revents: @Int16,
+$ PollFd : @Type = @struct @extern "C" fd: @Int32, events: @Int16, revents: @Int16,
 $ c_poll : { fds: @Vec PollFd, n: @Nat64, timeout: @Int32 } -> <@IO> @Int32 =
     @extern "C" "poll" "libc"
 

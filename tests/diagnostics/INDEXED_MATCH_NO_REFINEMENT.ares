@@ -1,0 +1,9 @@
+$ @mod INDEXED_MATCH_NO_REFINEMENT
+
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)
+
+# Matching does not refine the scrutinee's index yet (#543): the tail's
+# length is the constructor's own, not `n`.
+$ tail : Vec a (n + 1) -> Vec a n = \v =>
+    v |> \ | Vec.Cons.{ _, t } => t | _ => tail v  #~ error[TYPE_MISMATCH]: of `Cons`

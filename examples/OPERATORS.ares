@@ -38,7 +38,7 @@ $ ck_unsigned : @Int = if (big > 5) && !(big < 5) => 0 else 32
 
 # A type of your own becomes comparable by implementing the interface: `<` on a
 # `Money` goes through this instance, `<` on an `@Int` through CORE's.
-$ Money : @struct = cents: @Int
+$ Money : @Type = @struct cents: @Int
 
 $ impl_IOrd_for_Money : IOrd Money = .{ .lt = \a b => a.cents < b.cents }
 $ impl_IEq_for_Money : IEq Money = .{ .eq = \a b => a.cents == b.cents }

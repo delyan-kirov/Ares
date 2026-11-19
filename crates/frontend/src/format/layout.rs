@@ -1079,6 +1079,17 @@ impl Layout<'_, '_> {
         let eq_tok = Self::first_tok(&ts[eq]);
         let mut head_ps: Vec<P> = ts[..=eq].iter().map(|t| self.tree(t)).collect();
         let mut pos = eq + 1;
+        // `= @struct [@extern "abi"]` stays with the head; the members are the
+        // body.
+        let decl_kw = |t: &Tok| matches!(t.kind, Kind::At) && matches!(t.text, "@struct" | "@union" | "@effect");
+        if self.peek_tok(ts, pos).is_some_and(|t| decl_kw(&t)) {
+            let extern_next = self.peek_tok(ts, pos + 1).is_some_and(|t| matches!(t.kind, Kind::At) && t.text == "@extern");
+            let n = if extern_next { 3 } else { 1 };
+            for t in &ts[pos..(pos + n).min(ts.len())] {
+                head_ps.push(self.tree(t));
+            }
+            pos += n;
+        }
         while matches!(self.peek_tok(ts, pos).map(|t| t.kind), Some(Kind::Lambda))
             && !self.peek_tok(ts, pos + 1).is_some_and(|t| is_bar(&t))
         {

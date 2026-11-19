@@ -107,7 +107,7 @@ impl CoreProgram {
     }
 }
 
-/// One effect operation declared by `$ Effect : @effect = op : ...`.
+/// One effect operation declared by `$ Effect : @Type = @effect op : ...`.
 #[derive(Clone, Debug)]
 pub struct CoreEffect {
     pub effect: StrId,

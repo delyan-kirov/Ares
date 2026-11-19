@@ -24,9 +24,9 @@ $ @mod RATIONALS
 
 # ## Binary positive numbers
 
-$ Bool : @union = False: {}, True: {}
+$ Bool : @Type 1 = @union False: {}, True: {}
 
-$ Pos : @union = One: {}, Bit0: Pos, Bit1: Pos
+$ Pos : @Type 1 = @union One: {}, Bit0: Pos, Bit1: Pos
 
 # Case analysis: the recursor with the induction hypotheses ignored.
 $ pcase : (t: @Type 1) -> t -> (Pos -> t) -> (Pos -> t) -> Pos -> t = \a f g p =>
@@ -54,7 +54,7 @@ $ pdouble_pred : Pos -> Pos = \p =>
 
 # ## Binary integers
 
-$ Integer : @union = Zero: {}, Pos: Pos, Neg: Pos
+$ Integer : @Type 1 = @union Zero: {}, Pos: Pos, Neg: Pos
 
 $ icase : (t: @Type 1) -> t -> (Pos -> t) -> (Pos -> t) -> Integer -> t = \a f g z =>
     Integer.elim (\_ => t) a f g z
@@ -123,7 +123,7 @@ $ iap : (f: Integer -> Integer) -> (x: Integer) -> (y: Integer) -> x ~ y -> f x 
 # injectively and turns `padd` and `pmul` into `nadd` and `nmul`, whose laws
 # follow by induction on one argument.
 
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 
 $ nadd : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) m (\_ r => Nat.Succ.{ r }) n
 $ nmul : Nat -> Nat -> Nat = \n m => Nat.elim (\_ => Nat) Nat.Zero (\_ r => nadd m r) n

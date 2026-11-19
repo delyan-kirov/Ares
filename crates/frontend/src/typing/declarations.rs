@@ -14,7 +14,7 @@ use super::*;
 // ## Type parameters
 
 impl<'a> Checker<'a> {
-    /// A type's parameter list is exactly what it declares after the keyword. Every
+    /// A type's parameter list is exactly what its signature binds. Every
     /// type variable used in the body must be declared (an undeclared one is an
     /// error: parameters are mandatory, never inferred). A declared parameter that
     /// appears nowhere is allowed (a phantom). `kind` is the keyword, for the error.
@@ -62,6 +62,250 @@ impl<'a> Checker<'a> {
     }
 }
 
+// ## Kinds
+
+impl<'a> Checker<'a> {
+    /// What each binder of a type declaration's signature ranges over; the
+    /// signature ends in `@Type`.
+    /// A parameter of any other type, `(b: @Bool)`, makes the type depend on
+    /// a value, which needs the kernel.
+    pub(super) fn decl_kinds(&self, sig: Aol<Ty>) -> Result<Vec<ParamKind>> {
+        let mut kinds = Vec::new();
+        let mut cur = sig;
+        while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+            let named = |t: &Ty, n: &str| matches!(t, Ty::Con { module: None, name } if name.as_str() == n);
+            let kind = match self.ast.ty(*from) {
+                t if named(t, "@Type") => ParamKind::Type,
+                Ty::App(head, _) if named(self.ast.ty(*head), "@Type") => ParamKind::Type,
+                t if named(t, "@Nat") => ParamKind::Nat,
+                t if named(t, "@Row") => ParamKind::Row,
+                _ => return Err(dependent_only(self.ast.ty_span(*from), "a type parameter that is a value")),
+            };
+            kinds.push(kind);
+            cur = *to;
+        }
+        let universe = |t: &Ty| matches!(t, Ty::Con { module: None, name } if name.as_str() == "@Type");
+        let ends_in_universe = match self.ast.ty(cur) {
+            Ty::App(head, _) => universe(self.ast.ty(*head)),
+            t => universe(t),
+        };
+        if !ends_in_universe {
+            return Err(diag!(
+                Code::TypeMismatch, self.ty_span_or_none(cur), 0,
+                "a type declaration's signature ends in `@Type`";
+                help: "state the parameters and then the universe, as in `(a: @Type) -> @Type`"
+            ));
+        }
+        Ok(kinds)
+    }
+
+    /// The names of a type declaration's binders, an unnamed index called
+    /// `i1`, `i2`, ... by its position.
+    pub(super) fn decl_binder_names(&self, sig: Aol<Ty>) -> Vec<StrId> {
+        let mut names = Vec::new();
+        let mut cur = sig;
+        while let Ty::Arrow { binder, to, .. } = self.ast.ty(cur) {
+            names.push(binder.unwrap_or_else(|| StrId::intern(&format!("i{}", names.len() + 1))));
+            cur = *to;
+        }
+        names
+    }
+
+    /// A constructor's stated result builds its own union, applied to every
+    /// parameter and index: `Cons: {a, Vec a n} -> Vec a (n + 1)`.
+    fn check_variant_result(&self, union: StrId, tag: StrId, result: Aol<Ty>, arity: usize) -> Result<()> {
+        let mut args = 0;
+        let mut head = result;
+        while let Ty::App(f, _) = self.ast.ty(head) {
+            args += 1;
+            head = *f;
+        }
+        let span = self.ty_span_or_none(result);
+        if !matches!(self.ast.ty(head), Ty::Con { name, .. } if *name == union) {
+            return Err(diag!(
+                Code::TypeMismatch, span, 0,
+                "the constructor `{tag}` states a result that is not `{union}`";
+                note: "a constructor builds a value of its own union"
+            ));
+        }
+        if args != arity {
+            return Err(diag!(
+                Code::TypeMismatch, span, 0,
+                "type `{union}` takes {arity} parameter(s) and indices but {args} {} given",
+                if args == 1 { "was" } else { "were" }
+            ));
+        }
+        Ok(())
+    }
+
+    /// What the parameters of the type `name` range over, if it is one whose
+    /// parameters are known.
+    pub(super) fn param_kinds(&self, name: StrId) -> Option<Vec<ParamKind>> {
+        if let Some(info) = self.structs.get(&name) {
+            return Some(info.kinds.clone());
+        }
+        if let Some(info) = self.unions.get(&name) {
+            return Some(info.kinds.clone());
+        }
+        if let Some((params, body)) = self.aliases.get(&name) {
+            let mut sizes = Vec::new();
+            collect_size_vars(self.ast, *body, false, &mut sizes);
+            return Some(params.iter().map(|p| if sizes.contains(p) { ParamKind::Nat } else { ParamKind::Type }).collect());
+        }
+        if is_base_type(name.as_str()) {
+            let arity = usize::from(matches!(name.as_str(), "@Vec" | "@Future" | "@Chan" | "@TVar"));
+            return Some(vec![ParamKind::Type; arity]);
+        }
+        None
+    }
+
+    /// Check that each type declared in this module uses its parameters as
+    /// what they range over: a `@Nat` one as a size, a `@Row` one as a row
+    /// tail or an effect's row argument, a `@Type` one as a type. A
+    /// constructor's own variables take the kind of their first use.
+    pub(super) fn check_decl_kinds(&mut self, program: &Program) -> Result<()> {
+        for item in self.ast.slice(program.items) {
+            let (name, members): (StrId, Vec<Aol<Ty>>) = match item {
+                Item::Struct { name, fields, .. } => (*name, self.ast.slice(*fields).iter().map(|f| f.ty).collect()),
+                Item::Effect { name, ops, .. } => (*name, self.ast.slice(*ops).iter().map(|f| f.ty).collect()),
+                Item::Union { name, .. } => (*name, Vec::new()),
+                _ => continue,
+            };
+            let (params, kinds): (Vec<StrId>, Vec<ParamKind>) = match item {
+                Item::Effect { params, .. } => (self.ast.slice(*params).to_vec(), self.effect_kinds[&name].clone()),
+                Item::Struct { .. } => {
+                    let info = &self.structs[&name];
+                    (info.params.clone(), info.kinds.clone())
+                }
+                _ => {
+                    let info = &self.unions[&name];
+                    (info.params[..info.uniform].to_vec(), info.kinds[..info.uniform].to_vec())
+                }
+            };
+            let env: HashMap<StrId, ParamKind> = params.into_iter().zip(kinds).collect();
+            for ty in members {
+                self.check_kind(ty, Some(ParamKind::Type), &mut env.clone())?;
+            }
+            if let Some(info) = self.unions.get(&name).filter(|_| matches!(item, Item::Union { .. })) {
+                let mut owns = Vec::new();
+                for v in &info.variants {
+                    let mut env = env.clone();
+                    if let Some(result) = v.result {
+                        self.check_kind(result, Some(ParamKind::Type), &mut env)?;
+                    }
+                    for (_, ty) in &v.payload {
+                        self.check_kind(*ty, Some(ParamKind::Type), &mut env)?;
+                    }
+                    let mut vars = Vec::new();
+                    v.result.iter().for_each(|r| collect_tyvars(self.ast, *r, &mut vars));
+                    v.payload.iter().for_each(|(_, t)| collect_tyvars(self.ast, *t, &mut vars));
+                    let own = vars
+                        .into_iter()
+                        .filter(|x| v.result.is_some() && !info.params[..info.uniform].contains(x))
+                        .filter_map(|x| env.get(&x).map(|k| (x, *k)))
+                        .collect::<Vec<_>>();
+                    owns.push(own);
+                }
+                let info = self.unions.get_mut(&name).expect("registered above");
+                for (v, own) in info.variants.iter_mut().zip(owns) {
+                    v.own = own;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Check `ty` stands where a `want` is expected (`None`: unknown, as an
+    /// argument of a type-level function or a variable).
+    fn check_kind(&self, ty: Aol<Ty>, want: Option<ParamKind>, env: &mut HashMap<StrId, ParamKind>) -> Result<()> {
+        let want_type = Some(ParamKind::Type);
+        match self.ast.ty(ty) {
+            Ty::Var(v) if env.contains_key(v) || !self.is_type_global(*v) => {
+                let Some(want) = want else { return Ok(()) };
+                let have = *env.entry(*v).or_insert(want);
+                if have != want {
+                    return Err(diag!(
+                        Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                        "`{v}` is a `{}`, but it stands where a `{}` is expected", have.written(), want.written();
+                        help: "declare it as `({v}: {})` if that is what it ranges over", want.written()
+                    ));
+                }
+            }
+            Ty::App(..) => {
+                let mut args = Vec::new();
+                let mut head = ty;
+                while let Ty::App(f, a) = self.ast.ty(head) {
+                    args.push(*a);
+                    head = *f;
+                }
+                args.reverse();
+                let kinds = match self.ast.ty(head) {
+                    Ty::Con { name, .. } | Ty::Var(name) if !env.contains_key(name) => self.param_kinds(*name),
+                    _ => None,
+                };
+                for (i, a) in args.into_iter().enumerate() {
+                    let want = match &kinds {
+                        Some(ks) => ks.get(i).copied(),
+                        None => None,
+                    };
+                    self.check_kind(a, want, env)?;
+                }
+            }
+            Ty::Sized { size, elem } => {
+                self.check_kind(*size, Some(ParamKind::Nat), env)?;
+                self.check_kind(*elem, want_type, env)?;
+            }
+            Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => {
+                self.check_kind(*a, Some(ParamKind::Nat), env)?;
+                self.check_kind(*b, Some(ParamKind::Nat), env)?;
+            }
+            Ty::Arrow { from, effect, to, .. } => {
+                self.check_kind(*from, want_type, env)?;
+                self.check_kind(*to, want_type, env)?;
+                if let Some(row) = effect {
+                    for entry in self.ast.slice(row.entries) {
+                        let kinds = self.effect_kinds.get(&entry.name);
+                        for (i, a) in self.ast.slice(entry.args).iter().enumerate() {
+                            self.check_kind(*a, kinds.and_then(|ks| ks.get(i).copied()), env)?;
+                        }
+                    }
+                    if let Some(tail) = row.tail {
+                        self.check_tail(tail, ty, env)?;
+                    }
+                }
+            }
+            Ty::Tuple(items) => {
+                for t in self.ast.slice(*items) {
+                    self.check_kind(*t, want_type, env)?;
+                }
+            }
+            Ty::Record { fields, tail } => {
+                for f in self.ast.slice(*fields) {
+                    self.check_kind(f.ty, want_type, env)?;
+                }
+                if let Some(tail) = tail {
+                    self.check_tail(*tail, ty, env)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A row tail `| e` is a `@Row`.
+    fn check_tail(&self, tail: StrId, at: Aol<Ty>, env: &mut HashMap<StrId, ParamKind>) -> Result<()> {
+        let have = *env.entry(tail).or_insert(ParamKind::Row);
+        if have != ParamKind::Row {
+            return Err(diag!(
+                Code::TypeMismatch, self.ty_span_or_none(at), 0,
+                "`{tail}` is a `{}`, but it stands where a `@Row` is expected", have.written();
+                help: "declare it as `({tail}: @Row)` if that is what it ranges over"
+            ));
+        }
+        Ok(())
+    }
+}
+
 // ## Registration
 
 impl<'a> Checker<'a> {
@@ -79,12 +323,14 @@ impl<'a> Checker<'a> {
             match item {
                 Item::Struct {
                     name,
+                    sig,
                     params,
                     splices,
                     fields,
                     abi,
                     c_union,
                 } => {
+                    let kinds = self.decl_kinds(*sig)?;
                     let (params, splices, fields) = (
                         self.ast.slice(*params),
                         self.ast.slice(*splices),
@@ -128,6 +374,7 @@ impl<'a> Checker<'a> {
                         name,
                         StructInfo {
                             params,
+                            kinds,
                             fields,
                             crepr,
                             c_union: *c_union,
@@ -143,11 +390,9 @@ impl<'a> Checker<'a> {
                     splices,
                     variants,
                 } => {
-                    let stated = self.ast.slice(*variants).iter().find_map(|v| v.result);
-                    if let Some(at) = sig.or(stated) {
-                        let what = if sig.is_some() { "a union with a signature" } else { "a constructor with a stated result" };
-                        return Err(dependent_only(self.ast.ty_span(at), what));
-                    }
+                    let kinds = self.decl_kinds(*sig)?;
+                    let binders = self.decl_binder_names(*sig);
+                    let uniform = params.len();
                     let (params, splices, variants) = (
                         self.ast.slice(*params),
                         self.ast.slice(*splices),
@@ -156,27 +401,37 @@ impl<'a> Checker<'a> {
                     let mut payload_tys = Vec::new();
                     let mut vs = Vec::with_capacity(variants.len());
                     for (i, v) in variants.iter().enumerate() {
-                        if variants[..i].iter().any(|w| w.tag == v.tag) {
-                            let span = payload_fields(self.ast, &v.payload)
-                                .first()
-                                .map_or(Span::at(0), |(_, ty)| self.ty_span_or_none(*ty));
-                            return Err(dup_member(*name, v.tag, "variant").fill_span(span));
-                        }
                         let payload = payload_fields(self.ast, &v.payload);
-                        payload_tys.extend(payload.iter().map(|(_, ty)| *ty));
+                        let at = v.tag_span;
+                        if variants[..i].iter().any(|w| w.tag == v.tag) {
+                            return Err(dup_member(*name, v.tag, "variant").fill_span(at));
+                        }
+                        match v.result {
+                            Some(result) => self.check_variant_result(*name, v.tag, result, binders.len())?,
+                            None if binders.len() > uniform => {
+                                return Err(unstated_result(*name, v.tag, &binders[..uniform]).fill_span(at));
+                            }
+                            // A constructor's own variables are bound by the
+                            // result it states; the others' must be parameters.
+                            None => payload_tys.extend(payload.iter().map(|(_, ty)| *ty)),
+                        }
                         vs.push(VariantSig {
                             tag: v.tag,
                             payload,
+                            result: v.result,
+                            own: Vec::new(),
                         });
                     }
                     let collected = self.tyvars_with_spans(payload_tys);
                     let name = *name;
-                    let params = self.resolve_type_params("union", name, params, collected)?;
+                    self.resolve_type_params("union", name, params, collected)?;
                     self.claim_type_name(name);
                     self.unions.insert(
                         name,
                         UnionInfo {
-                            params,
+                            params: binders,
+                            kinds,
+                            uniform,
                             variants: vs,
                         },
                     );
@@ -513,14 +768,16 @@ impl<'a> Checker<'a> {
     pub(super) fn register_effects(&mut self, program: &Program) -> Result<()> {
         let items = self.ast.slice(program.items);
         for item in items.iter() {
-            if let Item::Effect { name, params, .. } = item {
+            if let Item::Effect { name, sig, params, .. } = item {
                 let n = self.ast.slice(*params).len();
                 self.effect_arity.insert(*name, n);
+                let kinds = self.decl_kinds(*sig)?;
+                self.effect_kinds.insert(*name, kinds);
             }
         }
         let mut per_op: HashMap<StrId, Vec<Type>> = HashMap::new();
         for item in items.iter() {
-            let Item::Effect { name, params, ops } = item else {
+            let Item::Effect { name, params, ops, .. } = item else {
                 continue;
             };
             let effect = *name;
@@ -642,19 +899,38 @@ impl<'a> Checker<'a> {
 // ## Lookups
 
 impl<'a> Checker<'a> {
-    pub(super) fn variant_sig(&mut self, union: StrId, tag: StrId) -> Option<(Type, VariantPayload)> {
+    /// The result type and payload of `union`'s constructor `tag`, its
+    /// parameters fresh. A constructor that states its result builds that, its
+    /// own variables fresh too. In a pattern (`opaque`) the result's indices
+    /// are left free instead, and the constructor's own variables come back
+    /// with the rest: matching learns nothing about them until dependent
+    /// matching (#543), so the caller keeps them apart from every other type.
+    pub(super) fn variant_sig(&mut self, union: StrId, tag: StrId, opaque: bool) -> Option<(Type, VariantPayload, Vec<(StrId, Type)>)> {
         let info = self.unions.get(&union)?.clone();
         let pos = info.variants.iter().position(|v| v.tag == tag)?;
-        let (args, mut subst) = self.instantiate_params(&info.params);
-        let result = applied(&self.unifier.types, union, &args);
+        let (mut args, mut subst) = self.instantiate_params(&info.params[..info.uniform], &info.kinds[..info.uniform]);
         let variant = &info.variants[pos];
+        let mut own = Vec::new();
+        for &(name, kind) in &variant.own {
+            let v = self.fresh_of(kind);
+            subst.insert(name, v);
+            own.push((name, v));
+        }
+        let result = match variant.result {
+            Some(result) if !opaque => self.ty_of_ast(result, &mut subst),
+            Some(_) => {
+                args.extend(info.kinds[info.uniform..].iter().map(|k| self.fresh_of(*k)));
+                applied(&self.unifier.types, union, &args)
+            }
+            None => applied(&self.unifier.types, union, &args),
+        };
         let payload = variant
             .payload
             .clone()
             .into_iter()
             .map(|(name, ast_ty)| (name, self.ty_of_ast(ast_ty, &mut subst)))
             .collect();
-        Some((result, payload))
+        Some((result, payload, own))
     }
 
     /// The union an unqualified tag (`.Missing`) names: this module's own first,
@@ -824,15 +1100,24 @@ impl<'a> Checker<'a> {
         Some(self.ty_of_ast(ast_ty, subst))
     }
 
-    pub(super) fn instantiate_params(&mut self, params: &[StrId]) -> (Vec<Type>, HashMap<StrId, Type>) {
+    /// A fresh variable for each parameter, a size variable for a `@Nat` one.
+    pub(super) fn instantiate_params(&mut self, params: &[StrId], kinds: &[ParamKind]) -> (Vec<Type>, HashMap<StrId, Type>) {
         let mut subst = HashMap::new();
         let mut args = Vec::with_capacity(params.len());
-        for p in params {
-            let v = self.unifier.fresh();
+        for (p, kind) in params.iter().zip(kinds) {
+            let v = self.fresh_of(*kind);
             subst.insert(*p, v);
             args.push(v);
         }
         (args, subst)
+    }
+
+    /// A fresh variable ranging over `kind`.
+    pub(super) fn fresh_of(&mut self, kind: ParamKind) -> Type {
+        match kind {
+            ParamKind::Nat => self.unifier.fresh_nat(),
+            ParamKind::Type | ParamKind::Row => self.unifier.fresh(),
+        }
     }
 
     pub(super) fn spine(&self, ty: Type) -> (Type, Vec<Type>) {
@@ -987,7 +1272,7 @@ pub(super) fn dup_member(ty: impl Display, member: impl Display, kind: &str) -> 
 }
 
 /// A type declaration uses a type variable it does not declare. Parameters are
-/// mandatory, so this reports the fix: list `v` after the keyword.
+/// mandatory, so this reports the fix: bind `v` in the signature.
 pub(super) fn undeclared_param(kind: &str, name: StrId, v: &StrId, declared: &[StrId]) -> Diagnostic {
     let how = format!("`{name}` uses the type variable `{v}`");
     let msg = if declared.is_empty() {
@@ -1002,11 +1287,21 @@ pub(super) fn undeclared_param(kind: &str, name: StrId, v: &StrId, declared: &[S
         let params: String = declared.iter().map(|d| format!("{d} ")).collect();
         format!("bind it with the lambda, `\\{params}{v} => ...`, and add an `@Type ->` to the signature")
     } else {
-        format!("declare every one after the keyword, e.g. `@{kind} {v} = ...`")
+        format!("bind it in the signature, `({v}: @Type) -> ... -> @Type = @{kind} ...`")
     };
     Diagnostic::error(Code::TypeUnbound, Span::at(0), 0, msg)
         .with_note("type parameters are mandatory")
         .with_help(help)
+}
+
+/// A constructor of an indexed union with no stated result.
+fn unstated_result(union: StrId, tag: StrId, params: &[StrId]) -> Diagnostic {
+    let params: String = params.iter().map(|p| format!(" {p}")).collect();
+    diag!(
+        Code::TypeMismatch, Span::at(0), 0,
+        "`{union}` has indices, so its constructor `{tag}` states its result";
+        help: "write the result after the payload, `{tag}: {{...}} -> {union}{params} ...`"
+    )
 }
 
 /// `name` with its first letter lowercased.

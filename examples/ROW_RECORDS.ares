@@ -17,8 +17,8 @@ $ shift : { x: @Int | r } -> { x: @Int | r } = \p => { .x = p.x + 10 | p }
 # Stack: add a field on top of an open-row record.
 $ tag : { x: @Int | r } -> { x: @Int, tag: @Int | r } = \p => { .tag = 99, ..p }
 
-$ Point : @struct = x: @Int, y: @Int,
-$ Boxed : @struct = x: @Int, y: @Int, z: @Int,
+$ Point : @Type = @struct x: @Int, y: @Int,
+$ Boxed : @Type = @struct x: @Int, y: @Int, z: @Int,
 
 # One open-row function, applied to two nominal structs and to an anonymous
 # record (the extra field is absorbed by the row variable).
@@ -43,7 +43,7 @@ $ ck_rest : @Int = if peel Boxed.{ .x = 1, .y = 2, .z = 3 } == 6 => 0 else 64
 
 # A GENERIC struct also satisfies an open row: its type argument is substituted
 # for the parameter, so `Cell @Int` matches `{ val: @Int | r }`.
-$ Cell : @struct a = val: a
+$ Cell : (a: @Type) -> @Type = @struct val: a
 $ get_val : { val: v | r } -> v = \c => c.val
 $ ck_gen : @Int = if get_val Cell.{ .val = 7 } == 7 => 0 else 128
 

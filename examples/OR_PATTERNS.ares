@@ -16,7 +16,7 @@ $ chk_small_2 : @Int = if small 2 == 1 => 0 else 1
 $ chk_small_9 : @Int = if small 9 == 0 => 0 else 1
 
 # --- Variant alternatives, exhaustive WITHOUT an else -------------------------
-$ Color : @union =
+$ Color : @Type = @union
     Red: {},
     Green: {},
     Blue: {},
