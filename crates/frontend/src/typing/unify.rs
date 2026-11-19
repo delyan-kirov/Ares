@@ -726,6 +726,23 @@ impl Unifier {
         self.instantiate_with(scheme, &mut mapping)
     }
 
+    /// Replace each `Generic` variable of `tys` with a rigid type, the same one
+    /// wherever it occurs, as the body of the definition that generalized it saw
+    /// it. `name` is how each rigid type displays.
+    pub fn rigid_generics(&mut self, tys: &[Type], name: &str) -> Vec<Type> {
+        let mut vars = HashSet::new();
+        for t in tys {
+            self.collect_vars(*t, &mut vars);
+        }
+        let mut mapping = HashMap::new();
+        for id in vars {
+            if matches!(self.vars[id as usize], VarState::Generic) {
+                mapping.insert(id, self.types.rigid(name));
+            }
+        }
+        tys.iter().map(|t| self.instantiate_with(*t, &mut mapping)).collect()
+    }
+
     /// The variables of `ty` in order of first appearance, each once.
     fn vars_in_order(&self, ty: Type, out: &mut Vec<VarId>) {
         let mut set = HashSet::new();

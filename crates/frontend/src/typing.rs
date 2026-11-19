@@ -1093,6 +1093,11 @@ impl<'a> Checker<'a> {
         for (site, t, locals) in holes {
             let t = self.unifier.zonk(t);
             let shown = self.show(t);
+            let mut tys: Vec<Type> = locals.iter().map(|(_, t)| *t).collect();
+            tys.push(t);
+            let mut rigid = self.unifier.rigid_generics(&tys, "a type variable of the definition");
+            let t = rigid.pop().unwrap();
+            let locals: Vec<(StrId, Type)> = locals.iter().map(|(n, _)| *n).zip(rigid).collect();
             let globals: Vec<(StrId, Type)> = self.scopes[0].iter().map(|(n, t)| (*n, *t)).collect();
             let mut fits: Vec<StrId> = Vec::new();
             for (name, scheme) in locals.iter().chain(globals.iter()) {
