@@ -1,0 +1,4 @@
+$ @mod CTX_MISPLACED_LET
+
+# A local `let` is monomorphic, so its type binds nothing in `@ctx`.
+$ c : @Int = let f : @ctx {t: @Type} -> t -> t = \x => x in f 1  #~ error[UNEXPECTED_TOKEN]: a `@ctx` parameter stands only on the arrows of a global's signature

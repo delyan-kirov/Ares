@@ -236,6 +236,20 @@ impl<'a> Checker<'a> {
                 self.global_ctx.insert(*name, *sig);
             }
         }
+        for (sig, fields) in &other.own_runtime_sizes {
+            self.runtime_sizes.insert(*sig, fields.clone());
+        }
+        for (name, sig) in &other.own_ctx_sigs {
+            if other.private_names.contains(name) {
+                continue;
+            }
+            for &scope in &scopes {
+                self.qualified_ctx_sigs.insert((scope, *name), *sig);
+            }
+            if bare {
+                self.ctx_sigs.insert(*name, *sig);
+            }
+        }
         // Bring the exporter's instances in, translating their packed types into
         // this module's unifier so their variables stay generalized.
         for (name, inst) in &other.own_instances {
@@ -326,6 +340,7 @@ impl<'a> Checker<'a> {
         }
         roots.extend(other.aliases.values().map(|(_, t)| *t));
         roots.extend(other.own_ctx.iter().map(|(_, t)| *t));
+        roots.extend(other.own_ctx_sigs.iter().map(|(_, t)| *t));
         for root in roots {
             collect_ty_nodes(self.ast, root, &mut self.foreign_tys);
         }

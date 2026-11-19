@@ -20,7 +20,7 @@ fields are in scope by name in the body, and call sites do not write them.
 ```
 $ IToString : (t: @Type) -> @Type = @struct show: t -> @Str,
 
-$ to_string : @use {d: IToString t} -> t -> @Str = \x => d.show x
+$ to_string : @ctx {t: @Type} -> @use {d: IToString t} -> t -> @Str = \x => d.show x
 
 $ impl_IToString_for_int : IToString @Int = .{ .show = int_to_str }
 
@@ -52,7 +52,7 @@ Rules, all of them:
    chain without writing anything), then the instances in scope. Exactly one must
    match: zero and two are both errors, because global scope is flat.
 5. **Recursive resolution.** A matching instance may itself take `@use` fields
-   (`$ impl_IEq_for_vec : @use {d: IEq t} -> IEq (@Vec t)`), so resolution recurses
+   (`$ impl_IEq_for_vec : @ctx {t: @Type} -> @use {d: IEq t} -> IEq (@Vec t)`), so resolution recurses
    into them, bounded at 32 steps.
 6. **No overlapping instances.** A ground instance and a generic one that both
    match is an ambiguity error, not most-specific-wins.
@@ -64,13 +64,13 @@ Rules, all of them:
    "every field" rule). It goes where its parameter stands in the signature,
    before the explicit argument that follows it, and a field it does not know is
    an error with a did-you-mean.
-9. **`@ctx` is reserved** for dependent types (#406), where it becomes the binder
-   of parameters solved by unification. Writing it today is an error.
+9. **`@ctx` binds what unification solves** (#537): types, sizes and rows. An
+   instance in `@ctx`, or a type in `@use`, is an error naming the other binder.
 
 Four diagnostics, each with its own escape:
 
 - *not determined here*: the requirement is still open at the boundary
-  (`$ g : a -> a = \x => foo x`). Annotate the call, or declare a `@use` field
+  (`$ g : @ctx {a: @Type} -> a -> a = \x => foo x`). Annotate the call, or declare a `@use` field
   of that type on `g` so chaining applies. The constraint is never inferred and added
   to `g`'s type silently; that would reintroduce the dishonesty.
 - *no value of type `I T` is in scope*: define an instance.

@@ -183,7 +183,7 @@ it may be left to the body with `_` (3.11). `$a` and `$ a` are the same.
 Simple:
 ```ares
 $ answer : @Int = 42
-$ id : t -> t = \x => x
+$ id : @ctx {t: @Type} -> t -> t = \x => x
 ```
 
 Involved (definitions may appear in any order and reference each other):
@@ -324,7 +324,7 @@ open row (a row variable), which is what makes a function effect-polymorphic.
 $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 $ pure : @Int -> @Int = \x => x                       # pure (empty row)
 $ act  : {} -> <State> @Int = get {}                  # may perform State
-$ poly : (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
+$ poly : @ctx {a: @Type, e: @Row, b: @Type} -> (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
 ```
 
 A parameter may be named, `(x: A) -> B`. The type is the same as `A -> B`, and
@@ -348,14 +348,46 @@ $ later : {} -> @Int -> @Int = \x => x + 1
 The result type may not name the parameter yet: `(n: @Nat) -> @Tensor n @Int`
 is a dependent function type, which comes with dependent types (#406).
 
-## 3.6 Type variables
-A lowercase name free in a signature is a type variable, universally quantified
-over the whole signature, unless a global of that name is in scope (3.10). The same lowercase name repeated is the same variable;
-there is no separate backtick spelling.
+## 3.6 Type variables and `@ctx`
+A signature binds its type variables in a `@ctx` parameter, the record of what
+unification solves (#537): a type `t: @Type`, a size `n: @Nat` or an effect row
+`e: @Row`. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
+`(t: @Type)` parameter, or a global (3.10). A name nothing binds is a
+`TYPE_UNBOUND` error whose fix adds it to the signature's `@ctx`, with the kind
+its uses give it. A field the signature uses as a size is a `@Nat`.
 
 ```ares
-$ fst : {a, b} -> a = \t => t.0
-$ const : t -> u -> t = \x y => x
+$ fst : @ctx {a: @Type, b: @Type} -> {a, b} -> a = \t => t.0
+$ const : @ctx {t: @Type, u: @Type} -> t -> u -> t = \x y => x
+```
+
+A caller leaves `@ctx` fields to unification, or gives some by name with an
+explicit argument that mirrors the binder, `f @ctx {.t = @Int} x`; the others
+are still solved. Like `@use` (7.4), `@ctx` parameters stand anywhere on a
+global's signature, at least one field each, names unique across the
+signature, and never inside a parameter's type, an annotation, a local `let`'s
+type or a field type. An instance is a `@use` field and a type a `@ctx` one;
+writing either in the other binder is an error that says so. Inside the body,
+an annotation names the signature's variables, `\(x: a) => ...`.
+
+A `(t: @Type)` or `(n: @Nat)` parameter is bound explicitly instead: the
+result may name it, and each call passes it, a type (erased at run time) or a
+size (passed as the `@Nat` it is).
+
+```ares
+$ ident : (t: @Type) -> t -> t = \x => x
+$ seven : @Int = ident @Int 7
+```
+
+A `@Nat` field is erased unless the body needs the number: when the body reads
+it as a value, or passes it to a callee that needs its own, callers pass the
+size they solved it to. Such a size must then be known at the call: a literal,
+or a size the caller's own `@ctx` binds. A size only the types mention, like a
+slice's, is never passed, so nothing has to supply it.
+
+```ares
+$ size_of : @ctx {n: @Nat, a: @Type} -> @Tensor n a -> @Nat = \_ => n
+$ three : @Nat = size_of [1, 2, 3]
 ```
 
 ## 3.7 Tuples
@@ -370,7 +402,7 @@ $ n : @Int = p.0
 
 Involved (generic, nested, first-class):
 ```ares
-$ swap : {a, b} -> {b, a} = \t => {t.1, t.0}
+$ swap : @ctx {a: @Type, b: @Type} -> {a, b} -> {b, a} = \t => {t.1, t.0}
 $ nested : {@Int, {@Int, @Int}} = {1, {2, 3}}
 $ deep : @Int = nested.1.0 + nested.1.1        # 5
 ```
@@ -382,13 +414,13 @@ least those fields. Records are structural (unify by field name).
 
 Simple:
 ```ares
-$ area : { x: @Int, y: @Int | r } -> @Int = \p => p.x * p.y
+$ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \p => p.x * p.y
 ```
 
 Involved (update preserves the open tail; `..p` extends `p` with a field):
 ```ares
-$ shift : { x: @Int | r } -> { x: @Int | r } = \p => { .x = p.x + 10 | p }
-$ tag   : { x: @Int | r } -> { x: @Int, t: @Int | r } = \p => { .t = 99, ..p }
+$ shift : @ctx {r: @Row} -> { x: @Int | r } -> { x: @Int | r } = \p => { .x = p.x + 10 | p }
+$ tag   : @ctx {r: @Row} -> { x: @Int | r } -> { x: @Int, t: @Int | r } = \p => { .t = 99, ..p }
 ```
 
 ## 3.9 Sized tensors
@@ -476,7 +508,7 @@ global's type is the filled-in one. Each `_` is its own unknown.
 
 ```ares
 $ succ : _ -> @Int = \x => x + 1        # succ : @Int -> @Int
-$ same : a -> _ = \x => x               # same : a -> a
+$ same : @ctx {a: @Type} -> a -> _ = \x => x               # same : a -> a
 $ n : @Int = let p : {_, @Bool} = {3, @true} in p.0
 ```
 
@@ -499,8 +531,8 @@ at another type, as one without a signature cannot.
 `\pat ... => e`. Parameters are juxtaposed and curried sugar. A parameter may
 be an irrefutable pattern, and may carry a `: Type` annotation, always inside
 parens, `(x: T)`, even when it is the only parameter, so the type ends at `)`.
-(A lowercase name in a type is a type variable, so a bare annotation would
-swallow the next parameter as its argument.)
+(A type is an expression, so a bare annotation would swallow the next
+parameter as its argument.)
 
 ```ares
 $ Person : @Type = @struct name: @Str, age: @Int,
@@ -757,7 +789,7 @@ Simple:
 ```ares
 $ classify : @Int -> @Str = \ | 0 => "zero" | 1 => "one" | _ => "many"
 $ yn : @Str -> @Int = \s => s |> \ | "yes" => 1 | "no" => 0 | _ => 99
-$ take : @Int -> List t -> List t = \
+$ take : @ctx {t: @Type} -> @Int -> List t -> List t = \
     | 0, _       => []
     | _, []      => []
     | n, x :: xs => x :: take (n - 1) xs
@@ -813,7 +845,7 @@ the union inferred from the arms. Payloads nest.
 ```ares
 $ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}
 $ get : @Int -> Maybe @Int -> @Int = \d m => m |> \ | Maybe.Just.{ x } => x | _ => d
-$ isJust : Maybe t -> @Bool = \m => m |> \ | .Just.{ _ } => @true | _ => @false
+$ isJust : @ctx {t: @Type} -> Maybe t -> @Bool = \m => m |> \ | .Just.{ _ } => @true | _ => @false
 ```
 
 ## 5.6 Range patterns
@@ -1004,7 +1036,7 @@ are indices. Building a value checks its index:
 $ Vec : (a: @Type) -> @Nat -> @Type =
     @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)
 $ two : Vec @Int 2 = Vec.Cons.{ 1, Vec.Cons.{ 2, Vec.Nil } }
-$ length : Vec a n -> @Int = \v => v |> \ | Vec.Cons.{ _, t } => 1 + length t | Vec.Nil => 0
+$ length : @ctx {a: @Type, n: @Nat} -> Vec a n -> @Int = \v => v |> \ | Vec.Cons.{ _, t } => 1 + length t | Vec.Nil => 0
 ```
 
 A variable of a stated result that is not a parameter, `n` above, belongs to
@@ -1078,8 +1110,8 @@ $ add5 : @Int -> @Int = add 5           # partial application
 Functions are first-class values.
 
 ```ares
-$ apply_twice : (t -> t) -> t -> t = \f x => f (f x)
-$ compose : (b -> c) -> (a -> b) -> a -> c = \f g x => f (g x)
+$ apply_twice : @ctx {t: @Type} -> (t -> t) -> t -> t = \f x => f (f x)
+$ compose : @ctx {b: @Type, c: @Type, a: @Type} -> (b -> c) -> (a -> b) -> a -> c = \f g x => f (g x)
 ```
 
 ## 7.3 One name, one definition
@@ -1111,7 +1143,7 @@ $ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
-$ max_of : @use {d: IOrder t} -> t -> t -> t = \x y =>
+$ max_of : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t = \x y =>
 	d.compare x y |> \ | Ordering.GT => x | _ => y
 $ biggest : @Int = max_of 3 7
 ```
@@ -1121,9 +1153,9 @@ each names one or more fields; a field's type must be a declared struct or union
 applied to its arguments, and field names are unique across the signature:
 
 ```ares
-$ abs : @use {o: IOrd t, s: ISub t, z: IZero t} -> t -> t = \x =>
+$ abs : @ctx {t: @Type} -> @use {o: IOrd t, s: ISub t, z: IZero t} -> t -> t = \x =>
 	if o.lt x z.zero => s.sub z.zero x else x
-$ floor_at : @use {o: IOrd t} -> t -> @use {z: IZero t} -> t -> t = \x y =>
+$ floor_at : @ctx {t: @Type} -> @use {o: IOrd t} -> t -> @use {z: IZero t} -> t -> t = \x y =>
 	if o.lt x z.zero => y else x
 ```
 
@@ -1138,9 +1170,9 @@ $ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
-$ max_of : @use {d: IOrder t} -> t -> t -> t = \x y =>
+$ max_of : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t = \x y =>
 	d.compare x y |> \ | Ordering.GT => x | _ => y
-$ max3 : @use {d: IOrder t} -> t -> t -> t -> t = \x y z =>
+$ max3 : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t -> t = \x y z =>
 	max_of (max_of x y) z          # d satisfies max_of's requirement, so it passes down
 $ as_min : @Int =
 	let flip : IOrder @Int = .{ .compare = \a b => impl_IOrder_for_int.compare b a } in
@@ -1149,10 +1181,9 @@ $ as_min : @Int =
 
 `@use` stands only on a global definition's own signature: not inside a
 parameter's type (`(@use {d: IOrd t} -> t) -> t`), an annotation, a field type, or
-(for now) a local `let`'s signature. `@use {}` is an error. `@ctx` binds
-parameters solved by unification (#406). Today it binds levels only,
-`@ctx {u: @l} ->`, which the kernel checks (section 16); any other `@ctx`
-parameter is an error that points here.
+(for now) a local `let`'s signature. `@use {}` is an error. `@ctx` binds what
+unification solves instead (3.6); an instance in `@ctx`, or a type in `@use`, is
+an error naming the other binder.
 
 An instance may itself take a context, which resolution fills in recursively, so
 `IEq (@Vec t)` is built from `IEq t`. `CORE`'s operators are all ordinary functions
@@ -1297,7 +1328,7 @@ parameters, so a function that only accepts pure callbacks is not one that
 accepts effectful ones.
 
 ```ares
-$ map : (a -> <e> b) -> @Vec a -> <e> @Vec b = \f xs =>
+$ map : @ctx {a: @Type, e: @Row, b: @Type} -> (a -> <e> b) -> @Vec a -> <e> @Vec b = \f xs =>
 	xs |> \ | [] => [] | h :: t => f h :: map f t
 ```
 
@@ -1392,8 +1423,8 @@ to an inclusive range, `..` keeps it whole. Every result is an O(1) strided view
 
 ```ares
 $ @import ARESxLA
-$ row : Matrix m n a -> @Int -> @Tensor n a = \m i => m.[i]
-$ col : Matrix m n a -> @Int -> @Tensor m a = \m j => m.[.., j]
+$ row : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor n a = \m i => m.[i]
+$ col : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor m a = \m j => m.[.., j]
 $ sub : @Tensor 8 @Int -> @Tensor 4 @Int = \m => m.[2 ... 5]      # inclusive 2..5, four elements
 ```
 
@@ -1406,7 +1437,7 @@ computed from the slots.
 
 ```ares
 $ @import ARESxLA
-$ transpose : Matrix m n a -> Matrix n m a = \t =>
+$ transpose : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> Matrix n m a = \t =>
 	@tensor_create (@tensor_index t 0)
 		(\j => @tensor_create t (\i => @tensor_index (@tensor_index t i) j))
 ```
@@ -1540,15 +1571,15 @@ signature and a comment:
 
 ```ares-fragment
 # Declared in CORE, which alone may declare a builtin.
-$ @iadd : t -> t -> t = @extern "ares"
-$ @vec_push : @Vec a -> a -> @Vec a = @extern "ares"
+$ @iadd : @ctx {t: @Type} -> t -> t -> t = @extern "ares"
+$ @vec_push : @ctx {a: @Type} -> @Vec a -> a -> @Vec a = @extern "ares"
 ```
 
 The definition's name is the builtin, so there is no symbol or library string,
 and a reference compiles to a direct call with no wrapper. Unlike a C extern, a
 builtin is curried. Only CORE may declare one, and no module may redefine one.
 The operators the parser rewrites (`;`, `|>`, `<|`) are declared the same way, for
-their types: `$ (|>) : a -> (a -> <e> b) -> <e> b = @extern "ares"`. A few primitives stay inside the
+their types: `$ (|>) : @ctx {a: @Type, e: @Row, b: @Type} -> a -> (a -> <e> b) -> <e> b = @extern "ares"`. A few primitives stay inside the
 compiler because their types have no surface syntax: `@cast` is checked
 specially, and the `@tensor_*` primitives are typed in the compiler (#342).
 
@@ -1897,7 +1928,7 @@ A quick index of the `@`-forms and where each is documented above.
 | `@struct` `@union` `@effect` | type declarations | 6, 8.1 |
 | `@extern` | foreign binding, builtin declaration | 10 |
 | `@use` | instance (interface) parameter and explicit argument | 7.4 |
-| `@ctx` | level parameters and arguments; any other use is reserved | 16, 7.4 |
+| `@ctx` | parameters solved by unification, and explicit arguments for them | 3.6, 16 |
 | `@Type` `@l` `@max` `@imax` | universes and levels | 16 |
 | `@axiom` | a postulate | 16 |
 | `@Top` `@tt` `@Bottom` `@Eq` `@refl` `@transp` `@cast` `@Quot` `@qin` `@qelim` | kernel primitives | 16 |

@@ -73,13 +73,8 @@ impl<'a> Checker<'a> {
         let mut kinds = Vec::new();
         let mut cur = sig;
         while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
-            let named = |t: &Ty, n: &str| matches!(t, Ty::Con { module: None, name } if name.as_str() == n);
-            let kind = match self.ast.ty(*from) {
-                t if named(t, "@Type") => ParamKind::Type,
-                Ty::App(head, _) if named(self.ast.ty(*head), "@Type") => ParamKind::Type,
-                t if named(t, "@Nat") => ParamKind::Nat,
-                t if named(t, "@Row") => ParamKind::Row,
-                _ => return Err(dependent_only(self.ast.ty_span(*from), "a type parameter that is a value")),
+            let Some(kind) = self.kind_of_ast(*from) else {
+                return Err(dependent_only(self.ast.ty_span(*from), "a type parameter that is a value"));
             };
             kinds.push(kind);
             cur = *to;
@@ -97,6 +92,19 @@ impl<'a> Checker<'a> {
             ));
         }
         Ok(kinds)
+    }
+
+    /// The kind a binder's written type gives it: `@Type` (or `@Type n`),
+    /// `@Nat` or `@Row`. `None` for any other type, whose binder is a value.
+    pub(super) fn kind_of_ast(&self, ty: Aol<Ty>) -> Option<ParamKind> {
+        let named = |t: &Ty, n: &str| matches!(t, Ty::Con { module: None, name } if name.as_str() == n);
+        match self.ast.ty(ty) {
+            t if named(t, "@Type") => Some(ParamKind::Type),
+            Ty::App(head, _) if named(self.ast.ty(*head), "@Type") => Some(ParamKind::Type),
+            t if named(t, "@Nat") => Some(ParamKind::Nat),
+            t if named(t, "@Row") => Some(ParamKind::Row),
+            _ => None,
+        }
     }
 
     /// The names of a type declaration's binders, an unnamed index called
@@ -801,6 +809,7 @@ impl<'a> Checker<'a> {
             // global of its name, as this module's own definition would (CORE's
             // `get` does not capture a `get` operation).
             self.global_ctx.remove(&op_name);
+            self.ctx_sigs.remove(&op_name);
             self.value_module.remove(&op_name);
             self.ambiguous_imports.remove(&op_name);
             if schemes.len() == 1 {

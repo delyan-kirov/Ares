@@ -1,0 +1,5 @@
+$ @mod CTX_ARG_FIELD
+
+# An explicit `@ctx` argument names fields of the callee's `@ctx`.
+$ zero : @ctx {t: @Type} -> @Int = 0
+$ a : @Int = zero @ctx {.u = @Int}  #~ error[TYPE_MISMATCH]: `zero` has no `@ctx` field `u`

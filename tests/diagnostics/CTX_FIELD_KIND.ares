@@ -1,0 +1,4 @@
+$ @mod CTX_FIELD_KIND
+
+# A field the signature uses as a size is a `@Nat`.
+$ f : @ctx {n: @Type} -> @Tensor n @Int -> @Int = \_ => 1  #~ error[TYPE_MISMATCH]: `n` is a `@Type`, but the signature uses it as a size

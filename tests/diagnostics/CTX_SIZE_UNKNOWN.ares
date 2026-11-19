@@ -1,0 +1,9 @@
+$ @mod CTX_SIZE_UNKNOWN
+
+# A `@Nat` field the body reads is passed at run time, so each caller must
+# know it: a size only the types track (a slice's) cannot be passed.
+$ @import ARESxALGO
+
+$ size_of : @ctx {n: @Nat, a: @Type} -> @Tensor n a -> @Nat = \_ => n
+$ v : @Tensor 3 @Int = [1, 2, 3]
+$ bad : @Nat = size_of (@tensor_slice v 1 3)  #~ error[TYPE_MISMATCH]: cannot infer `n` of `size_of` from the arguments, which it takes at run time

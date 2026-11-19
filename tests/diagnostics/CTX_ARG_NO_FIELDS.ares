@@ -1,0 +1,5 @@
+$ @mod CTX_ARG_NO_FIELDS
+
+# A callee without `@ctx` fields takes no `@ctx` argument.
+$ one : @Int -> @Int = \x => x
+$ a : @Int = one @ctx {.t = @Int} 1  #~ error[TYPE_MISMATCH]: a `@ctx` argument, but `one` declares no `@ctx` parameter

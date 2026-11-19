@@ -98,7 +98,7 @@ $ ck_lscN : @Int = if (lsize_class ls) == 9 => 0 else 1
 # `for` walks a List for effects. `Acc.add` collects what the body saw, so each
 # check below reads off exactly which elements the loop reached.
 $ Acc : @Type = @effect add : @Int -> {},
-$ collect : ({} -> <Acc | e> {}) -> <e> @Int = \body =>
+$ collect : @ctx { e: @Row } -> ({} -> <Acc | e> {}) -> <e> @Int = \body =>
     do body {}; 0
     ctl k | Acc.add n => n + k {} | r => r
 

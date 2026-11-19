@@ -1,0 +1,60 @@
+$ @mod CTX_BINDERS
+
+# \file CTX_BINDERS.ares
+# \info Written binders (#537). A signature binds its type variables in
+#       `@ctx`, the record of what unification solves: types, sizes (`@Nat`)
+#       and rows. A caller leaves them out, or passes some by name with
+#       `@ctx {.t = ...}`. A `(t: @Type)` parameter is passed explicitly. A
+#       `@Nat` field the body uses as a number is passed at run time; one only
+#       the types mention is erased.
+
+$ @import ARESxALGO
+
+# Every variable of the signature is bound in `@ctx`.
+$ twice : @ctx { a: @Type } -> (a -> a) -> a -> a = \f x => f (f x)
+
+# A row is a field too: `e` is whatever `f` performs.
+$ apply : @ctx { a: @Type, b: @Type, e: @Row } -> (a -> <e> b) -> a -> <e> b = \f x => f x
+
+# `t` is fixed by the expected type, or passed by name.
+$ zero_of : @ctx { t: @Type } -> @use { z: IZero t } -> {} -> t = z.zero
+$ zi : @Int = zero_of @ctx { .t = @Int } {}
+
+# A type parameter taken explicitly: the argument is a type, erased at run time.
+$ ident : (t: @Type) -> t -> t = \x => x
+$ seven : @Int = ident @Int 7
+
+# A `@Nat` field read as a number: callers pass the size they solved it to.
+$ size_of : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> @Nat = \_ => n
+
+# Passing it on: `size_of` needs `n` at run time, so `double` takes it too.
+$ double : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> @Nat = \t => size_of t + size_of t
+
+# A size only the types mention is erased, so nothing has to supply it.
+$ nonempty : @ctx { n: @Nat, a: @Type } -> @Tensor (n + 1) a -> @Bool = \_ => @true
+
+# A size taken explicitly: `n` is the argument, at the type and at run time.
+$ width : (n: @Nat) -> @Tensor n @Int -> @Nat = \_ => n
+
+$ v : @Tensor 3 @Int = [10, 20, 30]
+
+$ test : @Int =
+    if twice (\x => x + 1) 5 != 7 =>
+        1
+    else if apply (\x => x * 2) 21 != 42 =>
+        2
+    else if zi != 0 =>
+        3
+    else if seven != 7 =>
+        4
+    else if size_of v != 3 =>
+        5
+    else if double v != 6 =>
+        6
+    else if !nonempty v =>
+        7
+    else if width 3 v != 3 =>
+        8
+    else
+        0
+$ &assert (test == 0) "written binders, explicit and run-time arguments"

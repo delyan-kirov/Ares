@@ -14,7 +14,7 @@ fn type_names_must_be_capitalized() {
     };
     assert!(err("$ @mod M\n$ point : @Type = @struct a: @Int,").contains("capital letter"));
     // A lowercase name in type-use position is a type variable and parses.
-    assert!(parse("$ @mod M\n$ id : a -> a = \\x => x").is_ok());
+    assert!(parse("$ @mod M\n$ id : @ctx {a: @Type} -> a -> a = \\x => x").is_ok());
     // A capitalized type also parses.
     assert!(parse("$ @mod M\n$ n : @Int = 5").is_ok());
 }
@@ -180,7 +180,7 @@ fn declared_type_params() {
 
 #[test]
 fn sized_tensor_type_parses() {
-    let p = prog("$ @mod M\n$ v : @Tensor 3 @Int = [1, 2, 3]\n$ f : @Tensor n a -> a = \\t => t.[0]");
+    let p = prog("$ @mod M\n$ v : @Tensor 3 @Int = [1, 2, 3]\n$ f : @ctx {n: @Nat, a: @Type} -> @Tensor n a -> a = \\t => t.[0]");
     match &p.ast.slice(p.program.items)[0] {
         Item::Def { sig: Some(sig), .. } => match p.ast.ty(*sig) {
             Ty::Sized { size, elem } => {
@@ -196,7 +196,7 @@ fn sized_tensor_type_parses() {
 #[test]
 fn tensor_of_tensor_nests() {
     // A matrix is a tensor of tensors; a compound size is parenthesized.
-    let p = prog("$ @mod M\n$ g : @Tensor 2 (@Tensor (n + 1) @Int) -> @Int = \\t => 0");
+    let p = prog("$ @mod M\n$ g : @ctx {n: @Nat} -> @Tensor 2 (@Tensor (n + 1) @Int) -> @Int = \\t => 0");
     match &p.ast.slice(p.program.items)[0] {
         Item::Def { sig: Some(sig), .. } => match p.ast.ty(*sig) {
             Ty::Arrow { from, .. } => match p.ast.ty(*from) {
@@ -322,7 +322,7 @@ fn variant_literal_and_when_match() {
 
 #[test]
 fn cons_and_list_and_function_type() {
-    let src = "$ @mod M\n$ g : @Vec t -> @Int = \\xs => 0\n$ xs = 1 :: [2, 3]";
+    let src = "$ @mod M\n$ g : @ctx {t: @Type} -> @Vec t -> @Int = \\xs => 0\n$ xs = 1 :: [2, 3]";
     let p = prog(src);
     let items = p.ast.slice(p.program.items);
     assert!(matches!(
@@ -559,7 +559,7 @@ fn blessed_interface_prefix_rule() {
     // Any other `@`-name is a compiler intrinsic, not extensible in user code.
     assert!(err("$ @mod M\n$ @my_hook : @Int -> @Int = \\x => x").contains("not extensible"));
     // ...except a builtin declaration, which the checker confines to CORE.
-    let p = prog("$ @mod M\n$ @iadd : t -> t -> t = @extern \"ares\"");
+    let p = prog("$ @mod M\n$ @iadd : @ctx {t: @Type} -> t -> t -> t = @extern \"ares\"");
     assert!(matches!(p.ast.expr(only_def_body(&p)), Expr::Builtin));
 }
 
@@ -953,10 +953,11 @@ fn arms_agree_on_their_pattern_count() {
 }
 
 #[test]
-fn a_ctx_parameter_fixes_to_a_named_use_field() {
+fn a_bare_ctx_parameter_fixes_to_a_named_use_field() {
+    let unnamed = "a `@ctx` parameter is a record of named fields";
     let fixed = |src: &str| {
-        let err = parse(src).err().expect("`@ctx` is reserved");
-        assert!(err.to_string().contains("`@ctx` is reserved"), "{err}");
+        let err = parse(src).err().expect("a bare `@ctx` is an error");
+        assert!(err.to_string().contains(unnamed), "{err}");
         let edits: Vec<utilities::Edit> =
             err.helps().iter().flat_map(|h| h.located_edits().unwrap_or_default()).cloned().collect();
         match edits.is_empty() {
@@ -966,22 +967,18 @@ fn a_ctx_parameter_fixes_to_a_named_use_field() {
     };
     let m = "$ @mod M\n";
     assert_eq!(
-        fixed(&format!("{m}$ same : @ctx IEq t -> t -> @Bool = \\d x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = \\d x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
     );
     assert_eq!(
-        fixed(&format!("{m}$ same : @ctx IEq t -> t -> @Bool = \\d => \\x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = \\d => \\x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
     );
-    assert_eq!(
-        fixed(&format!("{m}$ z : @ctx {{ISub t, IZero t}} -> t -> t = \\{{s, z}} x => s.sub x z.zero\n")),
-        Ok(format!("{m}$ z : @use {{s: ISub t, z: IZero t}} -> t -> t = \\x => s.sub x z.zero\n"))
-    );
-    // A tuple bound whole gives no field names: the help quotes the written type.
-    let help = fixed(&format!("{m}$ two : @ctx {{IEq t, IOrd t}} -> t -> @Bool = \\ds x => ds.0.eq x x\n"));
-    assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d0: IEq t, d1: IOrd t} -> ...`")), "{help:?}");
-    let help = fixed(&format!("{m}$ eq : @ctx IEq t -> t -> @Bool = eq_impl\n"));
+    let help = fixed(&format!("{m}$ eq : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = eq_impl\n"));
     assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d: IEq t} -> ...`")), "{help:?}");
+    // A field of a `@ctx` record is named.
+    let err = parse(&format!("{m}$ z : @ctx {{ISub t, IZero t, t: @Type}} -> t -> t = \\{{s, z}} x => s.sub x z.zero\n")).err();
+    assert!(err.is_some_and(|e| e.to_string().contains("expected ':' after the `@ctx` field name")));
 }
 
 #[test]

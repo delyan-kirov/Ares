@@ -27,7 +27,7 @@ impl<'a> Checker<'a> {
     /// one tuple) so a variable they share becomes the same `Generic` in each.
     pub(super) fn scheme_and_ctx(&mut self, sig: Aol<Ty>, has_ctx: bool) -> (Type, Option<Type>) {
         self.unifier.enter_level();
-        let mut tvars = HashMap::new();
+        let mut tvars = self.sig_tvars(sig);
         let full = self.ty_of_ast(sig, &mut tvars);
         self.unifier.leave_level();
         let (ctx, exposed) = if has_ctx {
@@ -56,7 +56,7 @@ impl<'a> Checker<'a> {
     /// caller applies. One map for the whole signature keeps the two aligned, so
     /// `Ito_string t -> t -> @Str` ties the requirement to the argument.
     pub(super) fn ctx_use_type(&mut self, sig: Aol<Ty>) -> (Type, Type) {
-        let mut tvars = HashMap::new();
+        let mut tvars = self.sig_tvars(sig);
         let full = self.ty_of_ast(sig, &mut tvars);
         match self.unifier.types.node(full) {
             TypeNode::Arrow(from, to, _) => (from, to),
@@ -91,8 +91,17 @@ impl<'a> Checker<'a> {
         };
         for (i, part) in parts.into_iter().enumerate() {
             // An unspliced `&` stands as a fresh variable until expansion.
-            if fields.get(i).is_some_and(|f| matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
+            if fields.get(i).is_some_and(|f| f.ctx || matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
                 continue;
+            }
+            if let Some(f) = fields.get(i).filter(|f| self.kind_of_ast(f.ty).is_some()) {
+                let written = self.ast.ty_source(f.ty).unwrap_or_default();
+                return Err(diag!(
+                    Code::TypeMismatch, f.span, 0,
+                    "`@use` field `{}` of `{name}` is a `{written}`, which unification solves", f.name;
+                    note: "`@use` searches for instances; types, sizes and rows are `@ctx` fields";
+                    help: "make it a `@ctx` field: `@ctx {{{}: {written}}} -> ...`", f.name
+                ));
             }
             let ok = self.ctx_head(part).is_some_and(|h| self.is_nominal(h));
             if !ok {
@@ -176,6 +185,94 @@ impl<'a> Checker<'a> {
             Code::TypeMismatch, span, 0,
             "a `@use` argument, but {callee} declares no `@use` parameter"
         )
+    }
+
+    /// An explicit `@ctx` argument whose callee declares no `@ctx` field.
+    pub(super) fn ctx_without_fields(&self, head: Aol<Expr>, given: &[UseOverride]) -> Diagnostic {
+        let span = self.ast.expr_span(given[0].site).unwrap_or(Span::at(0));
+        let callee = match self.node(head) {
+            Expr::Var { name, .. } => format!("`{name}`"),
+            _ => "this function".to_string(),
+        };
+        diag!(
+            Code::TypeMismatch, span, 0,
+            "a `@ctx` argument, but {callee} declares no `@ctx` parameter"
+        )
+    }
+
+    /// A reference to `name` with explicit `@ctx {.f = v}` arguments, or to
+    /// one with `@Nat` fields: its signature `sig` elaborated afresh, each field
+    /// given unified with its value; the fields left out are solved as usual.
+    /// `uses` tells a callee that also takes a `@use` bundle, planned here.
+    pub(super) fn infer_ctx_given(
+        &mut self,
+        site: Aol<Expr>,
+        name: StrId,
+        sig: Option<Aol<Ty>>,
+        uses: bool,
+        given: &[UseOverride],
+    ) -> Result<Type> {
+        let Some(sig) = sig else {
+            return Err(self.ctx_without_fields(site, given));
+        };
+        let fields: Vec<UseField> = match self.ast.ctx_params.get(sig) {
+            Some(fs) => self.ast.slice(*fs).to_vec(),
+            None => Vec::new(),
+        };
+        let mut tvars = self.sig_tvars(sig);
+        let full = self.ty_of_ast(sig, &mut tvars);
+        let mut seen: Vec<StrId> = Vec::new();
+        for u in given {
+            for init in self.ast.slice(u.inits).to_vec() {
+                let FieldInit::Named { name: f, value } = init else { continue };
+                let span = self.ast.expr_span(value).or(self.ast.expr_span(u.site)).unwrap_or(Span::at(0));
+                let Some(field) = fields.iter().find(|x| x.name == f).copied() else {
+                    let known: Vec<&str> = fields.iter().map(|x| x.name.as_str()).collect();
+                    let mut d = diag!(Code::TypeMismatch, span, 0, "`{name}` has no `@ctx` field `{f}`");
+                    if let Some(c) = utilities::error::closest(f.as_str(), known.iter().copied()) {
+                        d = d.with_help(format!("did you mean `{c}`?"));
+                    }
+                    return Err(d);
+                };
+                if seen.contains(&f) {
+                    return Err(diag!(Code::DuplicateSymbol, span, 0, "`@ctx` field `{f}` of `{name}` is given twice"));
+                }
+                seen.push(f);
+                if field.before != u.at {
+                    let at = self.ast.expr_span(u.site).unwrap_or(span);
+                    return Err(diag!(
+                        Code::TypeMismatch, at, 0,
+                        "`@ctx` field `{f}` of `{name}` goes after {} explicit argument(s), not {}",
+                        field.before, u.at;
+                        note: "an explicit `@ctx` argument precedes the explicit argument that follows its parameter"
+                    ));
+                }
+                let Expr::Type(t) = *self.node(value) else { continue };
+                let mut scoped = self.scoped_tvars.clone();
+                let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
+                let vt = match self.kind_of_ast(field.ty) {
+                    Some(ParamKind::Nat) => self.size_ty_of_ast(t, &mut scoped),
+                    _ => self.ty_of_ast(t, &mut scoped),
+                };
+                self.free_names = saved;
+                self.report_unbound(None);
+                let want = tvars[&f];
+                self.unifier
+                    .unify(want, vt, &format!("in the `@ctx` field `{f}` of `{name}`"))
+                    .map_err(|d| d.fill_span(span))?;
+            }
+        }
+        self.note_size_use(site, name, sig, &tvars);
+        if !uses {
+            return Ok(full);
+        }
+        match self.unifier.types.node(full) {
+            TypeNode::Arrow(req, exposed, _) => {
+                self.plan_ctx(site, name, req, Some(sig))?;
+                Ok(exposed)
+            }
+            _ => Ok(full),
+        }
     }
 
     /// The components of a several-field `@use` bundle, or nothing for a

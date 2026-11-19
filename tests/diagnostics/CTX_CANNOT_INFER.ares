@@ -1,0 +1,7 @@
+$ @mod CTX_CANNOT_INFER
+
+# A `@Nat` field the body reads is passed at run time, so each call must solve
+# it, from the arguments, the expected type, or an explicit `@ctx` argument.
+$ zeros : @ctx {n: @Nat} -> @Int -> @Nat = \_ => n
+$ a : @Nat = zeros 1  #~ error[TYPE_MISMATCH]: cannot infer `n` of `zeros` from the arguments, which it takes at run time
+$ b : @Nat = zeros @ctx {.n = 4} 1

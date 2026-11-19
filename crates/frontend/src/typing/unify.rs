@@ -858,17 +858,25 @@ impl Unifier {
     /// Render several types under ONE variable naming, so a context requirement and
     /// the signature it belongs to agree on their variable names.
     pub fn show_all(&self, tys: &[Type]) -> Vec<String> {
-        let mut names: HashMap<VarId, String> = HashMap::new();
+        self.show_all_named(tys, HashMap::new())
+    }
+
+    /// [`Self::show_all`] with some variables named already, as a signature
+    /// binds them; the rest take the letters those names leave free.
+    pub fn show_all_named(&self, tys: &[Type], mut names: HashMap<VarId, String>) -> Vec<String> {
+        let taken: HashSet<String> = names.values().cloned().collect();
         let mut next = 0u32;
         let mut namer = |id: VarId| {
             names
                 .entry(id)
-                .or_insert_with(|| {
+                .or_insert_with(|| loop {
                     // Type variables display lowercase (`a`), matching the source
                     // syntax where a lowercase name in type position is a variable.
                     let name = ((b'a' + (next % 26) as u8) as char).to_string();
                     next += 1;
-                    name
+                    if !taken.contains(&name) {
+                        break name;
+                    }
                 })
                 .clone()
         };

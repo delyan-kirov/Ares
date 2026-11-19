@@ -328,9 +328,24 @@ pub const PTR: &str = "@Ptr";
 pub const ARRAY: &str = "@Array";
 pub const VEC: &str = "@Vec";
 pub const CODE: &str = "@Code";
+/// The type of the argument of a `(t: @Type) -> ...` parameter: `@TypeOf t`
+/// is the type `t` itself, erased at run time.
+pub const TYPE_OF: &str = "@TypeOf";
 /// The CORE struct a macro argument is built as: an interpolated string
 /// expected as one quotes its holes.
 pub const TEMPLATE: &str = "Template";
+
+/// The kind and variable of a `(t: @Type) ->` or `(n: @Nat) ->` parameter's
+/// type, `@TypeOf t` or `@Size n`, when `ty` is one with `t` still a variable.
+fn dependent_binder(types: &Types, ty: Type) -> Option<(&'static str, Type)> {
+    let TypeNode::App(head, arg) = types.node_raw(ty) else { return None };
+    let (TypeNode::Con(name), TypeNode::Var(_)) = (types.node_raw(head), types.node_raw(arg)) else { return None };
+    match types.name(name) {
+        TYPE_OF => Some(("@Type", arg)),
+        "@Size" => Some(("@Nat", arg)),
+        _ => None,
+    }
+}
 
 /// Format a fully resolved type (no `Var` links left) for display. Variables are
 /// named `t0`, `t1`, ... by first appearance via `namer`.
@@ -386,7 +401,16 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
             TypeNode::Arrow(from, to, eff) => {
                 let wrap = prec > 0;
                 paren(out, wrap, |out| {
-                    go(types, from, namer, out, 1);
+                    match dependent_binder(types, from) {
+                        Some((kind, v)) => {
+                            out.push('(');
+                            go(types, v, namer, out, 0);
+                            out.push_str(": ");
+                            out.push_str(kind);
+                            out.push(')');
+                        }
+                        None => go(types, from, namer, out, 1),
+                    }
                     out.push_str(" -> ");
                     // Only a row with concrete labels is shown; a pure or
                     // fully-polymorphic effect (empty row / bare row variable) is

@@ -866,6 +866,18 @@ impl<'a> Parser<'a> {
         if !matches!(kw, "struct" | "union" | "effect") {
             return Ok(None);
         }
+        if let Some(f) = self.ast.ctx_params.get(sig).map(|fs| self.ast.slice(*fs)[0]) {
+            return Err(Diagnostic::error(
+                Code::UnexpectedToken,
+                f.span,
+                at_tok.line,
+                format!("a type declaration binds `{}` as a parameter, not in `@ctx`", f.name),
+            )
+            .with_help(format!("write it on the signature's arrows: `({}: @Type) -> ... -> @Type`", f.name)));
+        }
+        if self.ast.use_params.get(sig).is_some() {
+            return Err(self.unexpected(&at_tok, "a type declaration takes no `@use` parameter"));
+        }
         self.bump()?; // the keyword
         let abi = if kw != "effect" && self.at_intrinsic("extern")? {
             self.bump()?; // '@extern'
@@ -963,7 +975,7 @@ impl<'a> Parser<'a> {
     /// type-level function (#535): its body read as a type is what the checker
     /// unfolds. Any other shape stays a definition.
     fn type_function(&mut self, name: StrId, sig: Aol<Ty>, body: Aol<Expr>) -> Result<Option<Item>> {
-        if self.ast.use_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() {
+        if self.ast.use_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() || self.ast.ctx_params.get(sig).is_some() {
             return Ok(None);
         }
         let mut arity = 0;
@@ -1008,13 +1020,20 @@ impl<'a> Parser<'a> {
     /// signature, whose first `from` is that context parameter.
     fn parse_signature(&mut self) -> Result<(Aol<Ty>, Option<Aol<Ty>>)> {
         let start = self.here()?;
-        let levels = if self.at_level_binder()? { Some(self.parse_level_binder()?) } else { None };
+        let mut levels: Vec<UseField> = Vec::new();
+        let mut ctx: Vec<UseField> = Vec::new();
         let mut fields: Vec<UseField> = Vec::new();
         let mut params: Vec<(usize, Option<(StrId, Span)>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
         self.ctx_written = None;
         let result = loop {
+            if self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace) {
+                let leading = params.is_empty() && ctx.is_empty() && levels.is_empty() && fields.is_empty();
+                self.parse_ctx_fields(params.len() as u32, leading, &mut levels, &mut ctx, &mut fields)?;
+                self.binder_arrow("@ctx")?;
+                continue;
+            }
             if self.at_ctx()? {
-                if self.ctx_written.is_some() || self.at_level_binder()? {
+                if self.ctx_written.is_some() {
                     return Err(self.ctx_reserved()?);
                 }
                 let kw = self.bump()?; // '@ctx'
@@ -1027,21 +1046,8 @@ impl<'a> Parser<'a> {
             }
             if self.at_intrinsic("use")? {
                 self.bump()?; // '@use'
-                self.parse_use_fields(params.len() as u32, &mut fields)?;
-                let t = self.peek()?;
-                if !matches!(t.kind, Kind::Arrow) {
-                    return Err(self.unexpected(&t, "expected '->' after the `@use` parameter"));
-                }
-                self.bump()?; // '->'
-                if self.parse_effect_row_opt()?.is_some() {
-                    return Err(Diagnostic::error(
-                        Code::UnexpectedToken,
-                        Span::new(t.span.start, self.last_end),
-                        t.line,
-                        "a `@use` parameter's arrow cannot carry an effect row",
-                    )
-                    .with_note("call sites never apply a `@use` parameter, so nothing can perform it"));
-                }
+                self.parse_use_fields(params.len() as u32, &ctx, &mut fields)?;
+                self.binder_arrow("@use")?;
                 continue;
             }
             let at = self.here()?;
@@ -1059,14 +1065,11 @@ impl<'a> Parser<'a> {
         for (at, binder, from, effect) in params.into_iter().rev() {
             to = self.arrow_ty(at, binder, from, effect, to);
         }
-        let levels = levels.map(|l| self.ast.make_slice(l));
         let (Some(first), Some(last)) = (fields.first().copied(), fields.last().copied()) else {
-            if let Some(levels) = levels {
-                self.ast.level_params.insert(to, levels);
-            }
+            self.record_ctx(to, levels, ctx);
             return Ok((to, None));
         };
-        let ctx = match fields.as_slice() {
+        let bundle = match fields.as_slice() {
             [one] => one.ty,
             many => {
                 let tys: Vec<Aol<Ty>> = many.iter().map(|f| f.ty).collect();
@@ -1076,62 +1079,100 @@ impl<'a> Parser<'a> {
                 node
             }
         };
-        let node = self.ty(Ty::Arrow { binder: None, from: ctx, effect: None, to });
+        let node = self.ty(Ty::Arrow { binder: None, from: bundle, effect: None, to });
         let sig = self.stamp_ty(start, node);
         let fields = self.ast.make_slice(fields);
         self.ast.use_params.insert(sig, fields);
-        if let Some(levels) = levels {
+        self.record_ctx(sig, levels, ctx);
+        Ok((sig, Some(bundle)))
+    }
+
+    /// File a signature's `@ctx` levels and other fields under it.
+    fn record_ctx(&mut self, sig: Aol<Ty>, levels: Vec<UseField>, ctx: Vec<UseField>) {
+        if !levels.is_empty() {
+            let levels = self.ast.make_slice(levels);
             self.ast.level_params.insert(sig, levels);
         }
-        Ok((sig, Some(ctx)))
-    }
-
-    /// Is the cursor on a level binder, `@ctx {u: @l, ...}`?
-    fn at_level_binder(&mut self) -> Result<bool> {
-        if !self.at_ctx()? || !matches!(self.peek_kind_at(1)?, Kind::LBrace) {
-            return Ok(false);
-        }
-        let mut n = 2;
-        loop {
-            let at = self.peek_at(n + 2)?;
-            let level = matches!(at.kind, Kind::At) && self.text(at) == "@l";
-            if !matches!(self.peek_kind_at(n)?, Kind::Word) || !matches!(self.peek_kind_at(n + 1)?, Kind::Colon) || !level {
-                return Ok(false);
-            }
-            match self.peek_kind_at(n + 3)? {
-                Kind::Comma => n += 4,
-                Kind::RBrace => return Ok(true),
-                _ => return Ok(false),
-            }
+        if !ctx.is_empty() {
+            let ctx = self.ast.make_slice(ctx);
+            self.ast.ctx_params.insert(sig, ctx);
         }
     }
 
-    /// A signature's leading `@ctx {u: @l, ...} ->`: the levels it binds.
-    fn parse_level_binder(&mut self) -> Result<Vec<UseField>> {
+    /// The `->` after a `@ctx` or `@use` parameter, which carries no effect row.
+    fn binder_arrow(&mut self, binder: &str) -> Result<()> {
+        let t = self.peek()?;
+        if !matches!(t.kind, Kind::Arrow) {
+            return Err(self.unexpected(&t, &format!("expected '->' after the `{binder}` parameter")));
+        }
+        self.bump()?; // '->'
+        if self.parse_effect_row_opt()?.is_some() {
+            return Err(Diagnostic::error(
+                Code::UnexpectedToken,
+                Span::new(t.span.start, self.last_end),
+                t.line,
+                format!("a `{binder}` parameter's arrow cannot carry an effect row"),
+            )
+            .with_note(format!("call sites never apply a `{binder}` parameter, so nothing can perform it")));
+        }
+        Ok(())
+    }
+
+    /// The `{name: Type, ...}` of a `@ctx` parameter, from its keyword. A field
+    /// of type `@l` is a level, bound only by the signature's first `@ctx`
+    /// ahead of every parameter (`leading`); the others go in `ctx`. A name is
+    /// unique across the signature's `@ctx` and `@use` fields (`uses`).
+    fn parse_ctx_fields(
+        &mut self,
+        before: u32,
+        leading: bool,
+        levels: &mut Vec<UseField>,
+        ctx: &mut Vec<UseField>,
+        uses: &mut Vec<UseField>,
+    ) -> Result<()> {
         self.bump()?; // '@ctx'
         self.bump()?; // '{'
-        let mut levels: Vec<UseField> = Vec::new();
+        if matches!(self.peek_kind()?, Kind::RBrace) {
+            let t = self.peek()?;
+            return Err(self.unexpected(&t, "expected a `name: Type` field: a `@ctx` parameter names at least one"));
+        }
         loop {
             let t = self.peek()?;
-            let name = self.bump_word()?;
+            let name = self.expect_word("expected a `name: Type` field in the `@ctx` parameter")?;
+            if !matches!(self.peek_kind()?, Kind::Colon) {
+                let at = self.peek()?;
+                return Err(self
+                    .unexpected(&at, "expected ':' after the `@ctx` field name")
+                    .with_help("a `@ctx` field is named, as in `@ctx {t: @Type}`"));
+            }
             self.bump()?; // ':'
-            let ty = self.parse_type_arg()?;
-            if levels.iter().any(|l| l.name == name) {
+            let ty = self.parse_type()?;
+            let span = Span::new(t.span.start, self.last_end);
+            if levels.iter().chain(ctx.iter()).chain(uses.iter()).any(|f| f.name == name) {
                 return Err(Diagnostic::error(
                     Code::DuplicateSymbol,
                     t.span,
                     t.line,
-                    format!("level `{name}` is bound twice in this signature"),
+                    format!("`{name}` is bound twice in this signature"),
                 ));
             }
-            levels.push(UseField { name, ty, before: 0, span: t.span });
-            if !self.eat(|k| matches!(k, Kind::Comma))? {
+            let field = UseField { name, ty, before, span, ctx: true };
+            match self.ast.ty(ty) {
+                Ty::Con { module: None, name: k } if k.as_str() == "@l" => {
+                    if !leading {
+                        return Err(Diagnostic::error(Code::UnexpectedToken, t.span, t.line, format!("the level `{name}` is bound after a parameter"))
+                            .with_help("bind every level in the signature's first `@ctx`, ahead of its parameters"));
+                    }
+                    levels.push(field);
+                }
+                _ => ctx.push(field),
+            }
+            if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;
             }
         }
-        expect!(self, Kind::RBrace, "expected '}' to close the level parameters");
-        expect!(self, Kind::Arrow, "expected '->' after the level parameters");
-        Ok(levels)
+        expect!(self, Kind::RBrace, "expected '}' to close the `@ctx` parameter");
+        Ok(())
     }
 
     /// After `->` and its row: a type must follow.
@@ -1146,7 +1187,7 @@ impl<'a> Parser<'a> {
 
     /// The `{name: Type, ...}` of a `@use` parameter, after the keyword. A field
     /// name is unique across the whole signature, and there is at least one.
-    fn parse_use_fields(&mut self, before: u32, fields: &mut Vec<UseField>) -> Result<()> {
+    fn parse_use_fields(&mut self, before: u32, ctx: &[UseField], fields: &mut Vec<UseField>) -> Result<()> {
         expect!(self, Kind::LBrace, "expected `{` after `@use`: its fields are named, as in `@use {d: IOrd t}`");
         if matches!(self.peek_kind()?, Kind::RBrace) {
             let t = self.peek()?;
@@ -1163,15 +1204,15 @@ impl<'a> Parser<'a> {
             }
             self.bump()?; // ':'
             let ty = self.parse_type()?;
-            if fields.iter().any(|f| f.name == name) {
+            if fields.iter().chain(ctx).any(|f| f.name == name) {
                 return Err(Diagnostic::error(
                     Code::DuplicateSymbol,
                     t.span,
                     t.line,
-                    format!("`@use` field `{name}` is declared twice in this signature"),
+                    format!("`{name}` is bound twice in this signature"),
                 ));
             }
-            fields.push(UseField { name, ty, before, span: Span::new(t.span.start, self.last_end) });
+            fields.push(UseField { name, ty, before, span: Span::new(t.span.start, self.last_end), ctx: false });
             if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;
             }
@@ -1188,8 +1229,8 @@ impl<'a> Parser<'a> {
     }
 
     fn ctx_reserved_at(kw: &Token) -> Diagnostic {
-        Diagnostic::error(Code::UnexpectedToken, kw.span, kw.line, "`@ctx` is reserved")
-            .with_note("it becomes the binder of parameters solved by unification (#406)")
+        Diagnostic::error(Code::UnexpectedToken, kw.span, kw.line, "a `@ctx` parameter is a record of named fields")
+            .with_note("`@ctx` binds what unification solves, as in `@ctx {t: @Type}`; an instance is a `@use` field")
     }
 
     /// `= body` after a definition's signature. A `@ctx T ->` parameter in that
@@ -1525,6 +1566,9 @@ impl<'a> Parser<'a> {
     // `Ty::Term`, which the kernel reads and the checker rejects.
 
     fn parse_type(&mut self) -> Result<Aol<Ty>> {
+        if self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace) {
+            return Err(self.ctx_param_misplaced()?);
+        }
         if self.at_ctx()? {
             return Err(self.ctx_reserved()?);
         }
@@ -1555,6 +1599,17 @@ impl<'a> Parser<'a> {
     }
 
     /// `@use {d: T} ->` anywhere but on a definition's signature.
+    fn ctx_param_misplaced(&mut self) -> Result<Diagnostic> {
+        let at = self.peek()?;
+        Ok(Diagnostic::error(
+            Code::UnexpectedToken,
+            at.span,
+            at.line,
+            "a `@ctx` parameter stands only on the arrows of a global's signature",
+        )
+        .with_note("not inside a parameter's type, an annotation, a local `let`'s type, or a field type"))
+    }
+
     fn use_param_misplaced(&mut self) -> Result<Diagnostic> {
         let at = self.peek()?;
         Ok(Diagnostic::error(
@@ -1879,15 +1934,19 @@ impl<'a> Parser<'a> {
             return Ok(Some(EffectRow {
                 entries: self.ast.make_slice(Vec::new()),
                 tail: None,
+                tail_span: None,
             }));
         }
         if self.at_op("<|")? {
             self.bump()?;
+            let at = self.here()?;
             let tail = self.expect_tyvar("expected a type variable in the effect row")?;
+            let tail_span = Some(Span::new(at, self.last_end));
             self.expect_op(">", "expected '>' to close the effect row")?;
             return Ok(Some(EffectRow {
                 entries: self.ast.make_slice(Vec::new()),
                 tail: Some(tail),
+                tail_span,
             }));
         }
         if !self.at_op("<")? {
@@ -1895,11 +1954,14 @@ impl<'a> Parser<'a> {
         }
         self.bump()?; // '<'
         if self.at_tyvar()? {
+            let at = self.here()?;
             let tail = self.expect_tyvar("expected a type variable in the effect row")?;
+            let tail_span = Some(Span::new(at, self.last_end));
             self.expect_op(">", "expected '>' to close the effect row")?;
             return Ok(Some(EffectRow {
                 entries: self.ast.make_slice(Vec::new()),
                 tail: Some(tail),
+                tail_span,
             }));
         }
         let mut entries = Vec::new();
@@ -1936,16 +1998,19 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let tail = if self.at_op("|")? {
+        let (tail, tail_span) = if self.at_op("|")? {
             self.bump()?;
-            Some(self.expect_tyvar("expected a type variable after '|'")?)
+            let at = self.here()?;
+            let tail = self.expect_tyvar("expected a type variable after '|'")?;
+            (Some(tail), Some(Span::new(at, self.last_end)))
         } else {
-            None
+            (None, None)
         };
         self.expect_op(">", "expected '>' to close the effect row")?;
         Ok(Some(EffectRow {
             entries: self.ast.make_slice(entries),
             tail,
+            tail_span,
         }))
     }
 
@@ -2715,6 +2780,12 @@ impl<'a> Parser<'a> {
             "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace) && matches!(self.peek_kind_at(2)?, Kind::Dot) => {
                 self.parse_ctx_arg()
             }
+            "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace)
+                && matches!(self.peek_kind_at(2)?, Kind::Word)
+                && matches!(self.peek_kind_at(3)?, Kind::Colon) =>
+            {
+                Err(self.ctx_param_misplaced()?)
+            }
             "ctx" => {
                 let t = self.peek()?;
                 Err(Self::ctx_reserved_at(&t).with_help(
@@ -2740,18 +2811,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `@ctx {.u = l, ...}`: level arguments, as a `@use` argument supplies
-    /// instances.
+    /// `@ctx {.t = @Int, ...}`: values for some of the callee's `@ctx` fields,
+    /// by name, as a `@use` argument supplies instances.
     fn parse_ctx_arg(&mut self) -> Result<Aol<Expr>> {
         let start = self.here()?;
         self.bump()?; // '@ctx'
         self.bump()?; // '{'
         let mut inits = Vec::new();
         loop {
-            expect!(self, Kind::Dot, "expected a `.level = value`");
-            let name = self.expect_word("expected a level name after '.'")?;
-            expect!(self, Kind::Eq, "expected '=' after the level name");
+            expect!(self, Kind::Dot, "expected a `.field = value`");
+            let name = self.expect_word("expected a field name after '.'")?;
+            expect!(self, Kind::Eq, "expected '=' after the field name");
+            let at = self.here()?;
             let value = self.parse_expr(0)?;
+            let ty = self.to_ty(value)?;
+            let value = self.expr(Expr::Type(ty));
+            let value = self.stamp(at, value);
             inits.push(FieldInit::Named { name, value });
             if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;

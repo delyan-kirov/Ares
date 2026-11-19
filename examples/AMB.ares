@@ -25,7 +25,7 @@ $ two_flips : @Int =
 
 # Every path's result, collected rather than summed. The branches' lists are
 # concatenated in the order the clause resumes.
-$ all_paths : ({} -> <Amb> a) -> List a = \body =>
+$ all_paths : @ctx { a: @Type } -> ({} -> <Amb> a) -> List a = \body =>
     do body {}
     ctl k | Amb.flip u => k @true ++ k @false | x => List.Cons.{ x, List.Nil }
 

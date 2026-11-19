@@ -118,8 +118,12 @@ A name is used but not defined anywhere in scope: an unbound value, an unknown
 type, or a type that is defined in a module this one does not import.
 
 If it is a typo, the did-you-mean fix corrects it. If the name lives in a
-standard-library module, the fix adds the `$ @import MODULE` import. Type names are
-capitalized; a lowercase name in a type is a type variable.
+standard-library module, the fix adds the `$ @import MODULE` import.
+
+A lowercase name in a type that nothing binds is a type variable the signature
+forgot to bind: a signature binds each in `@ctx`, as in
+`$ id : @ctx {t: @Type} -> t -> t`. The fix adds it there, as a `@Type`, a
+`@Nat` (a size) or a `@Row` (an effect row) by how the signature uses it.
 
 ## TYPE_ANNOTATION_REQUIRED
 

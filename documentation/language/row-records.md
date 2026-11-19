@@ -95,7 +95,7 @@ open row it structurally matches (its closed row unifies with the open row,
 binding `r` to the leftover fields). So:
 
 ```
-$ area : { x:@Int, y:@Int | r } -> @Int = \p => p.x * p.y
+$ area : @ctx {r: @Row} -> { x:@Int, y:@Int | r } -> @Int = \p => p.x * p.y
 area (Point3.{ .x=1, .y=2, .z=3 })   # ok: r = { z:@Int }
 ```
 

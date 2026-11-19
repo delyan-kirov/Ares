@@ -512,7 +512,7 @@ fn ctx_resolves_by_type() {
     let src = "$ @mod M\n\
                $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
                $ r : @Int = max_of 3 7";
     assert_eq!(run(src, "r"), "7");
@@ -527,9 +527,9 @@ fn ctx_chains_and_is_overridden() {
     let src = "$ @mod M\n\
                $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
-               $ max3 : @use {o: Ord t} -> t -> t -> t -> t = \\x y z =>\n\
+               $ max3 : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t -> t = \\x y z =>\n\
                \tmax_of (max_of x y) z\n\
                $ chained : @Int = max3 3 9 5\n\
                $ flipped : @Int =\n\
@@ -544,11 +544,11 @@ fn ctx_generic_instance_resolves_per_element_type() {
     // context recursively resolves the instance's own one, per element type.
     let src = "$ @mod M\n\
                $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
-               $ show : @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
+               $ show : @ctx {t: @Type} -> @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ sh_box : @use {d: Show t} -> Show (Box t) = \n\
+               $ sh_box : @ctx {t: @Type} -> @use {d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }\n\
                $ r : @Int = if (show (Box.Wrap.{ 5 } : Box @Int) == \"W(5)\") && (show (Box.Wrap.{ @true } : Box @Bool) == \"W(true)\") => 0 else 1";
     assert_eq!(run(src, "r"), "0");
@@ -564,7 +564,7 @@ fn ctx_bundle_resolves_each_component() {
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
-               $ show_pair : @use {sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
+               $ show_pair : @ctx {a: @Type, b: @Type} -> @use {sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
                \t\"(\" ++ sa.show x.fst ++ \", \" ++ sb.show x.snd ++ \")\"\n\
                $ r : @Int = if show_pair (Pair.{ .fst = 5, .snd = @true } : Pair @Int @Bool) == \"(5, true)\" => 0 else 1";
     assert_eq!(run(src, "r"), "0");
@@ -579,7 +579,7 @@ fn ctx_nullary_instance_resolves_by_expected_type() {
                $ bl_int : Blank @Int = .{ .blank = 0 }\n\
                $ bl_str : Blank @Str = .{ .blank = \"\" }\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
-               $ mk : @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
+               $ mk : @ctx {a: @Type, b: @Type} -> @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
                \tPair.{ .fst = ba.blank, .snd = bb.blank }\n\
                $ p : Pair @Int @Str = mk {}\n\
                $ r : @Int = if (p.fst == 0) && (p.snd == \"\") => 0 else 1";
@@ -592,9 +592,9 @@ fn ctx_instance_crosses_module_boundary() {
     // instance keeps its own context requirement across the boundary.
     let lib = "$ @mod GENM\n\
                $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
-               $ show : @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
+               $ show : @ctx {t: @Type} -> @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ sh_box : @use {d: Show t} -> Show (Box t) = \n\
+               $ sh_box : @ctx {t: @Type} -> @use {d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }";
     let root = "$ @mod M\n\
                 $ @import GENM\n\
@@ -609,7 +609,7 @@ fn qualified_ctx_call_injects_its_context() {
     // instance from the caller's scope.
     let lib = "$ @mod LM\n\
                $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
-               $ maxf : @use {o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
+               $ maxf : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
     let root = "$ @mod M\n\
                 $ @import LM\n\
                 $ impl_Ord_for_int : LM.Ord @Int = .{ .gt = \\a b => a > b }\n\
@@ -649,7 +649,7 @@ fn open_row_param_accepts_any_matching_struct() {
     let src = "$ @mod M\n\
                $ Point  : @Type = @struct x: @Int, y: @Int,\n\
                $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int,\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
                $ r : @Int = (area Point.{ .x=3, .y=4 }) + (area Point3.{ .x=5, .y=6, .z=9 })";
     assert_eq!(run(src, "r"), "42");
 }
@@ -659,9 +659,9 @@ fn anonymous_records_literal_update_stack() {
     // Anonymous literal into an open row; update (`| p`) preserving shape and
     // extension (`..p`) on an open-row parameter.
     let src = "$ @mod M\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
-               $ shift : { x: @Int | r } -> { x: @Int | r } = \\p => { .x = p.x + 10 | p }\n\
-               $ tag : { x: @Int | r } -> { x: @Int, tag: @Int | r } = \\p => { .tag = 99, ..p }\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
+               $ shift : @ctx {r: @Row} -> { x: @Int | r } -> { x: @Int | r } = \\p => { .x = p.x + 10 | p }\n\
+               $ tag : @ctx {r: @Row} -> { x: @Int | r } -> { x: @Int, tag: @Int | r } = \\p => { .tag = 99, ..p }\n\
                $ r : @Int =\n\
                \t(area { .x = 2, .y = 5, .tag = 7 })\n\
                \t+ (area (shift { .x = 1, .y = 4 }))\n\
@@ -691,7 +691,7 @@ fn sized_tensor_construction_and_modular_index() {
     // sugar, which routes through the LA `index`, is covered by the TENSORS corpus.)
     let src = "$ @mod M\n\
                $ v : @Tensor 3 @Int = [10, 20, 30]\n\
-               $ head : @Tensor n a -> a = \\t => @tensor_index t 0\n\
+               $ head : @ctx {n: @Nat, a: @Type} -> @Tensor n a -> a = \\t => @tensor_index t 0\n\
                $ grid : @Tensor 2 (@Tensor 2 @Int) = [ [1, 2], [3, 4] ]\n\
                $ r : @Int = @tensor_index v 1 + @tensor_index v 3 + @tensor_index v 7 + head v + @tensor_index (@tensor_index grid 1) 0";
     // 20 + v[0]=10 + v[1]=20 + head=10 + grid[1][0]=3
@@ -708,8 +708,8 @@ fn tensor_size_arithmetic() {
                $ a : @Tensor 2 @Int = [1, 2]\n\
                $ b : @Tensor 3 @Int = [3, 4, 5]\n\
                $ c : @Tensor 5 @Int = @tensor_concat a b\n\
-               $ dup : @Tensor n x -> @Tensor (2*n) x = \\t => @tensor_concat t t\n\
-               $ flip : @Tensor n x -> @Tensor m x -> @Tensor (m+n) x = \\p q => @tensor_concat p q\n\
+               $ dup : @ctx {n: @Nat, x: @Type} -> @Tensor n x -> @Tensor (2*n) x = \\t => @tensor_concat t t\n\
+               $ flip : @ctx {n: @Nat, x: @Type, m: @Nat} -> @Tensor n x -> @Tensor m x -> @Tensor (m+n) x = \\p q => @tensor_concat p q\n\
                $ d : @Tensor 4 @Int = dup a\n\
                $ r : @Int = @tensor_index c 4 + @tensor_index d 3"; // 5 + (dup a = [1,2,1,2])[3]=2
     assert_eq!(run(src, "r"), "7");
@@ -720,7 +720,7 @@ fn generate_length_build_tensors_in_source() {
     // The `@tensor_create`/`@tensor_length` primitives (higher-order: the runtime applies the
     // closure per index) let a tensor op be written in source: here, transpose.
     let src = "$ @mod M\n\
-               $ myT : @Tensor m (@Tensor n a) -> @Tensor n (@Tensor m a) = \\t =>\n\
+               $ myT : @ctx {m: @Nat, n: @Nat, a: @Type} -> @Tensor m (@Tensor n a) -> @Tensor n (@Tensor m a) = \\t =>\n\
                \t@tensor_create (@tensor_index t 0) (\\j => @tensor_create t (\\i => @tensor_index (@tensor_index t i) j))\n\
                $ a : @Tensor 2 (@Tensor 3 @Int) = [ [1,2,3], [4,5,6] ]\n\
                $ at : @Tensor 3 (@Tensor 2 @Int) = myT a\n\
@@ -734,7 +734,7 @@ fn overloadable_index_and_shape_sugar() {
     // one and a custom-type one) both drive `.[..]`, resolved by receiver type. Also
     // exercises a tensor of tensors and `t.[i, j]`.
     let src = "$ @mod M\n\
-               $ ix_t : @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
+               $ ix_t : @ctx {n: @Nat, a: @Type} -> @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
                $ Box : @Type = @struct base: @Int\n\
                $ ix_box : @IIndex Box @Int @Int = .{ .index = \\b i => b.base + i }\n\
                $ g : @Tensor 2 (@Tensor 2 @Int) = [ [1, 2], [3, 4] ]\n\
@@ -748,7 +748,7 @@ fn multi_axis_slice_syntax() {
     // `..` keeps an axis, a range narrows it, an index reduces it, mixed freely.
     // The checker computes the result shape; all are O(1) strided views.
     let src = "$ @mod M\n\
-               $ ix_t : @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
+               $ ix_t : @ctx {n: @Nat, a: @Type} -> @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
                $ m : @Tensor 3 (@Tensor 4 @Int) = [ [1,2,3,4], [5,6,7,8], [9,10,11,12] ]\n\
                $ colv : @Tensor 3 @Int = m.[.., 1]\n\
                $ blk : @Tensor 2 (@Tensor 2 @Int) = m.[1 ... 2, 1 ... 2]\n\
@@ -763,7 +763,7 @@ fn inclusive_range_slice_syntax() {
     // `t.[p ... q]` is an INCLUSIVE leading-axis slice (a view), matching the range
     // pattern syntax `...`. `v.[1 ... 3]` keeps v[1], v[2], v[3].
     let src = "$ @mod M\n\
-               $ ix_t : @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
+               $ ix_t : @ctx {n: @Nat, a: @Type} -> @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
                $ v : @Tensor 5 @Int = [10, 20, 30, 40, 50]\n\
                $ s : @Tensor 3 @Int = v.[1 ... 3]\n\
                $ r : @Int = s.[0] + s.[1] + s.[2]"; // 20+30+40
@@ -808,7 +808,7 @@ fn literal_construction_hooks() {
         $ RWrap : @Type = @struct r: @Float64\n\
         $ rl : @IRealLit RWrap = .{ .of_real = \\x => RWrap.{ .r = x } }\n\
         $ Bag : (a: @Type) -> @Type = @union Items: {@Vec a}\n\
-        $ ql : @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
+        $ ql : @ctx {a: @Type} -> @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
         $ s : MyStr = \"hi\"\n\
         $ w : Wrap = 42\n\
         $ rw : RWrap = 3.5\n\
@@ -932,7 +932,7 @@ fn sequence_pattern_via_view_hook() {
     // (fixed length: tail must be empty), and `h :: t` all match.
     let src = "$ @mod M\n\
         $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
-        $ sv : @ISeqView (Stack a) a = .{\n\
+        $ sv : @ctx {a: @Type} -> @ISeqView (Stack a) a = .{\n\
         \t.view = \\s => s.items |> \\ | h :: t => SeqView.More.{ h, Stack.{ .items = t } } | _ => SeqView.Empty,\n\
         }\n\
         $ classify : Stack @Int -> @Int = \\s => s |> \\\n\
@@ -977,7 +977,7 @@ fn cons_operator_takes_an_instance() {
     // defining an instance, as with any other interface.
     let src = "$ @mod M\n\
         $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
-        $ cons_stack : ICons a (Stack a) = .{ .cons = \\x st => Stack.{ .items = x :: st.items } }\n\
+        $ cons_stack : @ctx {a: @Type} -> ICons a (Stack a) = .{ .cons = \\x st => Stack.{ .items = x :: st.items } }\n\
         $ s : Stack @Int = 1 :: 2 :: Stack.{ .items = [] }\n\
         $ v : @Vec @Int = 9 :: [8]\n\
         $ r : @Int = @vec_get s.items 0 * 100 + @vec_len s.items * 10 + @vec_get v 0";
@@ -1074,8 +1074,8 @@ fn record_destructuring_pattern() {
     // open-row value and a nominal struct; `.._` ignores the rest.
     let src = "$ @mod M\n\
                $ Point : @Type = @struct x: @Int, y: @Int,\n\
-               $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p |> \\ | { .x = a, .y = b, .._ } => a * b\n\
-               $ sumxy : { x: @Int, y: @Int | r } -> @Int = \\{ .x, .y } => x + y\n\
+               $ area : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\p => p |> \\ | { .x = a, .y = b, .._ } => a * b\n\
+               $ sumxy : @ctx {r: @Row} -> { x: @Int, y: @Int | r } -> @Int = \\{ .x, .y } => x + y\n\
                $ nx : Point -> @Int = \\p => p |> \\ | { .x = a } => a\n\
                $ r : @Int = area { .x = 3, .y = 4, .tag = 9 } + sumxy { .x = 5, .y = 6 } + nx Point.{ .x = 2, .y = 8 }";
     assert_eq!(run(src, "r"), "25"); // 12 + 11 + 2
@@ -1088,8 +1088,8 @@ fn generic_struct_satisfies_an_open_row() {
     let src = "$ @mod M\n\
                $ Box : (a: @Type) -> @Type = @struct val: a\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b\n\
-               $ unwrap : { val: v | r } -> v = \\b => b.val\n\
-               $ getfst : { fst: a | r } -> a = \\p => p.fst\n\
+               $ unwrap : @ctx {v: @Type, r: @Row} -> { val: v | r } -> v = \\b => b.val\n\
+               $ getfst : @ctx {a: @Type, r: @Row} -> { fst: a | r } -> a = \\p => p.fst\n\
                $ r : @Int = unwrap (Box.{ .val = 42 }) + getfst (Pair.{ .fst = 8, .snd = \"s\" })";
     assert_eq!(run(src, "r"), "50");
 }
@@ -1103,7 +1103,7 @@ fn record_rest_binds_the_leftover_fields() {
                $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int\n\
                $ sum2 : { y:@Int, z:@Int } -> @Int = y + z\n\
                $ split : Point3 -> @Int = \\p => p |> \\ | { .x = a, ..rest } => a + sum2 rest\n\
-               $ drop_x : { x:@Int, y:@Int | r } -> @Int = \\p => p |> \\ | { .x = a, ..rest } => rest.y + a\n\
+               $ drop_x : @ctx {r: @Row} -> { x:@Int, y:@Int | r } -> @Int = \\p => p |> \\ | { .x = a, ..rest } => rest.y + a\n\
                $ r : @Int = split (Point3.{ .x=1, .y=2, .z=3 }) + drop_x (Point3.{ .x=10, .y=20, .z=30 })";
     assert_eq!(run(src, "r"), "36"); // (1 + (2+3)) + (20 + 10)
 }
@@ -1115,7 +1115,7 @@ fn recursive_struct_field_is_lazy_and_unbounded() {
     let src = "$ @mod M\n\
                $ Stream : (t: @Type) -> @Type = @struct head : t, tail : Stream t\n\
                $ from : @Int -> Stream @Int = \\n => { .head = n, .tail = from (n + 1) }\n\
-               $ nth : @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
+               $ nth : @ctx {t: @Type} -> @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
                $ r : @Int = (from 10).head + nth 5 (from 10)";
     assert_eq!(run(src, "r"), "25"); // 10 + 15
 }
@@ -1695,7 +1695,7 @@ fn let_bindings_chain_and_destructure() {
 #[test]
 fn tuples_and_indexing() {
     assert_eq!(run("$ @mod M\n$ a : @Int = {1, {2, 3}}.1.0", "a"), "2");
-    let swap = "$ @mod M\n$ swap : a -> {b, c} = \\t => {t.1, t.0}\n$ a : @Int = (swap {1, 2}).0";
+    let swap = "$ @mod M\n$ swap : @ctx {a: @Type, b: @Type} -> {a, b} -> {b, a} = \\t => {t.1, t.0}\n$ a : @Int = (swap {1, 2}).0";
     assert_eq!(run(swap, "a"), "2");
 }
 
@@ -1755,7 +1755,7 @@ fn record_parameter_destructures() {
 #[test]
 fn higher_order_and_guards() {
     let src = "$ @mod M\n\
-               $ twice : (a -> a) -> a -> a = \\f x => f (f x)\n\
+               $ twice : @ctx {a: @Type} -> (a -> a) -> a -> a = \\f x => f (f x)\n\
                $ a : @Int = twice (\\n => n + 3) 1";
     assert_eq!(run(src, "a"), "7");
     let guard = "$ @mod M\n\
@@ -1895,7 +1895,7 @@ fn equality_forces_lazy_slots() {
     let src = "$ @mod M\n\
                $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
-               $ eq_l : @use {d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
+               $ eq_l : @ctx {a: @Type} -> @use {d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
                \tx |> \\ | L.N => (y |> \\ | L.N => @true | _ => @false)\n\
                \t| L.C.{ h, t } => (y |> \\ | L.C.{ h2, t2 } => d.eq h h2 && eq_l.eq t t2 | _ => @false) }\n\
                $ r : @Bool = mk 4 == mk 4";

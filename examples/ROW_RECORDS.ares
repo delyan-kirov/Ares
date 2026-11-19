@@ -9,13 +9,13 @@ $ @mod ROW_RECORDS
 #       Inside a function, `{ .x = v | p }` updates an open-row record (its shape
 #       is preserved) and `{ .f = v, ..p }` stacks a field on top.
 
-$ area : { x: @Int, y: @Int | r } -> @Int = \p => p.x * p.y
+$ area : @ctx { r: @Row } -> { x: @Int, y: @Int | r } -> @Int = \p => p.x * p.y
 
 # Update, shape preserved: the tail `r` flows through unchanged.
-$ shift : { x: @Int | r } -> { x: @Int | r } = \p => { .x = p.x + 10 | p }
+$ shift : @ctx { r: @Row } -> { x: @Int | r } -> { x: @Int | r } = \p => { .x = p.x + 10 | p }
 
 # Stack: add a field on top of an open-row record.
-$ tag : { x: @Int | r } -> { x: @Int, tag: @Int | r } = \p => { .tag = 99, ..p }
+$ tag : @ctx { r: @Row } -> { x: @Int | r } -> { x: @Int, tag: @Int | r } = \p => { .tag = 99, ..p }
 
 $ Point : @Type = @struct x: @Int, y: @Int,
 $ Boxed : @Type = @struct x: @Int, y: @Int, z: @Int,
@@ -33,7 +33,8 @@ $ ck_update : @Int = if area (shift { .x = 1, .y = 4 }) == 44 => 0 else 8
 $ ck_stack : @Int = if (tag { .x = 3, .y = 6 }).tag == 99 => 0 else 16
 
 # Destructure a record with a pattern; `.._` ignores the remaining fields.
-$ diag : { x: @Int, y: @Int | r } -> @Int = \p => p |> \ | { .x = a, .y = b, .._ } => a + b
+$ diag : @ctx { r: @Row } -> { x: @Int, y: @Int | r } -> @Int = \p =>
+    p |> \ | { .x = a, .y = b, .._ } => a + b
 $ ck_pat : @Int = if diag { .x = 3, .y = 7, .tag = 1 } == 10 => 0 else 32
 
 # `..rest` BINDS the leftover fields as a record: peel off `x`, forward the rest.
@@ -44,7 +45,7 @@ $ ck_rest : @Int = if peel Boxed.{ .x = 1, .y = 2, .z = 3 } == 6 => 0 else 64
 # A GENERIC struct also satisfies an open row: its type argument is substituted
 # for the parameter, so `Cell @Int` matches `{ val: @Int | r }`.
 $ Cell : (a: @Type) -> @Type = @struct val: a
-$ get_val : { val: v | r } -> v = \c => c.val
+$ get_val : @ctx { r: @Row, v: @Type } -> { val: v | r } -> v = \c => c.val
 $ ck_gen : @Int = if get_val Cell.{ .val = 7 } == 7 => 0 else 128
 
 $ test : @Int = ck_point + ck_boxed + ck_anon + ck_update + ck_stack + ck_pat + ck_rest + ck_gen

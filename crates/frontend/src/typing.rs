@@ -32,6 +32,7 @@ mod algorithm_w;
 pub(crate) mod declarations;
 mod externs;
 mod imports;
+mod ctx_sizes;
 mod instances;
 mod patterns;
 pub mod resolved;
@@ -48,7 +49,7 @@ use std::rc::Rc;
 
 use crate::parser::data::{
     Ast, Binding, EffectRow, EntrySplice, Expr, FieldInit, FieldPat, Item, LamParam, Pattern, Payload, Program,
-    RowEntry, SliceSlot, Ty, UseField,
+    RowEntry, SliceSlot, Ty, UseField, SIZE_OF,
 };
 use utilities::{Aol, Slice, StrId};
 use utilities::{diag, Applicability, Code, Diagnostic, Edit, ExternArg, Result, Span};
@@ -59,6 +60,8 @@ use crate::typing::unify::Unifier;
 use algorithm_w::*;
 use declarations::*;
 use imports::*;
+use signatures::{FreeNames, Unbound};
+use ctx_sizes::{SizePending, SizeUse};
 pub use resolved::{
     collect_resolved, CtxVal, Declarations, ExternSpec, HookImpl, LazySlots, ReflectInfo, Resolved, Shape, StructShape,
     UnionShape,
@@ -223,6 +226,31 @@ pub struct Checker<'a> {
     qualified_ctx: HashMap<(StrId, StrId), Aol<Ty>>,
     /// This module's own context-bearing definitions, re-exported to importers.
     own_ctx: Vec<(StrId, Aol<Ty>)>,
+    /// The signatures with `@ctx` fields, by bare and by qualified name, and
+    /// this module's own: an explicit `@ctx {.t = T}` argument names a field.
+    ctx_sigs: HashMap<StrId, Aol<Ty>>,
+    qualified_ctx_sigs: HashMap<(StrId, StrId), Aol<Ty>>,
+    own_ctx_sigs: Vec<(StrId, Aol<Ty>)>,
+    /// Explicit `@ctx {...}` arguments, keyed by the head reference site.
+    ctx_given: HashMap<Aol<Expr>, Vec<UseOverride>>,
+    /// `@Nat` fields passed at run time (see `ctx_sizes`): the definition whose
+    /// body is being checked; each definition's signature and `@Nat` fields
+    /// with their variables; the fields each body reads; the references to
+    /// globals with `@Nat` fields, before and after the types are pinned; the
+    /// fields each signature takes at run time (own and imported), this
+    /// module's to export; and the results lowering reads.
+    checking_def: Option<StrId>,
+    def_sizes: HashMap<StrId, (Aol<Ty>, Aol<Expr>, Vec<(StrId, Type)>)>,
+    /// The variables each definition's signature names, for showing its type
+    /// in the signature's own terms.
+    var_names: HashMap<StrId, Vec<(Type, StrId)>>,
+    size_refs: HashMap<StrId, HashSet<StrId>>,
+    size_pending: Vec<SizePending>,
+    size_uses: Vec<SizeUse>,
+    runtime_sizes: HashMap<Aol<Ty>, Vec<StrId>>,
+    own_runtime_sizes: Vec<(Aol<Ty>, Vec<StrId>)>,
+    size_params: HashMap<Aol<Expr>, Vec<StrId>>,
+    size_args: HashMap<Aol<Expr>, Vec<CtxVal>>,
     /// This module's interface wrappers: a context-bearing definition whose body
     /// only projects one field of its context, mapped to that field (see
     /// [`instances::wrapper_field`]).
@@ -435,6 +463,13 @@ pub struct Checker<'a> {
     /// type variable is a lowercase name, so an unknown capitalized name is a
     /// typo, surfaced at the end of the check.
     unknown_type: Option<Diagnostic>,
+    /// Whether elaborating a type reports a lowercase name nothing binds
+    /// ([`FreeNames`]), and the names found unbound so far.
+    free_names: FreeNames,
+    unbound: Vec<Unbound>,
+    /// The variables of the signature whose body is being checked, by name:
+    /// what an annotation inside the body may mention.
+    scoped_tvars: HashMap<StrId, Type>,
     /// The `_`s met while elaborating a type, each a fresh variable the
     /// elaboration solves (#535), with the span it was written at. A
     /// definition's check takes the ones its signature wrote.
@@ -601,6 +636,20 @@ impl<'a> Checker<'a> {
             global_ctx: HashMap::new(),
             qualified_ctx: HashMap::new(),
             own_ctx: Vec::new(),
+            ctx_sigs: HashMap::new(),
+            qualified_ctx_sigs: HashMap::new(),
+            own_ctx_sigs: Vec::new(),
+            ctx_given: HashMap::new(),
+            checking_def: None,
+            def_sizes: HashMap::new(),
+            var_names: HashMap::new(),
+            size_refs: HashMap::new(),
+            size_pending: Vec::new(),
+            size_uses: Vec::new(),
+            runtime_sizes: HashMap::new(),
+            own_runtime_sizes: Vec::new(),
+            size_params: HashMap::new(),
+            size_args: HashMap::new(),
             own_wrappers: HashMap::new(),
             ctx_args: HashMap::new(),
             ctx_pending: Vec::new(),
@@ -663,6 +712,9 @@ impl<'a> Checker<'a> {
             imported_builtins: HashSet::new(),
             ambient,
             unknown_type: None,
+            free_names: FreeNames::Bind,
+            unbound: Vec::new(),
+            scoped_tvars: HashMap::new(),
             wildcards: Vec::new(),
             opaque_vars: Vec::new(),
             lenient: false,
@@ -867,6 +919,7 @@ impl<'a> Checker<'a> {
         for d in &defs {
             self.value_module.remove(&d.name);
             self.global_ctx.remove(&d.name);
+            self.ctx_sigs.remove(&d.name);
             self.ambiguous_imports.remove(&d.name);
         }
 
@@ -885,6 +938,14 @@ impl<'a> Checker<'a> {
         // the candidates a context requirement searches.
         for d in &defs {
             let Some(sig) = d.sig else { continue };
+            if self.ast.ctx_params.get(sig).is_some() {
+                self.own_ctx_sigs.push((d.name, sig));
+                self.qualified_ctx_sigs.insert((self.module_name, d.name), sig);
+                self.ctx_sigs.insert(d.name, sig);
+            }
+            self.check_ctx_fields(d.name, sig);
+            let mut tvars = self.sig_tvars(sig);
+            self.ty_reporting(sig, &mut tvars, Some(sig));
             let (exposed, ctx) = self.scheme_and_ctx(sig, d.ctx.is_some());
             let Some(head) = self.ctx_head(self.unifier.zonk(exposed)) else {
                 continue;
@@ -937,6 +998,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        self.size_pending.clear();
+        self.finish_sizes();
 
         let out: Vec<(StrId, Type)> =
             defs.iter().map(|d| (d.name, types[&d.name])).collect();
@@ -1061,6 +1124,7 @@ impl<'a> Checker<'a> {
         }
         self.solve_pending()?;
         self.resolve_pending_ctx()?;
+        self.settle_sizes();
         if let Some(d) = self.unifier.unsolved_size() {
             let first = &defs[component[0]];
             let span = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
@@ -1379,10 +1443,39 @@ impl<'a> Checker<'a> {
     /// `@use` fields when it declares some. A printed type never hides the context
     /// a call site has to satisfy, which is the whole point of #213.
     pub fn show_decl(&self, name: StrId, ty: Type) -> String {
-        match self.decl_ctx.get(&name) {
+        let ctx = self.show_ctx_binder(name);
+        let mut shown = match self.decl_ctx.get(&name) {
             Some(ctx) => self.show_with_uses(name, *ctx, ty),
-            None => self.show(ty),
+            None => self.unifier.show_all_named(&[ty], self.sig_names(name)).pop().expect("one rendering"),
+        };
+        if let Some(ctx) = ctx {
+            shown = format!("{ctx} -> {shown}");
         }
+        shown
+    }
+
+    /// The names `name`'s signature gives its variables.
+    fn sig_names(&self, name: StrId) -> HashMap<VarId, String> {
+        let mut out = HashMap::new();
+        for (t, n) in self.var_names.get(&name).into_iter().flatten() {
+            if let TypeNode::Var(id) = self.unifier.types.node(self.unifier.resolve(*t)) {
+                out.insert(id, n.to_string());
+            }
+        }
+        out
+    }
+
+    /// `@ctx {t: @Type, ...}` as `name`'s signature writes it, if it has one.
+    fn show_ctx_binder(&self, name: StrId) -> Option<String> {
+        let sig = self.ctx_sigs.get(&name)?;
+        let fields = self.ast.ctx_params.get(*sig)?;
+        let shown: Vec<String> = self
+            .ast
+            .slice(*fields)
+            .iter()
+            .map(|f| format!("{}: {}", f.name, self.ast.ty_source(f.ty).unwrap_or_default()))
+            .collect();
+        Some(format!("@ctx {{{}}}", shown.join(", ")))
     }
 
     /// `@use {d: IOrd a, s: ISub a} -> a -> a`: the context `ctx` split into the
@@ -1400,7 +1493,7 @@ impl<'a> Checker<'a> {
         };
         let n = parts.len();
         parts.push(exposed);
-        let shown = self.unifier.show_all(&parts);
+        let shown = self.unifier.show_all_named(&parts, self.sig_names(name));
         let named: Vec<String> = (0..n)
             .map(|i| match fields.get(i) {
                 Some(f) => format!("{f}: {}", shown[i]),
