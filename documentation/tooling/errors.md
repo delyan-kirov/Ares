@@ -131,7 +131,7 @@ not even for a constant. The fix inserts the type that was deduced for it:
 ## TYPE_CYCLE
 
 A type refers to itself in a way that has no meaning: an infinite type
-(`\x => x x`), or an alias that expands to itself.
+(`\x => x x`), or a type-level function that unfolds to itself.
 
 An alias only renames a type; to make a recursive type, declare a `@struct` or
 `@union`, whose name stops the expansion.
@@ -239,6 +239,14 @@ it would. This is a warning.
 Delete the arm, or move it above the arm that covers it. The level is set by
 `@option "lints.unreachable_arm" "..."` in the project's `BUILD.ares` (`allow`,
 `warn` or `deny`).
+
+## CAPITALIZED_VALUE
+
+A value or function is named with a capital letter, the convention for types.
+Types are terms, so this is a convention, not a rule, and the value works as
+any other. This is a warning.
+
+Rename it with a lowercase first letter.
 
 ## RUNTIME_FAULT
 

@@ -1,0 +1,8 @@
+$ @mod MAIN
+
+# A type from one import and a value from another: in a type the bare name
+# is as ambiguous as in a term (#535).
+$ @import A
+$ @import B
+
+$ p : pair @Int = {1, 2}  #~ error[AMBIGUOUS_NAME]: `pair` is imported from more than one module

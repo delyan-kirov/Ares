@@ -123,6 +123,10 @@ pub struct Checker<'a> {
     /// Type aliases: `name -> (declared params, body)`. An applied alias is
     /// expanded by substituting its arguments for the parameters in the body.
     aliases: HashMap<StrId, (Vec<StrId>, Aol<Ty>)>,
+    /// Globals of type `@Nat`, by name, with their bodies: a lowercase name in
+    /// a size means one of these before a size variable, and unfolds to its
+    /// value (#535).
+    nat_consts: HashMap<StrId, Aol<Expr>>,
     /// Each declared effect's operations, `effect -> op -> its `Arg -> Res`
     /// scheme. Used to type a handler clause head, which cannot be resolved by
     /// inference alone.
@@ -150,6 +154,9 @@ pub struct Checker<'a> {
     /// Names more than one import brings in, mapped to the modules that export
     /// them. A bare use is an error naming the owners; `Module.name` still works.
     ambiguous_imports: HashMap<StrId, Vec<StrId>>,
+    /// Types imported bare, `name -> module`. Types and values share one
+    /// namespace, so a type and a value two imports bring in are ambiguous.
+    imported_types: HashMap<StrId, StrId>,
     /// Bare-call sites resolved to a specific module. Lowering rewrites the
     /// referenced `Expr::Var` to `MOD.name`.
     resolved_calls: HashMap<Aol<Expr>, StrId>,
@@ -281,6 +288,10 @@ pub struct Checker<'a> {
     /// Lowering marks the code a generator's quotation writes with its module, so
     /// the splice site can resolve its names there.
     quotations: HashSet<Aol<Expr>>,
+    /// Types written where a value stands (`f @Int`, `pair (@Int -> @Int)`),
+    /// typed by their kind. They carry nothing at run time, so lowering
+    /// erases each to `{}` (#535).
+    type_terms: HashSet<Aol<Expr>>,
     /// Argument sites promoted to a record: a bare scalar `1` or a positional
     /// `{1, 2}` passed where a record is expected, mapped to the target record's
     /// field names (in order). Lowering wraps the value into a name-keyed record.
@@ -377,6 +388,10 @@ pub struct Checker<'a> {
     /// type variable is a lowercase name, so an unknown capitalized name is a
     /// typo, surfaced at the end of the check.
     unknown_type: Option<Diagnostic>,
+    /// The `_`s met while elaborating a type, each a fresh variable the
+    /// elaboration solves (#535), with the span it was written at. A
+    /// definition's check takes the ones its signature wrote.
+    wildcards: Vec<(Span, Type)>,
     /// Set during a metaprogram-expansion round (`$ &` codegen not yet run): an
     /// unbound value name is treated as a fresh type variable rather than an error,
     /// so a module that forward-references an about-to-be-injected definition still
@@ -519,6 +534,7 @@ impl<'a> Checker<'a> {
             lazy_slots: HashMap::new(),
             crepr_layouts: HashMap::new(),
             aliases: HashMap::new(),
+            nat_consts: HashMap::new(),
             effect_ops: HashMap::new(),
             imported_effect_ops: HashMap::new(),
             effect_arity: HashMap::new(),
@@ -528,6 +544,7 @@ impl<'a> Checker<'a> {
             local_defs: HashSet::new(),
             value_module: HashMap::new(),
             ambiguous_imports: HashMap::new(),
+            imported_types: HashMap::new(),
             resolved_calls: HashMap::new(),
             decl_ctx: HashMap::new(),
             global_ctx: HashMap::new(),
@@ -568,6 +585,7 @@ impl<'a> Checker<'a> {
             interp_quoted: HashSet::new(),
             splice_locals: Vec::new(),
             quotations: HashSet::new(),
+            type_terms: HashSet::new(),
             promotions: HashMap::new(),
             struct_lit_names: HashMap::new(),
             literal_hooks: HashMap::new(),
@@ -594,6 +612,7 @@ impl<'a> Checker<'a> {
             imported_builtins: HashSet::new(),
             ambient,
             unknown_type: None,
+            wildcards: Vec::new(),
             lenient: false,
             deferred: false,
             deferred_sites: HashSet::new(),
@@ -692,6 +711,11 @@ impl<'a> Checker<'a> {
         self.collect_private_names(program);
         self.check_import_aliases(program);
         self.finalize_imports();
+        for item in self.ast.slice(program.items) {
+            if let Item::Struct { name, .. } | Item::Union { name, .. } | Item::Alias { name, .. } = item {
+                self.ambiguous_imports.remove(name);
+            }
+        }
         self.register_types(program)?;
         self.check_type_module_clashes(program);
         self.validate_crepr_structs()?;
@@ -735,6 +759,20 @@ impl<'a> Checker<'a> {
 
         // One name, one definition: a module may not define a name twice, since a
         // name's type is its contract and two definitions would make it dishonest.
+        // Types and values share the namespace: a type is a global of type `@Type`.
+        let mut types: HashMap<StrId, Option<Span>> = HashMap::new();
+        for (item, span) in self.ast.slice(program.items).iter().zip(self.ast.slice(program.spans)) {
+            let (Item::Struct { name, .. } | Item::Union { name, .. } | Item::Alias { name, .. } | Item::Effect { name, .. }) =
+                item
+            else {
+                continue;
+            };
+            if let Some(first) = types.get(name) {
+                self.errors.push(defined_twice(*name, self.module_name, span.name.unwrap_or(span.full), *first, false));
+            } else {
+                types.insert(*name, span.name);
+            }
+        }
         let mut seen: HashSet<StrId> = HashSet::new();
         let mut defs = defs;
         let mut dups = Vec::new();
@@ -747,6 +785,10 @@ impl<'a> Checker<'a> {
                     note: "CORE declares it with `@extern \"ares\"`, and the compiler \
                            relies on its meaning"
                 ));
+                dups.push(i);
+            } else if let Some(first) = types.get(&d.name) {
+                let span = d.name_span.or(self.ast.expr_span(d.body)).unwrap_or(Span::at(0));
+                self.errors.push(defined_twice(d.name, self.module_name, span, *first, true));
                 dups.push(i);
             } else if !seen.insert(d.name) {
                 let span = self.ast.expr_span(d.body).unwrap_or(Span::at(0));
@@ -938,8 +980,10 @@ impl<'a> Checker<'a> {
             // A use inside the group sees a signed member's signature, so it may
             // recurse at another type. Not with a row tail: the body may extend
             // the row, and a use that saw only the signature would miss that.
+            // Nor with a `_`: the body solves it, so until then the signature
+            // is only a shape (a partial signature).
             let seen = match (defs[i].sig, defs[i].ctx) {
-                (Some(sig), None) if !self.sig_has_row_tail(sig) => {
+                (Some(sig), None) if !self.sig_has_row_tail(sig) && first_wildcard(self.ast, sig).is_none() => {
                     self.scheme_and_ctx(sig, false).0
                 }
                 _ => v,
@@ -971,6 +1015,7 @@ impl<'a> Checker<'a> {
         }
         for vars in &sig_vars {
             self.check_sig_vars_rigid(vars)?;
+            self.check_sig_wildcards(vars)?;
         }
         self.unifier.leave_level();
         let mono = self.pending_vars();
@@ -1484,8 +1529,23 @@ impl<'a> Checker<'a> {
 
 // ## Dependency analysis
 
-/// A global `$` definition, extracted from the program for dependency analysis.
-#[derive(Clone)]
+/// A module names `name` twice. Types and values share one namespace, so a
+/// type and a value (`across`) collide like two values do.
+fn defined_twice(name: StrId, module: StrId, at: Span, first: Option<Span>, across: bool) -> Diagnostic {
+    let mut d = diag!(
+        Code::DuplicateSymbol, at, 0,
+        "`{name}` is defined twice in module `{module}`";
+        help: "rename one of them"
+    );
+    if across {
+        d = d.with_note("types and values share one namespace: a type is a global of type `@Type`");
+    }
+    match first {
+        Some(first) => d.with_label(first, "also defined here"),
+        None => d,
+    }
+}
+
 struct Def {
     name: StrId,
     name_span: Option<Span>,

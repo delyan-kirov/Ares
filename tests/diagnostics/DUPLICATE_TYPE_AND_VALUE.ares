@@ -1,0 +1,12 @@
+$ @mod DUPLICATE_TYPE_AND_VALUE
+
+# Types and values share one namespace (#535): a type is a global of type
+# `@Type`, so a value may not take a type's name.
+$ pair : @Type -> @Type = \t => {t, t}
+$ pair : @Int = 3  #~ error[DUPLICATE_SYMBOL]: `pair` is defined twice in module `DUPLICATE_TYPE_AND_VALUE`
+
+$ Point : @struct =
+    x: @Int,
+    y: @Int
+
+$ Point : @Type = @Int  #~ error[DUPLICATE_SYMBOL]: `Point` is defined twice in module `DUPLICATE_TYPE_AND_VALUE`

@@ -208,7 +208,7 @@ impl Lower<'_> {
 
     fn item(&self, item: &AstItem, span: Span) -> Result<Item> {
         match item {
-            AstItem::Def { name, sig: Some(sig), body, .. } => {
+            AstItem::Def { name, sig: Some(sig), body, .. } | AstItem::Alias { name, sig, body, .. } => {
                 if self.ast.use_params.get(*sig).is_some() {
                     return Err(self.error(span, "a kernel global takes no `@use` parameter"));
                 }

@@ -97,6 +97,8 @@ pub enum Code {
     IntLiteralRange,
     NonExhaustiveMatch,
     UnreachableArm,
+    /// A value named like a type: a convention, so a warning (#535).
+    CapitalizedValue,
     RuntimeFault,
     ExpansionLimit,
     /// A `???` typed hole: always an error, naming the type it stands for.
@@ -142,6 +144,7 @@ impl Code {
             IntLiteralRange => "INT_LITERAL_RANGE",
             NonExhaustiveMatch => "NON_EXHAUSTIVE_MATCH",
             UnreachableArm => "UNREACHABLE_ARM",
+            CapitalizedValue => "CAPITALIZED_VALUE",
             RuntimeFault => "RUNTIME_FAULT",
             ExpansionLimit => "EXPANSION_LIMIT",
             TypedHole => "TYPED_HOLE",

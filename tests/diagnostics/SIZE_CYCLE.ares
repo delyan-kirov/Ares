@@ -1,0 +1,7 @@
+$ @mod SIZE_CYCLE
+
+# A `@Nat` constant in a size unfolds, so constants defined by each other
+# never finish.
+$ a : @Nat = b
+$ b : @Nat = a
+$ v : @Tensor a @Int = [1, 2]  #~ error[TYPE_CYCLE]: the size `a` unfolds to itself

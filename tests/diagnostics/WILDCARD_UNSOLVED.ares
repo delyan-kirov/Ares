@@ -1,0 +1,5 @@
+$ @mod WILDCARD_UNSOLVED
+
+# `_` in a signature is what the body makes it; a body that fixes nothing
+# leaves a type variable the signature never named.
+$ k : _ -> @Int = \x => 3  #~ error[TYPE_ANNOTATION_REQUIRED]: nothing in `k` fixes the type `_` stands for

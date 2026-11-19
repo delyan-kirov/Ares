@@ -71,6 +71,9 @@ pub struct Resolved {
     /// String literals and interpolations built as `@Code` (from
     /// [`Checker::quotation_nodes`]); lowering marks a generator's with its module.
     pub quotations: HashSet<Aol<Expr>>,
+    /// Types in term position (from [`Checker::type_term_nodes`]); lowering
+    /// erases each to `{}`.
+    pub type_terms: HashSet<Aol<Expr>>,
     /// Argument sites promoted to a record, mapped to the target field names (from
     /// [`Checker::promotions`]); lowering wraps the value.
     pub promotions: HashMap<Aol<Expr>, Vec<StrId>>,
@@ -163,6 +166,7 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
         resolved.interp_targets.extend(checker.interp_nodes().iter().copied());
         resolved.interp_quoted.extend(checker.interp_quoted_nodes().iter().copied());
         resolved.quotations.extend(checker.quotation_nodes().iter().copied());
+        resolved.type_terms.extend(checker.type_term_nodes().iter().copied());
         for (&site, names) in checker.promotions() {
             resolved.promotions.insert(site, names.clone());
         }
@@ -233,6 +237,11 @@ impl<'a> Checker<'a> {
     /// The string literals and interpolations built as `@Code`.
     pub fn quotation_nodes(&self) -> &HashSet<Aol<Expr>> {
         &self.quotations
+    }
+
+    /// The types written in term position.
+    pub fn type_term_nodes(&self) -> &HashSet<Aol<Expr>> {
+        &self.type_terms
     }
 
     /// Argument sites promoted to a record, mapped to the target field names;

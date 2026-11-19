@@ -50,7 +50,7 @@ $ right : @Str = pair.snd
 
 # An alias may partially instantiate a generic type: `IntPair b` fixes `fst` to
 # @Int and keeps `snd` open. `IntPair @Str` expands to `Pair @Int @Str`.
-$ IntPair : @alias b = Pair @Int b
+$ IntPair : @Type -> @Type = \b => Pair @Int b
 $ ip : IntPair @Str = .{ .fst = 3, .snd = "z" }
 $ ipfst : @Int = ip.fst
 

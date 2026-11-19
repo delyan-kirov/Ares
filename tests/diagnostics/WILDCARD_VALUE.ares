@@ -1,0 +1,5 @@
+$ @mod WILDCARD_VALUE
+
+# A value left to elaboration needs the checker to solve terms, which it
+# does not do yet (#406).
+$ z : @Int = _  #~ error[UNSUPPORTED]: a value left to elaboration `_` needs dependent types

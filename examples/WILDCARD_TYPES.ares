@@ -1,0 +1,26 @@
+$ @mod WILDCARD_TYPES
+
+# \file WILDCARD_TYPES.ares
+# \info `_` in a type is left to elaboration (#535): the body solves it. A
+#       signature with one is a shape, and the definition's type is that
+#       shape filled in, so `succ` is `@Int -> @Int` to every caller.
+
+$ succ : _ -> @Int = \x => x + 1
+
+# The result is whatever the parameter is; `a` stays the caller's choice.
+$ same : a -> _ = \x => x
+
+$ twice : _ -> _ = \n => succ n |> succ
+
+# Annotations inside a body take `_` too: a lambda parameter, a `let`, an
+# ascription.
+$ local : @Int =
+    let pair : { _, @Bool } = { 3, @true } in
+    let f = \(n: _) => n * 2 in
+    (f pair.0 : _) + (if pair.1 => 1 else 0)
+
+$ test : @Int =
+    (if succ 1 == 2 => 0 else 1) + (if same "x" == "x" => 0 else 2) + (if twice 0 == 2 => 0 else 4)
+        + (if local == 7 => 0 else 8)
+
+$ &assert (test == 0) "WILDCARD_TYPES: a check failed"

@@ -145,7 +145,7 @@ fn declared_type_params() {
                $ Weird : @struct a b = fst: a, has: @Int, snd: b\n\
                $ Pair : @union a b = Left: a, Right: b\n\
                $ Stream : @struct t = head: t, tail: Stream t\n\
-               $ MapInt : @alias v = Map @Int v";
+               $ MapInt : @Type -> @Type = \\v => Map @Int v";
     let p = prog(src);
     let names = |ps: utilities::Slice<utilities::StrId>| {
         p.ast.slice(ps).iter().map(|s| p.ast.text(*s)).collect::<Vec<_>>()
@@ -217,9 +217,10 @@ fn tensor_of_tensor_nests() {
 
 #[test]
 fn removed_and_ambiguous_type_forms_are_rejected() {
+    // A size is any expression, so `@Tensor (@co 2) @Int` parses and the
+    // checker rejects it (tests/diagnostics/TENSOR_NO_VARIANCE.ares).
     for bad in [
         "$ v : List @Tensor 3 @Int = []",        // `@Tensor` is only a head
-        "$ v : @Tensor (@co 2) @Int = [1, 2]",   // axis variance is gone (#366)
         "$ v : @Vec &f @Int = []",               // a splice is never an argument
         "$ f : @Int -> @Int = \\x .Tag => x",    // a later parameter starts with `.`
         "$ f : @Int -> @Int = \\x &p => x",      // a splice parameter
@@ -1018,7 +1019,14 @@ fn a_union_may_state_its_signature_and_results() {
     let variants = p.ast.slice(*variants);
     assert_eq!(variants.len(), 2);
     assert!(variants.iter().all(|v| v.result.is_some()));
-    // A capitalized name with a signature defines a type as a term.
+    // A capitalized name with a signature defines a type as a term; one
+    // ending in a universe is a type-level function (#535).
     let p = prog("$ @mod M\n$ Frac : @Type 1 = {Integer, Pos}");
-    assert!(matches!(&p.ast.slice(p.program.items)[0], Item::Def { .. }));
+    assert!(matches!(&p.ast.slice(p.program.items)[0], Item::Alias { .. }));
+    let p = prog("$ @mod M\n$ Two : @Type -> @Type = \\t => {t, t}\n$ One : @Type -> @Type = Two");
+    let items = p.ast.slice(p.program.items);
+    let Item::Alias { params, .. } = &items[0] else { panic!("expected a type-level function") };
+    assert_eq!(p.ast.slice(*params).len(), 1);
+    // Without a lambda binding the parameter it stays a definition.
+    assert!(matches!(&items[1], Item::Def { .. }));
 }

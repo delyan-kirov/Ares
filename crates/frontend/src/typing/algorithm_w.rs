@@ -48,7 +48,9 @@ impl<'a> Checker<'a> {
         self.ambient = self.top_level_ambient();
         if let Some(sig) = def.sig {
             let mut tvars = HashMap::new();
+            self.wildcards.clear();
             let sig_ty = self.ty_of_ast(sig, &mut tvars);
+            let wildcards = std::mem::take(&mut self.wildcards);
             // The body sees the context parameter (it binds it like any other
             // leading parameter); callers do not, so the definition's own type is
             // the signature with that parameter stripped.
@@ -77,7 +79,7 @@ impl<'a> Checker<'a> {
                 .filter(|(name, _)| !tails.contains(name))
                 .filter_map(|(name, span)| tvars.get(&name).map(|&ty| (name, span, ty)))
                 .collect();
-            Ok(Some(SigVars { def: def.name, vars }))
+            Ok(Some(SigVars { def: def.name, vars, wildcards }))
         } else {
             let inferred = self.infer(def.body)?;
             self.unifier.unify(
@@ -196,6 +198,39 @@ impl<'a> Checker<'a> {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Each `_` in a signature is what the body made it, and must come out a
+    /// type built from the signature's own variables: a variable nothing
+    /// fixed would quantify a name the signature never wrote.
+    pub(super) fn check_sig_wildcards(&mut self, sig: &SigVars) -> Result<()> {
+        let mut named = HashSet::new();
+        for &(_, _, ty) in &sig.vars {
+            self.unifier.collect_vars(ty, &mut named);
+        }
+        for &(span, ty) in &sig.wildcards {
+            let mut free = HashSet::new();
+            self.unifier.collect_vars(ty, &mut free);
+            if free.is_subset(&named) {
+                continue;
+            }
+            let found = self.show(self.unifier.zonk(ty));
+            let d = match self.unifier.types.node(self.unifier.zonk(ty)) {
+                TypeNode::Var(_) => diag!(
+                    Code::TypeAnnotationRequired, span, 0,
+                    "nothing in `{}` fixes the type `_` stands for", sig.def;
+                    help: "write the type, or a type variable if the definition works for every one"
+                ),
+                _ => diag!(
+                    Code::TypeAnnotationRequired, span, 0,
+                    "`_` in the signature of `{}` stands for `{found}`, whose variables it does not name", sig.def;
+                    note: "a global's type variables are written in its signature";
+                    help: "write `{found}` in place of `_`"
+                ),
+            };
+            return Err(d);
         }
         Ok(())
     }
@@ -786,6 +821,9 @@ impl<'a> Checker<'a> {
             Expr::Bool(_) => Ok(self.unifier.types.con(ty::BOOL)),
             Expr::Unit => Ok(self.unifier.types.con(ty::UNIT)),
 
+            Expr::Var { module: None, name } if name.as_str() == "_" => {
+                Err(dependent_only(self.ast.expr_span(e), "a value left to elaboration `_`"))
+            }
             Expr::Var { module, name } => {
                 let module = module.map(|m| m);
                 let name = *name;
@@ -1130,7 +1168,15 @@ impl<'a> Checker<'a> {
                 "a `@use {{...}}` argument stands only among a call's arguments"
             )),
             Expr::CtxArg(_) => Err(dependent_only(self.ast.expr_span(e), "a level argument `@ctx {.u = l}`")),
-            Expr::Type(_) => Err(dependent_only(self.ast.expr_span(e), "a type in term position")),
+            // A type where a value stands is a value of `@Type`, as in
+            // `f (@Int -> @Int)`. It is elaborated like an annotation, so an
+            // unknown name in it is reported the same way.
+            Expr::Type(t) => {
+                let t = *t;
+                self.ty_of_ast(t, &mut HashMap::new());
+                self.type_terms.insert(e);
+                Ok(self.unifier.types.con(ty::UNIVERSE))
+            }
         }
     }
 
@@ -1708,15 +1754,22 @@ impl<'a> Checker<'a> {
                     .collect::<Vec<_>>()
                     .join(" or ");
                 let span = self.ast.expr_span(site).unwrap_or_else(|| Span::at(0));
-                return Err(diag!(
+                let d = diag!(
                     Code::AmbiguousName, span, 0,
                     "`{name}` is imported from more than one module";
                     help: "qualify it as {list}"
-                ));
+                );
+                if self.imported_types.contains_key(&name) {
+                    return Err(d.with_note("types and values share one namespace: a type is a global of type `@Type`"));
+                }
+                return Err(d);
             }
         }
         if let Some(scheme) = self.lookup(name) {
             Ok(self.unifier.instantiate(scheme))
+        } else if let Some(kind) = self.type_kind(name) {
+            self.type_terms.insert(site);
+            Ok(kind)
         } else if self.overloads.contains_key(&name) {
             Ok(self.unifier.fresh())
         } else if self.broken.contains(&name) {
@@ -2505,6 +2558,8 @@ impl<'a> Checker<'a> {
 pub(super) struct SigVars {
     def: StrId,
     vars: Vec<(StrId, Span, Type)>,
+    /// Each `_` the signature wrote, and the variable standing for it.
+    wildcards: Vec<(Span, Type)>,
 }
 
 /// Collect the type variables appearing in `ty`, in order of first appearance.
@@ -2655,4 +2710,28 @@ fn unhandled_effect(msg: &str) -> Option<String> {
     let (_, after) = msg.split_once("effect `")?;
     let (label, rest) = after.split_once('`')?;
     (rest.contains("does not allow") || rest.contains("would not be handled")).then(|| label.to_string())
+}
+
+/// Where `ty` writes `_`, a type left to elaboration, if anywhere.
+pub(super) fn first_wildcard(ast: &Ast, ty: Aol<Ty>) -> Option<Span> {
+    let span = || ast.ty_span(ty).unwrap_or(Span::at(0));
+    let row = |row: &EffectRow| {
+        ast.slice(row.entries).iter().find_map(|entry| ast.slice(entry.args).iter().find_map(|a| first_wildcard(ast, *a)))
+    };
+    match ast.ty(ty) {
+        Ty::Term(e) if is_wildcard(ast, *e) => Some(span()),
+        Ty::App(a, b) | Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => first_wildcard(ast, *a).or_else(|| first_wildcard(ast, *b)),
+        Ty::Sized { size, elem } => first_wildcard(ast, *size).or_else(|| first_wildcard(ast, *elem)),
+        Ty::Arrow { from, effect, to, .. } => first_wildcard(ast, *from)
+            .or_else(|| effect.as_ref().and_then(row))
+            .or_else(|| first_wildcard(ast, *to)),
+        Ty::Tuple(items) => ast.slice(*items).iter().find_map(|t| first_wildcard(ast, *t)),
+        Ty::Record { fields, .. } => ast.slice(*fields).iter().find_map(|f| first_wildcard(ast, f.ty)),
+        Ty::Var(_) | Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => None,
+    }
+}
+
+/// Whether `e` is `_`, a term left to elaboration.
+pub(super) fn is_wildcard(ast: &Ast, e: Aol<Expr>) -> bool {
+    matches!(ast.expr(e), Expr::Var { module: None, name } if name.as_str() == "_")
 }

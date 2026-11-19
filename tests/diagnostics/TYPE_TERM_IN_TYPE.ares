@@ -1,6 +1,6 @@
 $ @mod TYPE_TERM_IN_TYPE
 
 # Types are expressions (#406): the parser reads any term in a type position,
-# and the checker rejects one it cannot read as a type. The old `[n]T` is a
-# list literal applied to a type.
-$ v : [3] @Int = [1, 2, 3]  #~ error[UNSUPPORTED]: a type written as a term needs dependent types
+# and the checker rejects one that does not reduce to a type. The old `[n]T`
+# is a list literal applied to a type.
+$ v : [3] @Int = [1, 2, 3]  #~ error[TYPE_MISMATCH]: a list stands where a type is expected

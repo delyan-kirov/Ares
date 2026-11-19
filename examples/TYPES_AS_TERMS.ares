@@ -1,0 +1,31 @@
+$ @mod TYPES_AS_TERMS
+
+# \file TYPES_AS_TERMS.ares
+# \info Types are terms (#535). A type-level function is a global returning
+#       `@Type`, a type may stand where a value does (its type is its kind,
+#       and it erases to `{}`), and a type may be computed with `let` or an
+#       applied lambda.
+
+$ pair : @Type -> @Type = \t => { t, t }
+
+# A `let` in a type names a part of it.
+$ endo : @Type -> @Type = \t => let p = pair t in p -> p
+
+$ swap : endo @Int = \p => { p.1, p.0 }
+
+# An applied lambda reduces to its body.
+$ Point : @Type = (\t => { x: t, y: t }) @Float64
+
+$ origin : Point = { .x = 0.0, .y = 0.0 }
+
+# A parameter of type `@Type` takes a type as its argument. Nothing in the
+# result depends on it, so the checker needs no dependent types here.
+$ arity : @Type -> @Int = \_ => 1
+
+$ counted : @Int = arity @Int + arity (pair @Str) + arity (@Int -> @Bool) + arity { x: @Int }
+
+$ test : @Int =
+    (if (swap { 1, 2 }).0 == 2 => 0 else 1) + (if origin.x == 0.0 => 0 else 2)
+        + (if counted == 4 => 0 else 4)
+
+$ &assert (test == 0) "TYPES_AS_TERMS: a check failed"
