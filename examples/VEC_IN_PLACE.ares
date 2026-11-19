@@ -6,7 +6,7 @@ $ @mod VEC_IN_PLACE
 #       still see the old contents: these checks keep a second reference alive
 #       across each update in the ways one can arise.
 
-$ Amb : @effect = flip : {} -> @Bool,
+$ Amb : @Type = @effect flip : {} -> @Bool,
 
 $ build : @Int -> @Vec @Int -> @Vec @Int = \n v => if n == 0 => v else build (n - 1) (@vec_push v n)
 

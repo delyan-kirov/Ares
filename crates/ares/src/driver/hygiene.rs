@@ -294,7 +294,7 @@ impl<'a> Walk<'a> {
                     self.types.insert(*name);
                     self.types.extend(self.ast.slice(*params).iter().copied());
                 }
-                Item::Effect { name, params, ops } => {
+                Item::Effect { name, params, ops, .. } => {
                     self.types.insert(*name);
                     self.types.extend(self.ast.slice(*params).iter().copied());
                     self.globals.extend(self.ast.slice(*ops).iter().map(|op| op.name));
@@ -336,6 +336,9 @@ impl<'a> Walk<'a> {
                                 self.ty(f.ty);
                             }
                         }
+                    }
+                    if let Some(r) = v.result {
+                        self.ty(r);
                     }
                 }
             }

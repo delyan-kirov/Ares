@@ -22,7 +22,7 @@ $ chk_sgn_n : @Int = if sgn (0 - 4) == (0 - 1) => 0 else 1
 $ chk_sgn_0 : @Int = if sgn 0 == 0 => 0 else 1
 
 # --- Guards on the SAME struct pattern (the motivating example) ---------------
-$ Pair : @struct =
+$ Pair : @Type = @struct
     a: @Int,
     b: @Int,
 
@@ -37,7 +37,7 @@ $ chk_cmp_eq : @Int = if cmp Pair.{ .a = 2, .b = 2 } == 1 => 0 else 1
 $ chk_cmp_lt : @Int = if cmp Pair.{ .a = 1, .b = 3 } == 2 => 0 else 1
 
 # --- Guards on the SAME union constructor (fallthrough across one tag) ---------
-$ Box : @union =
+$ Box : @Type = @union
     Some: @Int,
     Nil: {},
 

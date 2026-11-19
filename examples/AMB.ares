@@ -8,8 +8,8 @@ $ @mod AMB
 # over, at no cost. Neither is written differently: `ctl k` is just applied as
 # often as the handler needs.
 
-$ Amb : @effect = flip : {} -> @Bool,
-$ Choose : @effect = choose : @Int -> @Int,
+$ Amb : @Type = @effect flip : {} -> @Bool,
+$ Choose : @Type = @effect choose : @Int -> @Int,
 
 # Every path's result, summed: the clause resumes `k` twice, once per branch.
 $ sum_all : ({} -> <Amb> @Int) -> @Int = \body =>

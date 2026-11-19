@@ -157,7 +157,7 @@ $ map_bytes : (@Int -> @Int) -> @Str -> @Str = \f s => map_bytes_from f s 0 ""
 # not exactly one code point builds U+FFFD, the replacement character. A `@Str`
 # answers `fmap`, `for` and `foldl` over its characters, decoding the UTF-8 as it
 # goes; `len` and `at` stay byte-based.
-$ Char : @struct = code: @Int,
+$ Char : @Type = @struct code: @Int,
 
 $ char_code : Char -> @Int = \c => c.code
 $ char_of_code : @Int -> Char = \n => Char.{ .code = n }

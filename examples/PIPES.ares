@@ -6,7 +6,7 @@ $ @mod PIPES
 # three sit at the lowest precedences, so application and arithmetic bind tighter;
 # `<|>` is the opposite end, the tightest infix operator.
 
-$ Y : @effect = yield : @Int -> {},
+$ Y : @Type = @effect yield : @Int -> {},
 $ sum : ({} -> <Y> @Int) -> @Int = \body =>
     do body {}
     ctl k | Y.yield v => v + k {} | r => r

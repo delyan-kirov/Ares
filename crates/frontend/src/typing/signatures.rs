@@ -196,29 +196,14 @@ impl<'a> Checker<'a> {
     /// type.
     pub(super) fn type_kind(&self, name: StrId) -> Option<Type> {
         let types = &self.unifier.types;
-        let arity = |n: usize| vec![false; n];
-        let params: Vec<bool> = if let Some(info) = self.structs.get(&name) {
-            let mut sizes = Vec::new();
-            info.fields.iter().for_each(|(_, t)| collect_size_vars(self.ast, *t, false, &mut sizes));
-            info.params.iter().map(|p| sizes.contains(p)).collect()
-        } else if let Some(info) = self.unions.get(&name) {
-            let mut sizes = Vec::new();
-            for v in &info.variants {
-                v.payload.iter().for_each(|(_, t)| collect_size_vars(self.ast, *t, false, &mut sizes));
-            }
-            info.params.iter().map(|p| sizes.contains(p)).collect()
-        } else if let Some((params, body)) = self.aliases.get(&name) {
-            let mut sizes = Vec::new();
-            collect_size_vars(self.ast, *body, false, &mut sizes);
-            params.iter().map(|p| sizes.contains(p)).collect()
-        } else if is_base_type(name.as_str()) {
-            arity(usize::from(matches!(name.as_str(), "@Vec" | "@Future" | "@Chan" | "@TVar")))
-        } else {
-            return None;
-        };
+        let kinds = self.param_kinds(name)?;
         let universe = types.con(ty::UNIVERSE);
-        Some(params.iter().rev().fold(universe, |to, &nat| {
-            let from = if nat { types.con(ty::NAT) } else { universe };
+        Some(kinds.iter().rev().fold(universe, |to, kind| {
+            let from = match kind {
+                ParamKind::Type => universe,
+                ParamKind::Nat => types.con(ty::NAT),
+                ParamKind::Row => types.con(StrId::intern("@Row")),
+            };
             types.arrow(from, to)
         }))
     }

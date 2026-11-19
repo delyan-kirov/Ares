@@ -6,7 +6,7 @@ $ @mod AGTxPRO
 # trailing comma is allowed but not required.
 $ @import ARESxALGO
 
-$ Person : @struct =
+$ Person : @Type = @struct
     name: @Str,
     age: @Int,
 
@@ -26,7 +26,7 @@ $ older : @Int = person.age + 1
 
 # Generic structs declare their type parameters after `@struct`; the type is then
 # applied with juxtaposition at use sites.
-$ Box : @struct t =
+$ Box : (t: @Type) -> @Type = @struct
     val: t,
 
 # One declaration, two instantiations in the same program.
@@ -40,7 +40,7 @@ $ unboxed : @Int = ibox.val
 $ label : @Str = sbox.val
 
 # Two parameters, applied in declared order: `Pair a b`.
-$ Pair : @struct a b =
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct
     fst: a,
     snd: b,
 
@@ -54,7 +54,7 @@ $ IntPair : @Type -> @Type = \b => Pair @Int b
 $ ip : IntPair @Str = .{ .fst = 3, .snd = "z" }
 $ ipfst : @Int = ip.fst
 
-$ Weirdtype : @struct a b = fst : a, has : @Int, snd : b
+$ Weirdtype : (a: @Type) -> (b: @Type) -> @Type = @struct fst : a, has : @Int, snd : b
 
 # A bare `.{..}` resolves its struct from the expected type (bidirectional).
 $ try_weird : Real = let w : Weirdtype Real Real = .{ 1.1, 1, 1.1 } in w.fst
@@ -62,7 +62,7 @@ $ try_weird : Real = let w : Weirdtype Real Real = .{ 1.1, 1, 1.1 } in w.fst
 $ try_weird2 : @Float64 = let w = Weirdtype.{ 1.1, 1, 1.1 } in w.fst
 
 # Generic field types nest: a struct holding a `Box @Int`.
-$ Wrap : @struct t =
+$ Wrap : (t: @Type) -> @Type = @struct
     inner: Box t,
 
 $ wrap : Wrap @Int = .{ .inner = ibox }

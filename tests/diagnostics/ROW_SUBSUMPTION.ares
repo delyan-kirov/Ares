@@ -2,7 +2,7 @@ $ @mod ROW_SUBSUMPTION
 
 # A function argument may perform fewer effects than its parameter allows,
 # never more, and a parameter of the argument relates the other way round.
-$ Log : @effect = log : @Str -> {},
+$ Log : @Type = @effect log : @Str -> {},
 
 $ apply : (@Int -> @Int) -> @Int = \f => f 1
 $ noisy : @Int -> <Log> @Int = \n => log "n"; n

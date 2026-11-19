@@ -14,7 +14,7 @@ $ @import ARESxRESULT
 $ @import FORGE
 $ @import HOOKS
 
-$ Command : @union =
+$ Command : @Type = @union
     Build,
     Rebuild,
     Clean,
@@ -41,7 +41,7 @@ $ Command : @union =
 
 # What the command line spells a command as, its arguments, and its help. Each
 # `\n` in `info` continues the description on a line of its own.
-$ Spec : @struct =
+$ Spec : @Type = @struct
     name: @Str,
     usage: @Str,
     info: @Str,

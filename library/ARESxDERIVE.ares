@@ -110,7 +110,7 @@ $ derive_show : @Str -> <@Meta> @Code = \ty =>
 # type that has one. A derived `cmp_T` registers its own instance (see
 # `struct_cmp` / `union_cmp`), which is what makes a field of a derived type
 # comparable inside an enclosing derived type.
-$ ICmp : @struct t = cmp: t -> t -> @Int,
+$ ICmp : (t: @Type) -> @Type = @struct cmp: t -> t -> @Int,
 
 $ compare : @use { d: ICmp t } -> t -> t -> @Int = \a b => d.cmp a b
 
@@ -303,17 +303,17 @@ $ derive_eq : @Str -> <@Meta> @Code = \ty =>
 # `Base`'s variants, for a `&` entry of a declaration. The entries land where
 # the `&` stands, among the ones written by hand:
 #
-#     $ Bar : @struct = &fields_of "Foo", i: @Int
-#     $ Color : @union = &variants_of "Base", Blue: {}
+#     $ Bar : @Type = @struct &fields_of "Foo", i: @Int
+#     $ Color : @Type = @union &variants_of "Base", Blue: {}
 #
 # It is a copy of the text, so `Bar` has no relationship to `Foo`. A generic type
 # is named applied to the declaring type's own parameters, which replace its own:
-# with `$ Pair : @struct a = fst: a, snd: a`, `fields_of "Pair b"` is
+# with `$ Pair : (a: @Type) -> @Type = @struct fst: a, snd: a`, `fields_of "Pair b"` is
 # `fst: b, snd: b`. Leaving the arguments off keeps `Pair`'s names.
 
 # A type application split into its head and arguments, a parenthesized argument
 # kept whole: `"Pair b (@Vec c)"` is `["Pair", "b", "( @Vec c )"]`.
-$ Split : @struct = depth: @Int, cur: @Str, out: @Vec @Str
+$ Split : @Type = @struct depth: @Int, cur: @Str, out: @Vec @Str
 
 $ split_applied : @Str -> @Vec @Str = \src =>
     let step =

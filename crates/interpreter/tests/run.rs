@@ -272,7 +272,7 @@ fn ffi_struct_by_value_argument() {
     );
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
          $ sum_p : P -> @Int = @extern \"C\" \"sum_p\" \"{}\"\n\
          $ test : @Int = sum_p (P.{{ .x = 40, .y = 2 }})",
         arx_path(&so)
@@ -292,8 +292,8 @@ fn ffi_repeated_calls_reuse_cached_resolution() {
     );
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
-         $ Q : @struct @extern \"C\" = a: @Int, b: @Int,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
+         $ Q : @Type = @struct @extern \"C\" a: @Int, b: @Int,\n\
          $ sp : P -> @Int = @extern \"C\" \"sum_p\" \"{lib}\"\n\
          $ sq : Q -> @Int = @extern \"C\" \"sum_p\" \"{lib}\"\n\
          $ go : @Int -> @Int -> @Int = \\n acc => if n == 0 => acc else \
@@ -316,7 +316,7 @@ fn ffi_struct_array() {
     );
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
          $ sum_ps : {{ps: @Vec P, n: @Int}} -> @Int = @extern \"C\" \"sum_ps\" \"{lib}\"\n\
          $ test : @Int = sum_ps {{[P.{{ .x = 1, .y = 2 }}, P.{{ .x = 3, .y = 4 }}, P.{{ .x = 5, .y = 6 }}], 3}}",
         lib = arx_path(&so)
@@ -356,7 +356,7 @@ fn ffi_c_union_by_value() {
     );
     let src = format!(
         "$ @mod M\n\
-         $ U : @union @extern \"C\" = i: @Int, d: @Float64,\n\
+         $ U : @Type = @union @extern \"C\" i: @Int, d: @Float64,\n\
          $ u_as_long : U -> @Int = @extern \"C\" \"u_as_long\" \"{lib}\"\n\
          $ u_from_long : @Int -> U = @extern \"C\" \"u_from_long\" \"{lib}\"\n\
          $ built : @Int = u_as_long (U.{{ .i = 42 }})\n\
@@ -382,8 +382,8 @@ fn ffi_nested_struct_by_value() {
     );
     let src = format!(
         "$ @mod M\n\
-         $ P : @struct @extern \"C\" = x: @Int, y: @Int,\n\
-         $ Seg : @struct @extern \"C\" = a: P, b: P,\n\
+         $ P : @Type = @struct @extern \"C\" x: @Int, y: @Int,\n\
+         $ Seg : @Type = @struct @extern \"C\" a: P, b: P,\n\
          $ seg_sum : Seg -> @Int = @extern \"C\" \"seg_sum\" \"{lib}\"\n\
          $ seg_make : @Int -> Seg = @extern \"C\" \"seg_make\" \"{lib}\"\n\
          $ test : @Int = seg_sum (seg_make 1)",
@@ -400,7 +400,7 @@ fn ffi_struct_by_value_return() {
     // struct return exercises the whole struct-marshalling path (layout, libffi
     // aggregate return, unpack back to a Ares struct value).
     let src = "$ @mod M\n\
-        $ LDivT : @struct @extern \"C\" = quot: @Int, rem: @Int,\n\
+        $ LDivT : @Type = @struct @extern \"C\" quot: @Int, rem: @Int,\n\
         $ lldiv : {numer: @Int, denom: @Int} -> LDivT = @extern \"C\" \"lldiv\" \"libc\"\n\
         $ test : @Int = let d = lldiv {17, 5} in d.quot * 100 + d.rem";
     // 17 / 5 = 3 remainder 2 -> 3*100 + 2.
@@ -412,7 +412,7 @@ fn a_name_two_imports_share_is_qualified() {
     // `make` is defined in two modules. Global scope is flat, so the bare name picks
     // neither: the qualified form names the one wanted, and both stay reachable.
     let p = "$ @mod P\n\
-             $ Box : @struct = v: @Int\n\
+             $ Box : @Type = @struct v: @Int\n\
              $ make : @Int -> Box = \\n => Box.{ .v = n }\n\
              $ unwrap : Box -> @Int = \\b => b.v";
     let q = "$ @mod Q\n$ make : @Int -> @Int = \\n => n + 100";
@@ -434,7 +434,7 @@ fn a_prelude_type_is_not_another_modules_namesake() {
     // P declares its own `Token`, recursive through `Op`, so P's `Op` slots are
     // lazy. Q does not import P: its `Token.Op` is CORE's, a single strict lexeme,
     // in both its layout and its laziness.
-    let p = "$ @mod P\n$ Token : @union = Op: { Token, Token }, Leaf: {}";
+    let p = "$ @mod P\n$ Token : @Type = @union Op: { Token, Token }, Leaf: {}";
     let q = "$ @mod Q\n$ s : @Str = @token_text (Token.Op.{ \"*\" })";
     let root = "$ @mod M\n$ @import Q\n$ r : @Str = Q.s";
     assert_eq!(run_modules(&[p, q, root], "r"), "\"*\"");
@@ -444,7 +444,7 @@ fn a_prelude_type_is_not_another_modules_namesake() {
 fn an_unqualified_tag_prefers_the_expected_union_over_the_prelude() {
     // CORE's `Decl` has a `Missing` variant too. A `.Missing` pattern on a value
     // of P's `Found` is P's.
-    let p = "$ @mod P\n$ Found : @union = Hit: @Int, Missing: {}";
+    let p = "$ @mod P\n$ Found : @Type = @union Hit: @Int, Missing: {}";
     let root = "$ @mod M\n\
                 $ @import P\n\
                 $ score : Found -> @Int = \\ | .Hit.{ n } => n | .Missing => 0\n\
@@ -483,7 +483,7 @@ fn literal_hook_from_imported_module() {
     // A library module provides a user type and its construction instance; a string
     // literal in the importing module builds that type via the IMPORTED instance.
     let lib = "$ @mod LIBSTR\n\
-               $ Text : @struct = bytes: @Str\n\
+               $ Text : @Type = @struct bytes: @Str\n\
                $ strlit_text : @IStrLit Text = .{ .of_str = \\s => Text.{ .bytes = s } }\n\
                $ size : Text -> @Int = \\t => @array_len t.bytes";
     let root = "$ @mod M\n\
@@ -510,7 +510,7 @@ fn ctx_resolves_by_type() {
     // site does not write. It is found by its type (`Ord @Int`), and injected as a
     // leading argument.
     let src = "$ @mod M\n\
-               $ Ord : @struct t = gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
@@ -525,7 +525,7 @@ fn ctx_chains_and_is_overridden() {
     // `max_of` into a min. The flipped instance is local, so global scope keeps one
     // value per type.
     let src = "$ @mod M\n\
-               $ Ord : @struct t = gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
@@ -543,11 +543,11 @@ fn ctx_generic_instance_resolves_per_element_type() {
     // A generic instance `Show (Box t)` is built from `Show t`: resolving the outer
     // context recursively resolves the instance's own one, per element type.
     let src = "$ @mod M\n\
-               $ Show : @struct t = show: t -> @Str,\n\
+               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
                $ show : @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
-               $ Box : @union t = Wrap: {t},\n\
+               $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
                $ sh_box : @use {d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }\n\
                $ r : @Int = if (show (Box.Wrap.{ 5 } : Box @Int) == \"W(5)\") && (show (Box.Wrap.{ @true } : Box @Bool) == \"W(true)\") => 0 else 1";
@@ -560,10 +560,10 @@ fn ctx_bundle_resolves_each_component() {
     // own type and the bundle is built at the call site, so no global of the bundled
     // type has to exist.
     let src = "$ @mod M\n\
-               $ Show : @struct t = show: t -> @Str,\n\
+               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
-               $ Pair : @struct a b = fst: a, snd: b,\n\
+               $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
                $ show_pair : @use {sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
                \t\"(\" ++ sa.show x.fst ++ \", \" ++ sb.show x.snd ++ \")\"\n\
                $ r : @Int = if show_pair (Pair.{ .fst = 5, .snd = @true } : Pair @Int @Bool) == \"(5, true)\" => 0 else 1";
@@ -575,10 +575,10 @@ fn ctx_nullary_instance_resolves_by_expected_type() {
     // A context whose field is a value rather than a function still resolves by type,
     // including where the expected type comes from a struct-literal field.
     let src = "$ @mod M\n\
-               $ Blank : @struct t = blank: t,\n\
+               $ Blank : (t: @Type) -> @Type = @struct blank: t,\n\
                $ bl_int : Blank @Int = .{ .blank = 0 }\n\
                $ bl_str : Blank @Str = .{ .blank = \"\" }\n\
-               $ Pair : @struct a b = fst: a, snd: b,\n\
+               $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
                $ mk : @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
                \tPair.{ .fst = ba.blank, .snd = bb.blank }\n\
                $ p : Pair @Int @Str = mk {}\n\
@@ -591,9 +591,9 @@ fn ctx_instance_crosses_module_boundary() {
     // An imported instance is found by type like a local one, and an imported generic
     // instance keeps its own context requirement across the boundary.
     let lib = "$ @mod GENM\n\
-               $ Show : @struct t = show: t -> @Str,\n\
+               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
                $ show : @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
-               $ Box : @union t = Wrap: {t},\n\
+               $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
                $ sh_box : @use {d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }";
     let root = "$ @mod M\n\
@@ -608,7 +608,7 @@ fn qualified_ctx_call_injects_its_context() {
     // `MOD.f` (qualified) plans its context just like a bare `f`, resolving the
     // instance from the caller's scope.
     let lib = "$ @mod LM\n\
-               $ Ord : @struct t = gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
                $ maxf : @use {o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
     let root = "$ @mod M\n\
                 $ @import LM\n\
@@ -623,7 +623,7 @@ fn declared_type_params_control_order() {
     // b = @Int and a = @Str (the declared order), not the order the fields mention
     // them. Reading `snd` back (typed `b`, i.e. @Int) must give 7.
     let src = "$ @mod M\n\
-               $ Box : @struct b a = fst: a, snd: b\n\
+               $ Box : (b: @Type) -> (a: @Type) -> @Type = @struct fst: a, snd: b\n\
                $ r : @Int = let x : Box @Int @Str = .{ .fst = \"hi\", .snd = 7 } in x.snd";
     assert_eq!(run(src, "r"), "7");
 }
@@ -633,7 +633,7 @@ fn parameterized_alias_picks_which_generic() {
     // `KeyInt` fixes the first parameter, `ValInt` the second; the alias's own
     // parameter fills the one left open. Both instantiate the same `Pair`.
     let src = "$ @mod M\n\
-               $ Pair : @struct a b = fst: a, snd: b\n\
+               $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b\n\
                $ KeyInt : @Type -> @Type = \\b => Pair @Int b\n\
                $ ValInt : @Type -> @Type = \\a => Pair a @Int\n\
                $ p : KeyInt @Str = .{ .fst = 3, .snd = \"x\" }\n\
@@ -647,8 +647,8 @@ fn open_row_param_accepts_any_matching_struct() {
     // One row-polymorphic function `{ x:@Int, y:@Int | r } -> @Int` accepts several
     // distinct nominal structs, as long as they carry x:@Int and y:@Int.
     let src = "$ @mod M\n\
-               $ Point  : @struct = x: @Int, y: @Int,\n\
-               $ Point3 : @struct = x: @Int, y: @Int, z: @Int,\n\
+               $ Point  : @Type = @struct x: @Int, y: @Int,\n\
+               $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int,\n\
                $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p.x * p.y\n\
                $ r : @Int = (area Point.{ .x=3, .y=4 }) + (area Point3.{ .x=5, .y=6, .z=9 })";
     assert_eq!(run(src, "r"), "42");
@@ -674,7 +674,7 @@ fn nominal_struct_update_with_pipe() {
     // Record update on a nominal struct literal uses `| base`: listed fields
     // override, the rest come from `base`. Qualified, bare-inferred, and clone forms.
     let src = "$ @mod M\n\
-               $ P : @struct = a: @Int, b: @Int, c: @Int\n\
+               $ P : @Type = @struct a: @Int, b: @Int, c: @Int\n\
                $ base : P = P.{ .a = 1, .b = 2, .c = 3 }\n\
                $ q : P = P.{ .b = 20 | base }\n\
                $ r0 : P = .{ .a = 10 | base }\n\
@@ -735,7 +735,7 @@ fn overloadable_index_and_shape_sugar() {
     // exercises a tensor of tensors and `t.[i, j]`.
     let src = "$ @mod M\n\
                $ ix_t : @IIndex (@Tensor n a) @Int a = .{ .index = \\t i => @tensor_index t i }\n\
-               $ Box : @struct = base: @Int\n\
+               $ Box : @Type = @struct base: @Int\n\
                $ ix_box : @IIndex Box @Int @Int = .{ .index = \\b i => b.base + i }\n\
                $ g : @Tensor 2 (@Tensor 2 @Int) = [ [1, 2], [3, 4] ]\n\
                $ bx : Box = .{ .base = 100 }\n\
@@ -785,8 +785,8 @@ fn indexing_hook_returns_non_element() {
     // returns an `Option`-shaped union. Exercises a non-element result, resolved on
     // the receiver type.
     let src = "$ @mod M\n\
-               $ Maybe : @union a = Nada: {}, Just: {a}\n\
-               $ Dict : @struct = base: @Int\n\
+               $ Maybe : (a: @Type) -> @Type = @union Nada: {}, Just: {a}\n\
+               $ Dict : @Type = @struct base: @Int\n\
                $ ix_dict : @IIndex Dict @Int (Maybe @Int) = .{\n\
                \t.index = \\m k => if k < m.base => Maybe.Just.{ m.base + k } else Maybe.Nada,\n\
                }\n\
@@ -801,13 +801,13 @@ fn literal_construction_hooks() {
     // blessed interface; the literal (driven by the expected type) then builds that
     // user type instead of the built-in default.
     let src = "$ @mod M\n\
-        $ MyStr : @struct = bytes: @Str\n\
+        $ MyStr : @Type = @struct bytes: @Str\n\
         $ sl : @IStrLit MyStr = .{ .of_str = \\b => MyStr.{ .bytes = b } }\n\
-        $ Wrap : @struct = n: @Int\n\
+        $ Wrap : @Type = @struct n: @Int\n\
         $ il : @IIntLit Wrap = .{ .of_int = \\x => Wrap.{ .n = x } }\n\
-        $ RWrap : @struct = r: @Float64\n\
+        $ RWrap : @Type = @struct r: @Float64\n\
         $ rl : @IRealLit RWrap = .{ .of_real = \\x => RWrap.{ .r = x } }\n\
-        $ Bag : @union a = Items: {@Vec a}\n\
+        $ Bag : (a: @Type) -> @Type = @union Items: {@Vec a}\n\
         $ ql : @ISeqLit a (Bag a) = .{ .of_vec = \\v => Bag.Items.{ v } }\n\
         $ s : MyStr = \"hi\"\n\
         $ w : Wrap = 42\n\
@@ -853,7 +853,7 @@ fn unary_minus_reaches_a_user_instance() {
     // negates exactly when it has both. The call must reach those instances, not fall
     // through to a numeric built-in.
     let src = "$ @mod M\n\
-        $ Money : @struct = cents: @Int\n\
+        $ Money : @Type = @struct cents: @Int\n\
         $ sub_money : ISub Money = .{ .sub = \\a b => Money.{ .cents = a.cents - b.cents } }\n\
         $ zero_money : IZero Money = .{ .zero = Money.{ .cents = 0 } }\n\
         $ r : @Int = (-Money.{ .cents = 5 }).cents";
@@ -864,7 +864,7 @@ fn unary_minus_reaches_a_user_instance() {
 fn literal_hook_via_ascription() {
     // `(e : T)` also drives a construction interface.
     let src = "$ @mod M\n\
-        $ Wrap : @struct = n: @Int\n\
+        $ Wrap : @Type = @struct n: @Int\n\
         $ il : @IIntLit Wrap = .{ .of_int = \\x => Wrap.{ .n = x } }\n\
         $ r : @Int = (41 : Wrap).n + 1";
     assert_eq!(run(src, "r"), "42");
@@ -876,7 +876,7 @@ fn literal_hook_does_not_hijack_default() {
     // plain @Str: resolution fires only when the expected type is the user type, so
     // the default path (folded to a constant) is untouched.
     let src = "$ @mod M\n\
-        $ MyStr : @struct = bytes: @Str\n\
+        $ MyStr : @Type = @struct bytes: @Str\n\
         $ sl : @IStrLit MyStr = .{ .of_str = \\s => MyStr.{ .bytes = s } }\n\
         $ plain  : @Str   = \"abc\"\n\
         $ custom : MyStr = \"xy\"\n\
@@ -904,7 +904,7 @@ fn bare_variant_tag_resolves_by_expected_type() {
     // BARE `.Nil` resolves type-directedly from the expected payload type (`MyList`),
     // not by a global tag search, so the two unions coexist without collision.
     let src = "$ @mod M\n\
-        $ MyList : @union a = Nil: {}, Cons: {a, MyList a}\n\
+        $ MyList : (a: @Type) -> @Type = @union Nil: {}, Cons: {a, MyList a}\n\
         $ total : MyList @Int -> @Int = \\xs => xs |> \\ | MyList.Cons.{h, t} => h + total t | _ => 0\n\
         $ a : MyList @Int = MyList.Cons.{ 1, MyList.Cons.{ 2, .Nil } }\n\
         $ b : @Vec @Int = [3, 4, 5]\n\
@@ -918,7 +918,7 @@ fn literal_pattern_via_equality_hook() {
     // its `IEq` instance: `s |> \ | "hi" => ...` builds "hi" into the user type and
     // compares it with `IEq`, the same interface `==` wraps.
     let src = "$ @mod M\n\
-        $ MyStr : @struct = bytes: @Str\n\
+        $ MyStr : @Type = @struct bytes: @Str\n\
         $ sl : @IStrLit MyStr = .{ .of_str = \\s => MyStr.{ .bytes = s } }\n\
         $ eq_mystr : IEq MyStr = .{ .eq = \\a b => a.bytes == b.bytes }\n\
         $ classify : MyStr -> @Int = \\s => s |> \\ | \"hi\" => 1 | \"bye\" => 2 | _ => 0\n\
@@ -931,7 +931,7 @@ fn sequence_pattern_via_view_hook() {
     // A sequence PATTERN on a user type unfolds its `@ISeqView` instance: `[]`, `[x]`
     // (fixed length: tail must be empty), and `h :: t` all match.
     let src = "$ @mod M\n\
-        $ Stack : @struct a = items: @Vec a\n\
+        $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
         $ sv : @ISeqView (Stack a) a = .{\n\
         \t.view = \\s => s.items |> \\ | h :: t => SeqView.More.{ h, Stack.{ .items = t } } | _ => SeqView.Empty,\n\
         }\n\
@@ -949,7 +949,7 @@ fn range_via_hook_on_a_user_type() {
     // `[lo ... hi]` builds whatever the resolved `@IRange` instance returns: a user
     // type takes the range surface with one, while the bare form stays a `@Vec`.
     let src = "$ @mod M\n\
-        $ Span : @struct = lo: @Int, hi: @Int\n\
+        $ Span : @Type = @struct lo: @Int, hi: @Int\n\
         $ rg : @IRange @Int Span = .{ .range = \\lo hi => Span.{ lo, hi } }\n\
         $ s : Span = [3 ... 9]\n\
         $ v : @Vec @Int = [1 ... 4]\n\
@@ -962,7 +962,7 @@ fn open_range_via_hook_on_a_user_type() {
     // The open `[lo ...]` goes through `@IRangeFrom`; CORE's instance builds an
     // infinite, lazy `List`.
     let src = "$ @mod M\n\
-        $ From : @struct = start: @Int\n\
+        $ From : @Type = @struct start: @Int\n\
         $ rf : @IRangeFrom @Int From = .{ .range_from = \\lo => From.{ lo } }\n\
         $ f : From = [5 ...]\n\
         $ s : List @Int = [2 ...]\n\
@@ -976,7 +976,7 @@ fn cons_operator_takes_an_instance() {
     // `::` is CORE's wrapper over `ICons`, so a user sequence type joins it by
     // defining an instance, as with any other interface.
     let src = "$ @mod M\n\
-        $ Stack : @struct a = items: @Vec a\n\
+        $ Stack : (a: @Type) -> @Type = @struct items: @Vec a\n\
         $ cons_stack : ICons a (Stack a) = .{ .cons = \\x st => Stack.{ .items = x :: st.items } }\n\
         $ s : Stack @Int = 1 :: 2 :: Stack.{ .items = [] }\n\
         $ v : @Vec @Int = 9 :: [8]\n\
@@ -989,7 +989,7 @@ fn slice_hook_covers_sequences_and_user_types() {
     // `xs.[lo ... hi]` resolves `@ISlice`: CORE has instances for `@Vec` / `@Array` /
     // `@Str`, and a user type joins with its own.
     let src = "$ @mod M\n\
-        $ Tape : @struct = cells: @Vec @Int\n\
+        $ Tape : @Type = @struct cells: @Vec @Int\n\
         $ sl : @ISlice Tape Tape = .{\n\
         \t.slice = \\tp lo hi => Tape.{ .cells = tp.cells.[lo ... hi] },\n\
         }\n\
@@ -1073,7 +1073,7 @@ fn record_destructuring_pattern() {
     // Destructure a record by field name (match arm, and lambda shorthand), on an
     // open-row value and a nominal struct; `.._` ignores the rest.
     let src = "$ @mod M\n\
-               $ Point : @struct = x: @Int, y: @Int,\n\
+               $ Point : @Type = @struct x: @Int, y: @Int,\n\
                $ area : { x: @Int, y: @Int | r } -> @Int = \\p => p |> \\ | { .x = a, .y = b, .._ } => a * b\n\
                $ sumxy : { x: @Int, y: @Int | r } -> @Int = \\{ .x, .y } => x + y\n\
                $ nx : Point -> @Int = \\p => p |> \\ | { .x = a } => a\n\
@@ -1086,8 +1086,8 @@ fn generic_struct_satisfies_an_open_row() {
     // A generic struct instance (`Box @Int`, `Pair @Int @Str`) bridges to an open
     // record row by substituting its type arguments for the struct's parameters.
     let src = "$ @mod M\n\
-               $ Box : @struct a = val: a\n\
-               $ Pair : @struct a b = fst: a, snd: b\n\
+               $ Box : (a: @Type) -> @Type = @struct val: a\n\
+               $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b\n\
                $ unwrap : { val: v | r } -> v = \\b => b.val\n\
                $ getfst : { fst: a | r } -> a = \\p => p.fst\n\
                $ r : @Int = unwrap (Box.{ .val = 42 }) + getfst (Pair.{ .fst = 8, .snd = \"s\" })";
@@ -1100,7 +1100,7 @@ fn record_rest_binds_the_leftover_fields() {
     // `Point3` and binding `..rest` yields `{ y, z }`, readable and forwardable.
     // Open case: over `{ x:@Int | r }`, `rest` is the polymorphic remainder.
     let src = "$ @mod M\n\
-               $ Point3 : @struct = x: @Int, y: @Int, z: @Int\n\
+               $ Point3 : @Type = @struct x: @Int, y: @Int, z: @Int\n\
                $ sum2 : { y:@Int, z:@Int } -> @Int = y + z\n\
                $ split : Point3 -> @Int = \\p => p |> \\ | { .x = a, ..rest } => a + sum2 rest\n\
                $ drop_x : { x:@Int, y:@Int | r } -> @Int = \\p => p |> \\ | { .x = a, ..rest } => rest.y + a\n\
@@ -1113,7 +1113,7 @@ fn recursive_struct_field_is_lazy_and_unbounded() {
     // A recursive struct field is lazy: construction is finite, and observing drives the
     // generative recursion lazily, so an infinite stream is fine.
     let src = "$ @mod M\n\
-               $ Stream : @struct t = head : t, tail : Stream t\n\
+               $ Stream : (t: @Type) -> @Type = @struct head : t, tail : Stream t\n\
                $ from : @Int -> Stream @Int = \\n => { .head = n, .tail = from (n + 1) }\n\
                $ nth : @Int -> Stream t -> t = \\n s => if n == 0 => s.head else nth (n - 1) s.tail\n\
                $ r : @Int = (from 10).head + nth 5 (from 10)";
@@ -1128,7 +1128,7 @@ fn imported_global_does_not_shadow_a_same_named_effect_op() {
     // fallback). Regression for the cross-module glob-resolution gap.
     let a = "$ @mod A\n$ get : @Int -> @Int = \\x => x + 1000";
     let b = "$ @mod B\n\
-        $ State : @effect = get : {} -> @Int, put : @Int -> {},\n\
+        $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
         $ getit : {} -> <State> @Int = get {}\n\
         $ run : @Int = do getit {} ctl k | State.get u => k 42 | State.put v => k {} | r => r";
     let root = "$ @mod M\n$ @import A\n$ @import B\n$ r : @Int = B.run";
@@ -1142,10 +1142,10 @@ fn same_named_struct_types_in_two_modules_do_not_collide() {
     // fields differ), which otherwise faults with "no field ...". Regression for
     // the shared-declarations type collision.
     let a = "$ @mod A\n\
-        $ Pair : @struct = fst: @Int, snd: @Int\n\
+        $ Pair : @Type = @struct fst: @Int, snd: @Int\n\
         $ afst : @Int = Pair.{ .fst = 7, .snd = 8 }.fst";
     let b = "$ @mod B\n\
-        $ Pair : @struct = a: @Int, b: @Int\n\
+        $ Pair : @Type = @struct a: @Int, b: @Int\n\
         $ first : Pair -> @Int = \\p => p |> \\ | Pair.{ x, y } => x\n\
         $ bfst : @Int = first Pair.{ .a = 3, .b = 4 }";
     let root = "$ @mod M\n$ @import A\n$ @import B\n$ r : @Int = B.bfst";
@@ -1157,8 +1157,8 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
     // A `Y` handler that sums every yielded value; the `@finale` cleanups perform
     // `Y.yield`, so their effects are observable in the total.
     let prelude = "$ @mod M\n\
-        $ Y : @effect = yield : @Int -> {},\n\
-        $ Exn : @effect = throw : @Str -> a,\n\
+        $ Y : @Type = @effect yield : @Int -> {},\n\
+        $ Exn : @Type = @effect throw : @Str -> a,\n\
         $ sum : ({} -> <Y> @Int) -> @Int = \
           \\body => do body {} ctl k | Y.yield v => v + k {} | x => x\n";
     // Normal completion: body yields 1 and returns 100, cleanup yields 2 -> 103.
@@ -1194,7 +1194,7 @@ fn a_clause_may_resume_its_continuation_more_than_once() {
     // slice. The second `flip` is performed inside a resumed copy and captures
     // again from there: 11 + 1 + 10 + 0.
     let src = "$ @mod M\n\
-        $ Amb : @effect = flip : {} -> @Bool,\n\
+        $ Amb : @Type = @effect flip : {} -> @Bool,\n\
         $ sum_all : ({} -> <Amb> @Int) -> @Int = \
           \\body => do body {} ctl k | Amb.flip u => k @true + k @false | x => x\n\
         $ one : @Int = sum_all (\\_ => if flip {} => 10 else 1)\n\
@@ -1211,8 +1211,8 @@ fn a_stored_continuation_may_be_resumed_more_than_once() {
     // bounds its uses; driving the SAME suspension twice must run the task's
     // remainder twice (1 + 2 + 2), not fault.
     let src = "$ @mod M\n\
-        $ Co : @effect = step : @Int -> {},\n\
-        $ Task : @union = Fin: {}, Susp: { @Int, {} -> Task },\n\
+        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
@@ -1235,7 +1235,7 @@ fn n_resumes_of_one_continuation_cost_n_minus_one_copies() {
     // The first `k` is not its last use, so that resume copies; the second is,
     // so it takes the slice itself.
     let src = "$ @mod M\n\
-        $ Amb : @effect = flip : {} -> @Bool,\n\
+        $ Amb : @Type = @effect flip : {} -> @Bool,\n\
         $ r : @Int = do (if flip {} => 10 else 1) \
           ctl k | Amb.flip u => k @true + k @false | x => x";
     assert_eq!(copies_while(src, "r"), ("11".into(), 1));
@@ -1246,7 +1246,7 @@ fn parameter_passing_state_moves_without_an_annotation() {
     // `k` escapes into a lambda in every clause, so nothing static bounds its
     // uses, yet each resumption is uniquely owned when the lambda resumes it.
     let src = "$ @mod M\n\
-        $ St : @effect = get : {} -> @Int, put : @Int -> {},\n\
+        $ St : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
         $ count : @Int -> <St> @Int = \\n => \
           if n == 0 => get {} else (let s = get {} in let _ = put (s + 1) in count (n - 1))\n\
         $ r : @Int = \
@@ -1261,8 +1261,8 @@ fn parameter_passing_state_moves_without_an_annotation() {
 #[test]
 fn a_stashed_coroutine_continuation_moves_when_driven_once() {
     let src = "$ @mod M\n\
-        $ Co : @effect = step : @Int -> {},\n\
-        $ Task : @union = Fin: {}, Susp: { @Int, {} -> Task },\n\
+        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
@@ -1294,8 +1294,8 @@ fn a_partial_push_applied_twice_does_not_share_its_buffer() {
 #[test]
 fn a_stored_continuation_resumed_twice_copies() {
     let src = "$ @mod M\n\
-        $ Co : @effect = step : @Int -> {},\n\
-        $ Task : @union = Fin: {}, Susp: { @Int, {} -> Task },\n\
+        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} ctl k \
           | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
@@ -1311,8 +1311,8 @@ fn finale_cleanup_runs_when_a_stored_continuation_completes() {
     // The handler stores the continuation instead of resuming; the cleanup runs
     // only when that continuation is later driven to completion (two steps).
     let src = "$ @mod M\n\
-        $ Co : @effect = step : @Int -> {},\n\
-        $ Task : @union = Fin: {}, Susp: { {} -> Task },\n\
+        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Task : @Type = @union Fin: {}, Susp: { {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} ctl k | step v => Task.Susp.{ k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
@@ -1642,7 +1642,7 @@ fn user_type_joins_an_operator_by_instance() {
     // that instance (componentwise); the `@Int + @Int` inside its body, and in `r`,
     // finds CORE's. Proves an operator dispatches through the context it resolves.
     let src = "$ @mod M\n\
-               $ V : @struct = x: @Int, y: @Int\n\
+               $ V : @Type = @struct x: @Int, y: @Int\n\
                $ add_v : IAdd V = .{ .add = \\a b => V.{ .x = a.x + b.x, .y = a.y + b.y } }\n\
                $ r : @Int = let s = V.{ .x = 1, .y = 2 } + V.{ .x = 10, .y = 20 } in s.x + s.y";
     assert_eq!(run(src, "r"), "33");
@@ -1714,7 +1714,7 @@ fn list_sum_and_map() {
 #[test]
 fn union_construction_and_nested_match() {
     let src = "$ @mod M\n\
-               $ Peano : @union = Zero: {}, Succ: { Peano }\n\
+               $ Peano : @Type = @union Zero: {}, Succ: { Peano }\n\
                $ depth : Peano -> @Int = \\n => \
                  n |> \\ | Peano.Zero => 0 \
                  | Peano.Succ.{ Peano.Zero } => 1 \
@@ -1726,12 +1726,12 @@ fn union_construction_and_nested_match() {
 #[test]
 fn struct_field_access_and_match() {
     let src = "$ @mod M\n\
-               $ Point : @struct = x: @Int, y: @Int\n\
+               $ Point : @Type = @struct x: @Int, y: @Int\n\
                $ p : Point = Point.{ .x = 3, .y = 4 }\n\
                $ a : @Int = p.x + p.y";
     assert_eq!(run(src, "a"), "7");
     let m = "$ @mod M\n\
-             $ Point : @struct = x: @Int, y: @Int\n\
+             $ Point : @Type = @struct x: @Int, y: @Int\n\
              $ sum : Point -> @Int = \\pt => pt |> \\ | Point.{ x, y } => x + y | _ => 0\n\
              $ a : @Int = sum Point.{ .x = 10, .y = 20 }";
     assert_eq!(run(m, "a"), "30");
@@ -1844,7 +1844,7 @@ fn recursive_union_slot_is_lazy() {
     // lowering hoisted every non-atom constructor field into a `let` evaluated
     // before the constructor, so building one cell built the whole structure.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ from : @Int -> L @Int = \\n => L.C.{ n, from (n + 1) }\n\
                $ hd : L @Int -> @Int = \\l => l |> \\ | L.C.{h, t} => h | _ => 0\n\
                $ r : @Int = hd (from 7)";
@@ -1857,7 +1857,7 @@ fn a_lazy_slot_is_forced_once() {
     // work once. `n` counts how many cells the second walk had to build: with a
     // non-memoized thunk it would rebuild every one.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
                $ sum : L @Int -> @Int -> @Int = \\l acc => l |> \\ | L.C.{h, t} => sum t (acc + h) | _ => acc\n\
                $ xs : L @Int = mk 5\n\
@@ -1870,7 +1870,7 @@ fn a_self_referential_lazy_global_is_not_a_cycle_at_definition() {
     // A strict slot here faults with "a value global refers to itself while
     // being defined"; under a thunk the reference is not followed until observed.
     let src = "$ @mod M\n\
-               $ S : @struct t = head : t, tail : S t\n\
+               $ S : (t: @Type) -> @Type = @struct head : t, tail : S t\n\
                $ ones : S @Int = { .head = 1, .tail = ones }\n\
                $ r : @Int = ones.tail.tail.tail.head";
     assert_eq!(run(src, "r"), "1");
@@ -1881,7 +1881,7 @@ fn a_non_recursive_field_stays_strict() {
     // Only a slot that leads back to its own type is lazy; everything else keeps
     // call-by-value timing.
     let src = "$ @mod M\n\
-               $ P : @struct = x: @Int, y: @Int\n\
+               $ P : @Type = @struct x: @Int, y: @Int\n\
                $ p : P = P.{ .x = 1 + 1, .y = 3 }\n\
                $ r : @Int = p.x + p.y";
     assert_eq!(run(src, "r"), "5");
@@ -1893,7 +1893,7 @@ fn equality_forces_lazy_slots() {
     // unforced slots would compare representations and report two equal lists as
     // different. The instance is recursive, and resolving it resolves itself.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
                $ eq_l : @use {d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
                \tx |> \\ | L.N => (y |> \\ | L.N => @true | _ => @false)\n\
@@ -1907,7 +1907,7 @@ fn freeing_a_long_list_does_not_recurse_on_the_host_stack() {
     // `Value`'s derived drop nested once per cell, so releasing a list of this
     // length aborted the process AFTER the program had produced its answer.
     let src = "$ @mod M\n\
-               $ L : @union a = N: {}, C: {a, L a},\n\
+               $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> @Int -> L @Int = \\lo hi => if lo > hi => L.N else L.C.{ lo, mk (lo + 1) hi }\n\
                $ len : L @Int -> @Int -> @Int = \\l acc => l |> \\ | L.C.{h, t} => len t (acc + 1) | _ => acc\n\
                $ r : @Int = len (mk 1 200000) 0";

@@ -1,0 +1,4 @@
+$ @mod INDEXED_RESULT_FOREIGN
+
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {} -> List a, Cons: {a, Vec a n} -> Vec a (n + 1)  #~ error[TYPE_MISMATCH]: the constructor `Nil` states a result that is not `Vec`

@@ -39,7 +39,7 @@ fn no_universe_contains_itself() {
 /// its own universe is a universe containing itself.
 #[test]
 fn no_field_is_as_large_as_its_type() {
-    rejects("large-field", "$ Big : @union = Mk: @Type 1\n", "this field is too large");
+    rejects("large-field", "$ Big : @Type 1 = @union Mk: @Type 1\n", "this field is too large");
     rejects(
         "large-field-polymorphic",
         "$ Big : @ctx {u: @l} -> @Type (u + 1) = @union Mk: @Type (u + 1)\n",
@@ -51,8 +51,8 @@ fn no_field_is_as_large_as_its_type() {
 /// anything (the standard counterexample to dropping strict positivity).
 #[test]
 fn no_negative_occurrence() {
-    rejects("negative", "$ Bad : @union = Mk: {Bad -> @Bottom}\n", "may only occur as the result of a field");
-    rejects("negative-nested", "$ Bad : @union = Mk: {(Bad -> @Top) -> @Top}\n", "may only occur as the result of a field");
+    rejects("negative", "$ Bad : @Type 1 = @union Mk: {Bad -> @Bottom}\n", "may only occur as the result of a field");
+    rejects("negative-nested", "$ Bad : @Type 1 = @union Mk: {(Bad -> @Top) -> @Top}\n", "may only occur as the result of a field");
 }
 
 /// An inductive proposition with two constructors and large elimination
@@ -84,7 +84,7 @@ fn no_strong_impredicative_sum() {
 #[test]
 fn quotient_elimination_needs_respect() {
     let src = "\
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 $ R : Nat -> Nat -> @Type 0 = \\x y => @Top
 $ Q : @Type 1 = @Quot Nat R (\\x => @tt) (\\x y e => @tt) (\\x y z e f => @tt)
 $ bad : Q -> Nat = \\q => @qelim (\\_ => Nat) (\\x => x) (\\x y e => @refl x) q

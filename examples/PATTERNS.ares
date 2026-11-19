@@ -9,15 +9,15 @@ $ @mod PATTERNS
 #       `.field = field`). Only irrefutable patterns are allowed here -- no
 #       literals (see `if .. is`).
 
-$ Person : @struct =
+$ Person : @Type = @struct
     name: @Str,
     age: @Int,
 
-$ Point : @struct =
+$ Point : @Type = @struct
     x: @Int,
     y: @Int,
 
-$ Line : @struct =
+$ Line : @Type = @struct
     from: Point,
     to: Point,
 

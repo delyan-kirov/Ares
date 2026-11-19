@@ -112,20 +112,15 @@ globals   : /* empty */ | globals global ;
 global
   : DOLLAR LIDENT opt_sig EQ body
   /* A capitalized name with a signature defines a type as a term (#406):
-   * `$ Frac : @Type 1 = {Integer, Pos}`, or an inductive type whose
-   * signature states its parameters, indices and universe,
-   * `$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, ...`.
-   * One whose signature ends in `@Type` and whose lambda binds every
-   * parameter is a type-level function the checker unfolds (#535):
-   * `$ MapInt : @Type -> @Type = \v => Map @Int v`. */
+   * `$ Frac : @Type 1 = {Integer, Pos}`. One whose signature ends in `@Type`
+   * and whose lambda binds every parameter is a type-level function the
+   * checker unfolds (#535): `$ MapInt : @Type -> @Type = \v => Map @Int v`. */
   | DOLLAR UIDENT COLON expr EQ expr
-  | DOLLAR UIDENT COLON expr EQ AT_UNION union_body
-  | DOLLAR UIDENT COLON AT_STRUCT opt_type_params EQ struct_body
-  | DOLLAR UIDENT COLON AT_STRUCT AT_EXTERN STR opt_type_params EQ struct_body  /* C layout */
-  | DOLLAR UIDENT COLON AT_UNION  opt_type_params EQ union_body
-  | DOLLAR UIDENT COLON AT_UNION  opt_type_params EQ  /* no variants: uninhabited */
-  | DOLLAR UIDENT COLON AT_UNION  AT_EXTERN STR opt_type_params EQ union_body  /* C layout */
-  | DOLLAR UIDENT COLON AT_EFFECT opt_type_params EQ effect_body
+  /* A declared type: the signature states its parameters (#536),
+   * `$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b`,
+   * and for a union its indices, which each constructor states in its
+   * result, `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil: {} -> Vec a 0, ...`. */
+  | DOLLAR UIDENT COLON expr EQ type_decl
   | DOLLAR AT_IMPORT import
   | DOLLAR AT_PRIVATE
   | DOLLAR AT_MAIN COLON expr EQ expr  /* the entry: `@Vec @Str -> <@IO> @Int` */
@@ -136,7 +131,7 @@ global
    * value of it at a desugar site and calls its single field. AT_IFACE is one of
    * `@IIntLit @IRealLit @IImagLit @IStrLit @ISeqLit @IRange @IRangeFrom @IIndex
    * @ISlice @ISeqView @ISeqViewBack @IInterp @IInterpText @IInterpHole`. */
-  | DOLLAR AT_IFACE COLON AT_STRUCT opt_type_params EQ struct_body
+  | DOLLAR AT_IFACE COLON expr EQ AT_STRUCT struct_body
   /* A builtin, declarable only in CORE: the name is the runtime primitive
    * (`$ @iadd : t -> t -> t = @extern "ares"`). */
   | DOLLAR AT_TYCON COLON expr EQ builtin_lit
@@ -163,10 +158,16 @@ import       : dotted_name | any_name EQ dotted_name ;  /* `$ @import V = VEC`: 
 dotted_name  : any_name | any_name DOT any_name ;
 any_name     : UIDENT | LIDENT ;
 
-/* Type parameters after `@struct`/`@union`/`@effect`: `@struct a b = ...`.
- * They are mandatory: every type variable used in the body must be declared here.
- * `opt_` only because a non-generic type declares none (an empty list). */
-opt_type_params : /* empty */ | opt_type_params LIDENT ;
+/* The body of a type declaration. A C-layout union is written with
+ * struct fields, its members sharing offset 0. */
+type_decl
+  : AT_STRUCT struct_body
+  | AT_STRUCT AT_EXTERN STR struct_body  /* C layout */
+  | AT_UNION union_body
+  | AT_UNION  /* no variants: uninhabited */
+  | AT_UNION AT_EXTERN STR struct_body  /* C layout */
+  | AT_EFFECT effect_body
+  ;
 
 struct_body   : field_decls opt_comma ;
 field_decls   : field_decl | field_decls COMMA field_decl ;
@@ -197,8 +198,8 @@ splice : AMP app ;
 payload_decl
   : LBRACE RBRACE
   | LBRACE payload_fields opt_comma RBRACE
-  /* An indexed family's constructor states its result (#406):
-   * `Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }`. A bare
+  /* An indexed family's constructor states its result (#536):
+   * `Cons: {a, Vec a n} -> Vec a (n + 1)`. A bare
    * payload's arrow is its own type, so only a braced payload states one. */
   | LBRACE RBRACE ARROW expr
   | LBRACE payload_fields opt_comma RBRACE ARROW expr

@@ -1,0 +1,4 @@
+$ @mod INDEXED_RESULT_UNSTATED
+
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {}, Cons: {a, Vec a n} -> Vec a (n + 1)  #~ error[TYPE_MISMATCH]: `Vec` has indices, so its constructor `Nil` states its result

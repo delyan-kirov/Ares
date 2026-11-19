@@ -9,7 +9,7 @@ $ @mod RECORD_UPDATE
 #       may be any expression of that type, and a listed field's value may itself
 #       read from `base`. Each `chk*` is 0 when correct and 1 otherwise.
 
-$ Person : @struct =
+$ Person : @Type = @struct
     name: @Str,
     age: @Int,
 
@@ -37,7 +37,7 @@ $ chk_bumped_name : @Int = if bumped.name == "Alice" => 0 else 1
 $ chk_bumped_age : @Int = if bumped.age == 31 => 0 else 1
 
 # Three fields: several unlisted fields fill from the source.
-$ Vec3 : @struct =
+$ Vec3 : @Type = @struct
     x: @Int,
     y: @Int,
     z: @Int,
@@ -56,14 +56,14 @@ $ chk_call_z : @Int = if fromcall.z == 9 => 0 else 1
 
 # The base may be a lazy slot that has not been forced yet: a recursive field,
 # or a recursive variant's payload bound by a pattern. The update forces it.
-$ Chain : @struct = v: @Int, next: Chain
+$ Chain : @Type = @struct v: @Int, next: Chain
 $ chain_from : @Int -> Chain = \n => { .v = n, .next = chain_from (n + 1) }
 $ relinked : Chain = Chain.{ .v = 5 | (chain_from 0).next }
 $ chk_lazy_v : @Int = if relinked.v == 5 => 0 else 1
 $ chk_lazy_next : @Int = if relinked.next.v == 2 => 0 else 1
 
-$ Wrapped : @union = Leaf : { @Int }, Wrap : { Box }
-$ Box : @struct = e: Wrapped, tag: @Int
+$ Wrapped : @Type = @union Leaf : { @Int }, Wrap : { Box }
+$ Box : @Type = @struct e: Wrapped, tag: @Int
 $ unwrap : Box -> Box = \x => x.e |> \ | Wrapped.Wrap.{ inner } => Box.{ .tag = 9 | inner } | _ => x
 $ unwrapped : Box =
     unwrap Box.{ .e = Wrapped.Wrap.{ Box.{ .e = Wrapped.Leaf.{ 1 }, .tag = 0 } }, .tag = 1 }

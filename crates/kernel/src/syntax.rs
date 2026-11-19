@@ -18,7 +18,7 @@
 //! application (see `check::spine`).
 //!
 //! A global whose body is `@axiom` is an axiom. An inductive type is a union:
-//! `$ Nat : @union = Zero: {}, Succ: Nat` in `@Type 1`, or with its parameters,
+//! `$ Nat : @Type 1 = @union Zero: {}, Succ: Nat` in `@Type 1`, or with its parameters,
 //! indices and universe stated, `$ Vec : (a: @Type 1) -> Nat -> @Type 1 =
 //! @union Nil: {} -> Vec a Nat.Zero, Cons: {m: Nat, h: a, t: Vec a m} -> Vec a
 //! Nat.Succ.{ m }`. A constructor is the global `D.Tag`, written `D.Tag.{
@@ -227,14 +227,11 @@ impl Lower<'_> {
             AstItem::Def { name, sig: None, .. } => {
                 Err(self.error(span, format!("a kernel global needs its type: `$ {name} : T = ...`")))
             }
-            AstItem::Union { name, sig, params, variants, splices } => {
+            AstItem::Union { name, sig, variants, splices, .. } => {
                 if !self.ast.slice(*splices).is_empty() {
                     return Err(self.error(span, "a kernel union is written out, without `&` entries"));
                 }
-                let (ty, level_params) = match sig {
-                    Some(sig) => (self.ty(*sig)?, self.level_params(*sig)),
-                    None => (self.classic_union_type(self.ast.slice(*params), span), Vec::new()),
-                };
+                let (ty, level_params) = (self.ty(*sig)?, self.level_params(*sig));
                 let ctors = self.ast.slice(*variants).iter().map(|v| self.constructor(v, span)).collect::<Result<_>>()?;
                 Ok(Item { name: name.as_str().into(), span, level_params, ty, body: ItemBody::Data(ctors) })
             }
@@ -248,12 +245,6 @@ impl Lower<'_> {
     fn level_params(&self, sig: Aol<Ty>) -> Vec<(Name, Span)> {
         let Some(levels) = self.ast.level_params.get(sig) else { return Vec::new() };
         self.ast.slice(*levels).iter().map(|l| (l.name.as_str().into(), l.span)).collect()
-    }
-
-    /// `$ D : @union a b = ...`: each parameter in `@Type 1`, and so the type.
-    fn classic_union_type(&self, params: &[utilities::StrId], span: Span) -> Raw {
-        let ty1 = || raw(RawKind::Sort(RawLevel::Num(1)), span);
-        params.iter().rev().fold(ty1(), |cod, p| raw(RawKind::Pi(p.as_str().into(), Box::new(ty1()), Box::new(cod)), span))
     }
 
     fn constructor(&self, v: &frontend::VariantDecl, item_span: Span) -> Result<RawConstructor> {

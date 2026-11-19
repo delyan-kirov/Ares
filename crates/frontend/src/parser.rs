@@ -412,17 +412,6 @@ impl<'a> Parser<'a> {
         let t = self.peek()?;
         Ok(matches!(t.kind, Kind::Word) && self.text(t).starts_with(|c: char| c.is_ascii_lowercase()))
     }
-    /// The optional type parameters after a `@struct`/`@union` keyword
-    /// and before `=`: `@struct a b = ...`. Empty when omitted (the parameters are
-    /// then inferred from the free type variables in the body).
-    fn parse_type_params(&mut self) -> Result<Slice<StrId>> {
-        let mut params = Vec::new();
-        while self.at_tyvar()? {
-            params.push(self.expect_tyvar("expected a type parameter")?);
-        }
-        Ok(self.ast.make_slice(params))
-    }
-
     /// If `base` is a bare, unqualified variable, its interned name.
     fn bare_var_name(&self, base: Aol<Expr>) -> Option<StrId> {
         match self.ast.exprs.lookup(base) {
@@ -687,33 +676,24 @@ impl<'a> Parser<'a> {
                     body,
                 })
             }
-            // A blessed interface TYPE (`$ @IRange : @struct b t = range: b -> b -> t,`).
-            // The compiler resolves a value of it at the matching desugar site and
-            // projects its single field, so the name is fixed and only CORE declares
-            // it; an implementation is an ordinary value (`$ r : @IRange @Int (@Vec
-            // @Int) = .{ .range = ... }`).
+            // A blessed interface TYPE (`$ @IRange : (b: @Type) -> (t: @Type) ->
+            // @Type = @struct range: b -> b -> t,`). The compiler resolves a value
+            // of it at the matching desugar site and projects its single field, so
+            // the name is fixed and only CORE declares it; an implementation is an
+            // ordinary value (`$ r : @IRange @Int (@Vec @Int) = .{ .range = ... }`).
             name if crate::typing::types::is_blessed_interface(&format!("@{name}")) => {
                 let at_tok = self.bump()?; // the '@I...' token
                 let iname = self.intern(self.text(at_tok));
-                expect!(self, Kind::Colon, "expected ':' and '@struct' for the interface type");
+                expect!(self, Kind::Colon, "expected ':' and a signature for the interface type");
+                let (sig, _) = self.parse_signature()?;
+                expect!(self, Kind::Eq, "expected '=' after the type signature");
                 if !self.at_intrinsic("struct")? {
                     return Err(self.unexpected(
                         &at_tok,
                         "a blessed interface is declared as a one-field '@struct'",
                     ));
                 }
-                self.bump()?; // '@struct'
-                let params = self.parse_type_params()?;
-                expect!(self, Kind::Eq, "expected '=' after '@struct'");
-                let (splices, fields) = self.parse_struct_body()?;
-                Ok(Item::Struct {
-                    name: iname,
-                    params,
-                    splices,
-                    fields,
-                    abi: None,
-                    c_union: false,
-                })
+                Ok(self.parse_type_decl(iname, sig)?.expect("at '@struct'"))
             }
             // A builtin declaration (`$ @iadd : t -> t -> t = @extern "ares"`): the
             // one other `@`-named value, and the checker allows it only in CORE.
@@ -828,88 +808,19 @@ impl<'a> Parser<'a> {
                 body: self.parse_expr(0)?,
             });
         }
-        // After `name :`, an `@struct`/`@union`/`@effect` keyword opens a
-        // type declaration; anything else is a type signature on a value.
-        if let Kind::At = self.peek_kind()? {
-            let at_tok = self.peek()?;
-            let kw = self.intrinsic_name(at_tok);
-            if matches!(kw, "struct" | "union" | "effect") {
-                self.require_type_capital(self.text(name_tok), &name_tok)?;
-            }
-            match kw {
-                "struct" => {
-                    self.bump()?;
-                    // An optional `@extern "abi"` marks a C-layout foreign struct.
-                    // Unlike the function form it names only the ABI (no symbol/lib).
-                    let abi = if self.at_intrinsic("extern")? {
-                        self.bump()?; // '@extern'
-                        Some(self.expect_string("expected an ABI string after '@extern'")?)
-                    } else {
-                        None
-                    };
-                    let params = self.parse_type_params()?;
-                    expect!(self, Kind::Eq, "expected '=' after '@struct'");
-                    let (splices, fields) = self.parse_struct_body()?;
-                    return Ok(Item::Struct {
-                        name,
-                        params,
-                        splices,
-                        fields,
-                        abi,
-                        c_union: false,
-                    });
-                }
-                "union" => {
-                    self.bump()?;
-                    // `@union @extern "abi"` is a C union: struct-like members
-                    // sharing offset 0. It parses and elaborates as a C-repr struct.
-                    if self.at_intrinsic("extern")? {
-                        self.bump()?; // '@extern'
-                        let abi = self.expect_string("expected an ABI string after '@extern'")?;
-                        expect!(self, Kind::Eq, "expected '=' after '@union @extern'");
-                        let (splices, fields) = self.parse_struct_body()?;
-                        return Ok(Item::Struct {
-                            name,
-                            params: self.ast.make_slice(Vec::new()),
-                            splices,
-                            fields,
-                            abi: Some(abi),
-                            c_union: true,
-                        });
-                    }
-                    let params = self.parse_type_params()?;
-                    expect!(self, Kind::Eq, "expected '=' after '@union'");
-                    let (splices, variants) = self.parse_union_body()?;
-                    return Ok(Item::Union {
-                        name,
-                        sig: None,
-                        params,
-                        splices,
-                        variants,
-                    });
-                }
-                "effect" => {
-                    self.bump()?;
-                    let params = self.parse_type_params()?;
-                    expect!(self, Kind::Eq, "expected '=' after '@effect'");
-                    let ops = self.parse_effect_ops()?;
-                    return Ok(Item::Effect { name, params, ops });
-                }
-                _ => {} // an @tycon type signature; fall through
-            }
-        }
         // A capitalized name with a signature defines a type: types are
-        // expressions (#406), so `$ Frac : @Type 1 = {Integer, Pos}`, or an
-        // inductive type whose signature states its parameters and universe,
-        // `$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> ..`.
+        // expressions (#406), so `$ Frac : @Type 1 = {Integer, Pos}`. A body
+        // starting `@struct`, `@union` or `@effect` declares one, its
+        // signature stating the parameters: `$ Vec : (a: @Type) -> @Nat ->
+        // @Type = @union Nil: {} -> Vec a 0, ...`.
         let (sig, ctx) = self.parse_signature()?;
+        if self.at_type_decl()? {
+            self.require_type_capital(self.text(name_tok), &name_tok)?;
+        }
         if is_upper(self.text(name_tok)) && self.ctx_written.is_none() {
             expect!(self, Kind::Eq, "expected '=' after the type signature");
-            if self.at_intrinsic("union")? {
-                self.bump()?; // '@union'
-                let (splices, variants) = self.parse_union_body()?;
-                let params = self.ast.make_slice(Vec::new());
-                return Ok(Item::Union { name, sig: Some(sig), params, splices, variants });
+            if let Some(item) = self.parse_type_decl(name, sig)? {
+                return Ok(item);
             }
             let body = self.parse_expr(0)?;
             let body = self.bind_signature(sig, body);
@@ -929,6 +840,122 @@ impl<'a> Parser<'a> {
             ctx,
             body,
         })
+    }
+
+    /// Whether `= @struct`, `= @union` or `= @effect` comes next.
+    fn at_type_decl(&mut self) -> Result<bool> {
+        if !matches!(self.peek_kind()?, Kind::Eq) {
+            return Ok(false);
+        }
+        let t = self.peek_at(1)?;
+        Ok(matches!(t.kind, Kind::At) && matches!(self.intrinsic_name(t), "struct" | "union" | "effect"))
+    }
+
+    /// The body of a type declaration after `=`: `@struct [@extern "abi"]
+    /// fields`, `@union [@extern "abi"] variants` or `@effect ops`, or `None`
+    /// for any other body. `sig` states the parameters, each a named binder:
+    /// `(a: @Type) -> (n: @Nat) -> @Type`. A union may
+    /// go on with indices, binders its constructors' stated results do not pass
+    /// through as themselves (the kernel's rule, #536).
+    fn parse_type_decl(&mut self, name: StrId, sig: Aol<Ty>) -> Result<Option<Item>> {
+        if !matches!(self.peek_kind()?, Kind::At) {
+            return Ok(None);
+        }
+        let at_tok = self.peek()?;
+        let kw = self.intrinsic_name(at_tok);
+        if !matches!(kw, "struct" | "union" | "effect") {
+            return Ok(None);
+        }
+        self.bump()?; // the keyword
+        let abi = if kw != "effect" && self.at_intrinsic("extern")? {
+            self.bump()?; // '@extern'
+            Some(self.expect_string("expected an ABI string after '@extern'")?)
+        } else {
+            None
+        };
+        let binders = self.decl_binders(sig, kw)?;
+        let named = |n: usize| binders[..n].iter().map(|b| b.expect("checked by decl_binders")).collect::<Vec<_>>();
+        let item = match kw {
+            "struct" => {
+                let (splices, fields) = self.parse_struct_body()?;
+                let params = self.ast.make_slice(named(binders.len()));
+                Item::Struct { name, sig, params, splices, fields, abi, c_union: false }
+            }
+            "union" if abi.is_some() => {
+                let (splices, fields) = self.parse_struct_body()?;
+                let params = self.ast.make_slice(named(binders.len()));
+                Item::Struct { name, sig, params, splices, fields, abi, c_union: true }
+            }
+            "union" => {
+                let (splices, variants) = self.parse_union_body()?;
+                let uniform = self.uniform_params(name, &binders, self.ast.slice(variants));
+                let params = self.ast.make_slice(named(uniform));
+                Item::Union { name, sig, params, splices, variants }
+            }
+            _ => {
+                let ops = self.parse_effect_ops()?;
+                let params = self.ast.make_slice(named(binders.len()));
+                Item::Effect { name, sig, params, ops }
+            }
+        };
+        Ok(Some(item))
+    }
+
+    /// The binders of a type declaration's signature, one per arrow. A
+    /// struct's and an effect's are all named; a union's unnamed ones must
+    /// come last, as its indices.
+    fn decl_binders(&mut self, sig: Aol<Ty>, kw: &str) -> Result<Vec<Option<StrId>>> {
+        let mut binders = Vec::new();
+        let mut cod = sig;
+        while let Ty::Arrow { binder, effect, to, .. } = self.ast.ty(cod) {
+            if effect.is_some() {
+                return Err(self.decl_sig_error(cod, "a type declaration's signature carries no effect row"));
+            }
+            if binder.is_none() && kw != "union" {
+                let what = if kw == "effect" { "an effect" } else { "a struct" };
+                return Err(self.decl_sig_error(cod, &format!(
+                    "{what} has no indices: name each parameter, as in `(a: @Type) -> @Type`"
+                )));
+            }
+            if binder.is_some() && binders.last().is_some_and(Option::is_none) {
+                return Err(self.decl_sig_error(cod, "a named parameter comes before the indices"));
+            }
+            binders.push(*binder);
+            cod = *to;
+        }
+        Ok(binders)
+    }
+
+    fn decl_sig_error(&self, at: Aol<Ty>, msg: &str) -> Diagnostic {
+        Diagnostic::error(Code::UnexpectedToken, self.ast.ty_span(at).unwrap_or(Span::at(0)), 0, msg.to_string())
+    }
+
+    /// How many leading binders of a union's signature are parameters: named,
+    /// and passed through as themselves by every constructor's stated result,
+    /// `Vec a ...`. The rest are indices, as in the kernel.
+    fn uniform_params(&self, name: StrId, binders: &[Option<StrId>], variants: &[VariantDecl]) -> usize {
+        let named = binders.iter().take_while(|b| b.is_some()).count();
+        variants
+            .iter()
+            .filter_map(|v| v.result)
+            .map(|result| {
+                let mut args = Vec::new();
+                let mut head = result;
+                while let Ty::App(f, a) = self.ast.ty(head) {
+                    args.push(*a);
+                    head = *f;
+                }
+                if !matches!(self.ast.ty(head), Ty::Con { name: n, .. } if *n == name) {
+                    return 0;
+                }
+                args.reverse();
+                let passes = |(b, a): (&Option<StrId>, &Aol<Ty>)| {
+                    matches!(self.ast.ty(*a), Ty::Var(v) | Ty::Con { module: None, name: v } if Some(*v) == *b)
+                };
+                binders[..named].iter().zip(&args).take_while(|&p| passes(p)).count()
+            })
+            .min()
+            .unwrap_or(named)
     }
 
     /// A definition whose signature ends in `@Type` after pure arrows, with a
@@ -1415,6 +1442,7 @@ impl<'a> Parser<'a> {
             match self.peek_kind()? {
                 _ if self.at_splice()? => splices.push(self.parse_entry_splice()?),
                 Kind::Word => {
+                    let tag_span = self.peek()?.span;
                     let tag = self.bump_word()?;
                     let payload = if self.eat(|k| matches!(k, Kind::Colon))? {
                         self.parse_payload()?
@@ -1429,7 +1457,7 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    variants.push(VariantDecl { tag, payload, result });
+                    variants.push(VariantDecl { tag, tag_span, payload, result });
                 }
                 _ => break,
             }

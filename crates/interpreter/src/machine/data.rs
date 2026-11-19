@@ -1167,8 +1167,8 @@ fn fragment_wrapper(kind: Fragment) -> (&'static str, &'static str) {
         Fragment::Type => ("$ @mod _META\n$ _t :\n", "\n= {}"),
         Fragment::Row => ("$ @mod _META\n$ _r : {} -> <\n", "\n> {} = {}"),
         Fragment::Pattern => ("$ @mod _META\n$ _p = \\ | ", "\n=> {}"),
-        Fragment::Fields => ("$ @mod _META\n$ Fields : @struct =\n", ""),
-        Fragment::Variants => ("$ @mod _META\n$ Variants : @union =\n", ""),
+        Fragment::Fields => ("$ @mod _META\n$ Fields : @Type = @struct\n", ""),
+        Fragment::Variants => ("$ @mod _META\n$ Variants : @Type = @union\n", ""),
     }
 }
 

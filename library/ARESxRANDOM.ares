@@ -10,7 +10,7 @@ $ @mod ARES
 
 $ @import ARESxALGO
 
-$ Rng : @struct =
+$ Rng : @Type = @struct
     state: @Int,
 
 # Any seed works; 0 (a fixed point of the recurrence) is nudged to 1.

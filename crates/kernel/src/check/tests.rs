@@ -226,7 +226,7 @@ $ contradiction : (p2: @Type 0) -> p2 -> Not p2 -> @Bottom = \p n => n p
 }
 
 pub(crate) const NAT: &str = r"
-$ Nat : @union = Zero: {}, Succ: Nat
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
 $ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
 $ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
 $ four : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Succ.{ Nat.Zero } } } }
@@ -285,7 +285,7 @@ $ length : List @ctx {{.u = 0}} Nat -> Nat = \xs => List.elim @ctx {{.u = 0, .m 
 $ xs : List @ctx {{.u = 0}} Nat = List.Cons.{{ two, List.Cons.{{ four, List.Nil }} }}
 $ p : P (length xs) = @axiom
 $ q : P two = p
-$ Unit : @union = Unit: {{}}
+$ Unit : @Type 1 = @union Unit: {{}}
 $ Vec : Nat -> @Type 1 = \n => Nat.elim @ctx {{.m = 2}} (\_ => @Type 1) Unit (\_ t => {{Nat, t}}) n
 $ v : Vec two = {{Nat.Zero, four, Unit.Unit}}
 "
@@ -305,11 +305,11 @@ $ q : P Nat.Succ.{{ n }} = p
 
 #[test]
 fn inductive_declarations_are_checked() {
-    reject("$ Bad : @union = Mk: {Bad -> Bad}\n", "may only occur as the result of a field");
+    reject("$ Bad : @Type 1 = @union Mk: {Bad -> Bad}\n", "may only occur as the result of a field");
     reject("$ Prop : @Type 0 = @union Yes: {}\n", "inductive propositions are not supported");
-    reject("$ Big : @union = Mk: @Type 1\n", "too large");
-    reject("$ Idx : @Type 1 -> @Type 2 = @union Mk: {}\n$ I : @union = A: {}, A: {}\n", "`I.A` is already defined");
-    reject("$ F : @union = Mk: {}\n$ G : F = @union Mk: {}\n", "must end in `@Type l`");
+    reject("$ Big : @Type 1 = @union Mk: @Type 1\n", "too large");
+    reject("$ Idx : @Type 1 -> @Type 2 = @union Mk: {}\n$ I : @Type 1 = @union A: {}, A: {}\n", "`I.A` is already defined");
+    reject("$ F : @Type 1 = @union Mk: {}\n$ G : F = @union Mk: {}\n", "must end in `@Type l`");
 }
 
 const VEC: &str = r"
@@ -339,7 +339,7 @@ fn the_index_rules_out_constructors() {
     // `head` needs no real case for `vnil`: its motive is `{}`-like at zero.
     let src = format!(
         r"{NAT}{VEC}
-$ Unit : @union = Unit: {{}}
+$ Unit : @Type 1 = @union Unit: {{}}
 $ Head : Nat -> @Type 1 = \k => Nat.elim @ctx {{.m = 2}} (\_ => @Type 1) Unit (\_ _ => Nat) k
 $ head : (n: Nat) -> Vec Nat Nat.Succ.{{ n }} -> Nat = \v => Vec.elim @ctx {{.m = 1}} Nat (\k _ => Head k) Unit.Unit (\m h t r => h) Nat.Succ.{{ n }} v
 $ h : Nat = head Nat.Zero Vec.Vcons.{{ Nat.Zero, four, (Vec.Vnil : Vec Nat Nat.Zero) }}

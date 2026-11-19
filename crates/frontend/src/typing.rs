@@ -66,15 +66,37 @@ pub use resolved::{
 pub use types::BASE_TYPES;
 use types::*;
 
-/// A declared struct type. `params` are the implicit type parameters (the type
-/// variables appearing in the fields, in order of first appearance); `fields`
-/// keeps declaration order (which is also the positional-constructor order).
+/// What a declared type's parameter ranges over, as its signature states:
+/// `(a: @Type)`, `(n: @Nat)` (a size) or `(e: @Row)` (an effect or record
+/// row).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ParamKind {
+    Type,
+    Nat,
+    Row,
+}
+
+impl ParamKind {
+    /// The kind as a signature writes it.
+    fn written(self) -> &'static str {
+        match self {
+            ParamKind::Type => "@Type",
+            ParamKind::Nat => "@Nat",
+            ParamKind::Row => "@Row",
+        }
+    }
+}
+
+/// A declared struct type. `params` are its parameters, in order, and
+/// `kinds` what each ranges over; `fields` keeps declaration order (which is
+/// also the positional-constructor order).
 /// `crepr` is set for a C-layout foreign struct (`@struct @extern "abi"`): its
 /// runtime value is a flat, unboxed C struct rather than a boxed record, and it
 /// may cross the `@extern` boundary by value.
 #[derive(Clone)]
 struct StructInfo {
     params: Vec<StrId>,
+    kinds: Vec<ParamKind>,
     fields: Vec<(StrId, Aol<Ty>)>,
     crepr: bool,
     /// A C `union` (`@union @extern`): members share offset 0. Handled as a C-repr
@@ -82,19 +104,42 @@ struct StructInfo {
     c_union: bool,
 }
 
-/// A declared union type: implicit `params` and one [`VariantSig`] per variant.
+/// A declared union type: its parameters and then its indices, `kinds` what
+/// each ranges over, and one [`VariantSig`] per variant. The first `uniform`
+/// of `params` are the parameters; an unnamed index is called `i1`, `i2`, ...
+/// by its position.
 #[derive(Clone)]
 struct UnionInfo {
     params: Vec<StrId>,
+    kinds: Vec<ParamKind>,
+    uniform: usize,
     variants: Vec<VariantSig>,
 }
 
-/// A union variant: its tag and its (normalized) payload fields, each an optional
-/// name and its declared type.
+/// A union variant: its tag, its (normalized) payload fields, each an optional
+/// name and its declared type, and the result it states, `-> Vec a (n + 1)`,
+/// if any. Every constructor of an indexed union states one.
 #[derive(Clone)]
 struct VariantSig {
     tag: StrId,
     payload: Vec<(Option<StrId>, Aol<Ty>)>,
+    result: Option<Aol<Ty>>,
+    /// The variables of a stated result that are not parameters, `n` in
+    /// `Cons: {a, Vec a n} -> Vec a (n + 1)`, each with what it ranges over.
+    own: Vec<(StrId, ParamKind)>,
+}
+
+/// A variable of a constructor matched by a pattern, `n` of `Cons` in
+/// `Vec.Cons.{ h, t }`. Matching does not tell what it is, so once the
+/// definition is checked it must still be a variable, apart from the
+/// signature's and from every other one. Dependent matching (#543) will
+/// refine it instead.
+#[derive(Clone, Copy)]
+struct OpaqueVar {
+    name: StrId,
+    tag: StrId,
+    span: Span,
+    ty: Type,
 }
 
 /// A variant's payload instantiated to concrete types: one `(optional-name,
@@ -136,6 +181,8 @@ pub struct Checker<'a> {
     imported_effect_ops: HashMap<StrId, HashMap<StrId, Type>>,
     /// How many type parameters each visible effect declares.
     effect_arity: HashMap<StrId, usize>,
+    /// What each effect's parameters range over, by effect.
+    effect_kinds: HashMap<StrId, Vec<ParamKind>>,
     /// While an effect's operations are elaborated: that effect and its
     /// parameters, which a bare mention of it in an operation type stands for.
     effect_self: Option<(StrId, Type)>,
@@ -392,6 +439,9 @@ pub struct Checker<'a> {
     /// elaboration solves (#535), with the span it was written at. A
     /// definition's check takes the ones its signature wrote.
     wildcards: Vec<(Span, Type)>,
+    /// The variables of the constructors matched so far in the definition
+    /// being checked, which must stay opaque (see [`OpaqueVar`]).
+    opaque_vars: Vec<OpaqueVar>,
     /// Set during a metaprogram-expansion round (`$ &` codegen not yet run): an
     /// unbound value name is treated as a fresh type variable rather than an error,
     /// so a module that forward-references an about-to-be-injected definition still
@@ -538,6 +588,7 @@ impl<'a> Checker<'a> {
             effect_ops: HashMap::new(),
             imported_effect_ops: HashMap::new(),
             effect_arity: HashMap::new(),
+            effect_kinds: HashMap::new(),
             effect_self: None,
             overloads: HashMap::new(),
             pending: Vec::new(),
@@ -613,6 +664,7 @@ impl<'a> Checker<'a> {
             ambient,
             unknown_type: None,
             wildcards: Vec::new(),
+            opaque_vars: Vec::new(),
             lenient: false,
             deferred: false,
             deferred_sites: HashSet::new(),
@@ -727,6 +779,7 @@ impl<'a> Checker<'a> {
         self.register_struct_rows();
         self.unknown_type = saved_unknown;
         self.register_effects(program)?;
+        self.check_decl_kinds(program)?;
 
         let defs: Vec<Def> = self
             .ast

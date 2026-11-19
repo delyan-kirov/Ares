@@ -27,7 +27,7 @@ $ IntList : @Type = @Vec @Int
 $ list: IntList = 1 :: []
 
 # @Array is an ordinary type, so it can be a struct field like any other.
-$ Buffer : @struct =
+$ Buffer : @Type = @struct
     bytes: @Array,
     len: @Int,
 

@@ -9,7 +9,7 @@ $ @mod DERIVE_LIB
 
 $ @import ARESxDERIVE
 
-$ Wrap : @union t =
+$ Wrap : (t: @Type) -> @Type = @union
     Nothing: {},
     Just: { t },
 

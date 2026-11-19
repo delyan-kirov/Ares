@@ -8,7 +8,7 @@ $ @mod EFFECT_SUBSUMPTION
 $ @import ARESxALGO
 $ @import ARESxVEC
 
-$ Tally : @effect = tick : @Int -> {},
+$ Tally : @Type = @effect tick : @Int -> {},
 
 $ double : @Int -> @Int = \n => n * 2
 $ count : @Int -> <Tally> @Int = \n => tick n; n

@@ -30,7 +30,7 @@ $ to: @Int -> @Int -> @Vec @Int = \a b =>
 $ sample : @Vec @Int = to 0 3
 $ len3 : @Int = len sample |> \ | 3 => 0 | _ => 1
 
-$ Point: @struct =
+$ Point: @Type = @struct
     x: @Int,
     y: @Int,
 

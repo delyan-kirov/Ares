@@ -71,7 +71,7 @@ $ ck_real : @Int = if rC.[1, 1] == 8.0 => 0 else 2048
 
 # `.[..]` is OVERLOADABLE: a custom type joins the surface by defining
 # `@IIndex`.
-$ Grid : @struct = cells: @Tensor 9 @Int
+$ Grid : @Type = @struct cells: @Tensor 9 @Int
 $ impl_IIndex_for_Grid : @IIndex Grid @Int @Int = .{ .index = \g i => g.cells.[i] }
 $ board : Grid = .{ .cells = [1, 2, 3, 4, 5, 6, 7, 8, 9] }
 $ ck_ext : @Int =

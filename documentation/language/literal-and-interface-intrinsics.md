@@ -70,7 +70,7 @@ Matching:
 - equality is CORE's ordinary `IEq t`, the same interface `==` wraps, so a type
   needs no second instance for its literal patterns.
 
-where core defines `$ SeqView : @union s t = Empty: {}, More: {t, s},`.
+where core defines `$ SeqView : (s: @Type) -> (t: @Type) -> @Type = @union Empty: {}, More: {t, s},`.
 
 ## Desugarings
 
@@ -216,7 +216,7 @@ bidirectionally so the expectation flows into nested `.Tag`s. This lets two unio
 a constructor name without collision.
 
 List half LANDED (2026-09-05): `List` is now an ordinary `@union` declared in CORE.ares
-(`$ List : @union a = Nil: {}, Cons: {a, List a}`), NOT a compiler builtin. Removed the
+(`$ List : (a: @Type) -> @Type = @union Nil: {}, Cons: {a, List a}`), NOT a compiler builtin. Removed the
 hardcoded `List`/`Cons`/`Nil` special-cases from the checker (`variant_sig`,
 `find_union_by_tag`, `union_head_with_tag`) and from lowering (`Declarations::variant`,
 `CONS_FIELDS`); they all resolve through the CORE declaration now. The `[..]`/`::`/`[]`
@@ -237,7 +237,7 @@ routes and backed out of both:
   general unboxed-newtype feature can be revisited if a perf need shows up). NOTE for a
   future attempt: automatic (non-opt-in) unboxing of single-field structs is UNSOUND
   because of the `Con ~ Record` bridge (a nominal 1-field struct can be used structurally
-  as an open record, e.g. `Box : @struct a = val: a` passed to `{ val | r }`), which needs
+  as an open record, e.g. `Box : (a: @Type) -> @Type = @struct val: a` passed to `{ val | r }`), which needs
   the boxed rep; the suite catches this immediately.
 - `@Str` -> `@Array` fold: also not done -- it discards the useful `Str`-vs-raw-bytes
   distinction, and `Str` handling UTF-8/escapes means it stays a real primitive.

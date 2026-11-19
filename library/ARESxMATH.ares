@@ -53,17 +53,17 @@ $ euler : Real = 2.718281828459045
 
 # ---- elementary functions, as interfaces ----
 # Over reals (here) and complex numbers (ARESxCPX) alike.
-$ ISqrt : @struct t = sqrt: t -> t,
+$ ISqrt : (t: @Type) -> @Type = @struct sqrt: t -> t,
 $ sqrt : @use { d: ISqrt t } -> t -> t = \x => d.sqrt x
-$ ISin : @struct t = sin: t -> t,
+$ ISin : (t: @Type) -> @Type = @struct sin: t -> t,
 $ sin : @use { d: ISin t } -> t -> t = \x => d.sin x
-$ ICos : @struct t = cos: t -> t,
+$ ICos : (t: @Type) -> @Type = @struct cos: t -> t,
 $ cos : @use { d: ICos t } -> t -> t = \x => d.cos x
-$ ITan : @struct t = tan: t -> t,
+$ ITan : (t: @Type) -> @Type = @struct tan: t -> t,
 $ tan : @use { d: ITan t } -> t -> t = \x => d.tan x
-$ IExp : @struct t = exp: t -> t,
+$ IExp : (t: @Type) -> @Type = @struct exp: t -> t,
 $ exp : @use { d: IExp t } -> t -> t = \x => d.exp x
-$ ILog : @struct t = log: t -> t,
+$ ILog : (t: @Type) -> @Type = @struct log: t -> t,
 $ log : @use { d: ILog t } -> t -> t = \x => d.log x
 
 $ impl_ISqrt_for_float64 : ISqrt Real = .{ .sqrt = \x => C.sqrt x }

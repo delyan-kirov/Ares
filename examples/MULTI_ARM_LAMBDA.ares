@@ -37,7 +37,7 @@ $ yes_no : @Str -> @Int = \s =>
 $ chk_yes_no : @Int = if yes_no "yes" == 1 && yes_no "no" == 0 && yes_no "?" == 99 => 0 else 1
 
 # --- Exhaustive over a union, no catch-all ---------------------------------------
-$ Color : @union =
+$ Color : @Type = @union
     Red: {},
     Green: {},
     Blue: {},

@@ -31,10 +31,10 @@ fn a_long_match_breaks_its_arms_under_the_head() {
 
 #[test]
 fn a_trailing_comma_keeps_a_declaration_exploded() {
-    let src = "$ @mod M\n$ P : @struct =\n  x: @Int, y: @Int,\n$ Q : @struct = x: @Int, y: @Int,\n";
+    let src = "$ @mod M\n$ P : @Type = @struct\n  x: @Int, y: @Int,\n$ Q : @Type = @struct x: @Int, y: @Int,\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ P : @struct =\n    x: @Int,\n    y: @Int,\n$ Q : @struct = x: @Int, y: @Int,\n"
+        "$ @mod M\n$ P : @Type = @struct\n    x: @Int,\n    y: @Int,\n$ Q : @Type = @struct x: @Int, y: @Int,\n"
     );
 }
 
@@ -80,7 +80,7 @@ fn sequences_break_after_semicolons() {
 
 #[test]
 fn formatting_is_idempotent() {
-    let src = "$ @mod M\n$ go : Light -> @Int = \\l =>\n\tl |> \\ | Light.Red => 0\n\t       | Light.Yellow => if l == l => 1 else 2\n$ P : @struct =\n\tx: @Int,\n";
+    let src = "$ @mod M\n$ go : Light -> @Int = \\l =>\n\tl |> \\ | Light.Red => 0\n\t       | Light.Yellow => if l == l => 1 else 2\n$ P : @Type = @struct\n\tx: @Int,\n";
     let once = narrow(src, 30);
     assert_eq!(narrow(&once, 30), once);
 }

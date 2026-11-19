@@ -9,17 +9,17 @@ $ @mod CORE
 # resolves a value of the applied type and calls its single field. Their names carry the `@` sigil and only
 # CORE declares them, but an implementation is an ordinary value, so a type joins
 # any of these surfaces from user space with no compiler support.
-$ @IIntLit : @struct t = of_int: @Int -> t,
-$ @IRealLit : @struct t = of_real: @Float64 -> t,
-$ @IImagLit : @struct t = of_imag: @Float64 -> t,
-$ @IStrLit : @struct t = of_str: @Str -> t,
-$ @ISeqLit : @struct e t = of_vec: @Vec e -> t,
-$ @IRange : @struct b t = range: b -> b -> t,
-$ @IRangeFrom : @struct b t = range_from: b -> t,
-$ @ISlice : @struct s t = slice: s -> @Int -> @Int -> t,
-$ @IIndex : @struct s i t = index: s -> i -> t,
-$ @ISeqView : @struct s e = view: s -> SeqView s e,
-$ @ISeqViewBack : @struct s e = view_back: s -> SeqView s e,
+$ @IIntLit : (t: @Type) -> @Type = @struct of_int: @Int -> t,
+$ @IRealLit : (t: @Type) -> @Type = @struct of_real: @Float64 -> t,
+$ @IImagLit : (t: @Type) -> @Type = @struct of_imag: @Float64 -> t,
+$ @IStrLit : (t: @Type) -> @Type = @struct of_str: @Str -> t,
+$ @ISeqLit : (e: @Type) -> (t: @Type) -> @Type = @struct of_vec: @Vec e -> t,
+$ @IRange : (b: @Type) -> (t: @Type) -> @Type = @struct range: b -> b -> t,
+$ @IRangeFrom : (b: @Type) -> (t: @Type) -> @Type = @struct range_from: b -> t,
+$ @ISlice : (s: @Type) -> (t: @Type) -> @Type = @struct slice: s -> @Int -> @Int -> t,
+$ @IIndex : (s: @Type) -> (i: @Type) -> (t: @Type) -> @Type = @struct index: s -> i -> t,
+$ @ISeqView : (s: @Type) -> (e: @Type) -> @Type = @struct view: s -> SeqView s e,
+$ @ISeqViewBack : (s: @Type) -> (e: @Type) -> @Type = @struct view_back: s -> SeqView s e,
 
 # An interpolated string `"a ?(x) b"` expected as a type `t` with an `@IInterp`
 # instance builds through a builder `b` instead of concatenating text: `interp`
@@ -28,9 +28,9 @@ $ @ISeqViewBack : @struct s e = view_back: s -> SeqView s e,
 # so `@Int` and `@Str` holes mix. The holes are evaluated first, left to right.
 # Any other expected type gets the `@Str` default: `to_string` each hole and
 # concatenate.
-$ @IInterp : @struct b t = interp: (b -> b) -> t,
-$ @IInterpText : @struct b = text: b -> @Str -> b,
-$ @IInterpHole : @struct b h = hole: b -> h -> b,
+$ @IInterp : (b: @Type) -> (t: @Type) -> @Type = @struct interp: (b -> b) -> t,
+$ @IInterpText : (b: @Type) -> @Type = @struct text: b -> @Str -> b,
+$ @IInterpHole : (b: @Type) -> (h: @Type) -> @Type = @struct hole: b -> h -> b,
 
 # ---- builtins ----
 # The primitives the compiler and runtime implement. `@extern "ares"` declares one:
@@ -217,7 +217,7 @@ $ @eval : @Code -> a = @extern "ares"
 # One lexical token, as `@lex` produces it: the kind is the variant, the payload
 # its lexeme (`Token.Word.{ "foo" }`, `Token.Int.{ "12" }`). `@parse` rejoins the
 # lexemes, so a token built by hand needs only a lexeme that lexes as its kind.
-$ Token : @union =
+$ Token : @Type = @union
     Int: @Str,
     Real: @Str,
     Imaginary: @Str,
@@ -279,7 +279,7 @@ $ @type_of : @Str -> <@Meta> @Str = @extern "ares"
 # the declaration's own `params`. A generator matches `Missing` to handle a name
 # nobody declared; a type whose own `&` entries have not been spliced in yet
 # faults, so the generator runs again once they are.
-$ Decl : @union =
+$ Decl : @Type = @union
     Struct: { params: @Vec @Str, fields: @Vec { @Str, @Str } },
     Union: { params: @Vec @Str, variants: @Vec { @Str, @Str } },
     Value: @Str,
@@ -291,7 +291,7 @@ $ @lookup : @Str -> <@Meta> Decl = @extern "ares"
 $ @scope : {} -> <@Meta> @Vec { @Str, @Str } = @extern "ares"
 
 # Where the running `&` is: its file, line and column (both from 1).
-$ Site : @struct = file: @Str, line: @Int, column: @Int
+$ Site : @Type = @struct file: @Str, line: @Int, column: @Int
 $ @here : {} -> <@Meta> Site = @extern "ares"
 
 # Type-check an expression fragment as if written at the running `&`, seeing
@@ -304,7 +304,7 @@ $ @check : @Code -> <@Meta> @Str = @extern "ares"
 # `help:` line per help, shown at the running `&`. `@fail` is an error that fails
 # the build (`META_ABORT`); `@warn` a warning, after which the build goes on
 # (`META_WARNING`). `diag msg` is one with no notes or helps.
-$ Diag : @struct = message: @Str, notes: @Vec @Str, helps: @Vec @Str
+$ Diag : @Type = @struct message: @Str, notes: @Vec @Str, helps: @Vec @Str
 $ diag : @Str -> Diag = \message => { .message = message, .notes = [], .helps = [] }
 $ @fail : Diag -> <@Meta> a = @extern "ares"
 $ @warn : Diag -> <@Meta> {} = @extern "ares"
@@ -324,20 +324,20 @@ $ @warn : Diag -> <@Meta> {} = @extern "ares"
 # only `@Float64`, not `Real`.
 $ Real : @Type = @Float64
 
-$ IAdd : @struct t = add: t -> t -> t,
-$ ISub : @struct t = sub: t -> t -> t,
-$ IMul : @struct t = mul: t -> t -> t,
-$ IDiv : @struct t = div: t -> t -> t,
-$ IMod : @struct t = mod: t -> t -> t,
+$ IAdd : (t: @Type) -> @Type = @struct add: t -> t -> t,
+$ ISub : (t: @Type) -> @Type = @struct sub: t -> t -> t,
+$ IMul : (t: @Type) -> @Type = @struct mul: t -> t -> t,
+$ IDiv : (t: @Type) -> @Type = @struct div: t -> t -> t,
+$ IMod : (t: @Type) -> @Type = @struct mod: t -> t -> t,
 
 # The additive and multiplicative identities, which a reduction needs as its seed
 # (`LA.dot`, a product over an empty range).
-$ IZero : @struct t = zero: t,
-$ IOne : @struct t = one: t,
+$ IZero : (t: @Type) -> @Type = @struct zero: t,
+$ IOne : (t: @Type) -> @Type = @struct one: t,
 
 # Exponentiation has its own interface, because the algorithms differ by type:
 # integers multiply in a loop, reals go through libm.
-$ IPow : @struct t = raise: t -> t -> t,
+$ IPow : (t: @Type) -> @Type = @struct raise: t -> t -> t,
 
 $ (^) : @use { d: IPow t } -> t -> t -> t = \b e => d.raise b e
 
@@ -464,12 +464,12 @@ $ impl_IPow_for_float32 : IPow @Float32 = .{ .raise = \b e => @f32pow b e }
 # arithmetic on the signed types and logical on the nats, as division is signed or
 # unsigned by type. A shift count is an `@Int`; see `@ishl` for counts past the
 # width. A narrow type wraps what it shifts left or complements back into range.
-$ IAnd : @struct t = and: t -> t -> t,
-$ IOr : @struct t = or: t -> t -> t,
-$ IXor : @struct t = xor: t -> t -> t,
-$ INot : @struct t = not: t -> t,
-$ IShl : @struct t = shl: t -> @Int -> t,
-$ IShr : @struct t = shr: t -> @Int -> t,
+$ IAnd : (t: @Type) -> @Type = @struct and: t -> t -> t,
+$ IOr : (t: @Type) -> @Type = @struct or: t -> t -> t,
+$ IXor : (t: @Type) -> @Type = @struct xor: t -> t -> t,
+$ INot : (t: @Type) -> @Type = @struct not: t -> t,
+$ IShl : (t: @Type) -> @Type = @struct shl: t -> @Int -> t,
+$ IShr : (t: @Type) -> @Type = @struct shr: t -> @Int -> t,
 
 $ (&&&) : @use { d: IAnd t } -> t -> t -> t = \a b => d.and a b
 $ (|||) : @use { d: IOr t } -> t -> t -> t = \a b => d.or a b
@@ -565,8 +565,8 @@ $ f64_to_f32 : @Float64 -> @Float32 = @extern "C" "arx_d2f" ""
 # Write one, or let `DERIVE.derive_eq` / `DERIVE.derive_ord` generate it from the
 # declaration. That is the trade for an honest type: `==` means "this type knows
 # how to compare itself", not "the runtime will try something".
-$ IEq : @struct t = eq: t -> t -> @Bool,
-$ IOrd : @struct t = lt: t -> t -> @Bool,
+$ IEq : (t: @Type) -> @Type = @struct eq: t -> t -> @Bool,
+$ IOrd : (t: @Type) -> @Type = @struct lt: t -> t -> @Bool,
 
 $ (==) : @use { d: IEq t } -> t -> t -> @Bool = \a b => d.eq a b
 $ (!=) : @use { d: IEq t } -> t -> t -> @Bool = \a b => not (d.eq a b)
@@ -668,8 +668,8 @@ $ compose : (b -> <e> c) -> (a -> <e> b) -> a -> <e> c = \f g x => f (g x)
 # `None` when the text is not a value of the type. `?(e)` interpolation desugars
 # to `to_string e`, so a type joins string interpolation by having an `IToString`
 # instance (write one, or let `derive_show` in ARESxDERIVE generate it).
-$ IToString : @struct t = show: t -> @Str,
-$ IFromStr : @struct t = from_str: @Str -> Opt t,
+$ IToString : (t: @Type) -> @Type = @struct show: t -> @Str,
+$ IFromStr : (t: @Type) -> @Type = @struct from_str: @Str -> Opt t,
 
 $ to_string : @use { d: IToString t } -> t -> @Str = \x => d.show x
 $ from_str : @use { d: IFromStr t } -> @Str -> Opt t = \s => d.from_str s
@@ -786,7 +786,7 @@ $ impl_IFromStr_for_float32 : IFromStr @Float32 = .{
 # suffix, which it desugars to the hook below. Everything else here is the same
 # overloading any user type gets, so a program may swap in its own complex type
 # by defining its own hook.
-$ Cpx : @struct = re: Real, im: Real,
+$ Cpx : @Type = @struct re: Real, im: Real,
 
 # `1.2i` resolves `@IImagLit` and calls its single field, so a program that wants
 # its own complex type defines its own instance.
@@ -827,7 +827,7 @@ $ vcons : t -> @Vec t -> @Vec t = \x v => vcons_onto (@vec_push (@vec_new {}) x)
 # `x :: xs` prepends through its own interface, so a sequence type joins the
 # surface with an instance. The element and the sequence are separate parameters, so
 # one instance names both.
-$ ICons : @struct t s = cons: t -> s -> s,
+$ ICons : (t: @Type) -> (s: @Type) -> @Type = @struct cons: t -> s -> s,
 
 $ (::) : @use { d: ICons t s } -> t -> s -> s = \x xs => d.cons x xs
 
@@ -841,7 +841,7 @@ $ range : @Int -> @Int -> @Vec @Int = \lo hi => range_onto (@vec_new {}) lo hi
 # what a range builds by default, and also the worked example of a type joining the
 # whole `[]` surface from user space: the three overloads below give it literals,
 # `::`, and sequence patterns, with no compiler support of its own.
-$ List : @union a = Nil: {}, Cons: { a, List a },
+$ List : (a: @Type) -> @Type = @union Nil: {}, Cons: { a, List a },
 
 $ impl_ISeqLit_for_List : @ISeqLit t (List t) = .{
     .of_vec = \v => list_onto List.Nil v (@vec_len v - 1),
@@ -866,7 +866,7 @@ $ impl_IRange_for_vec : @IRange @Int (@Vec @Int) = .{ .range = \lo hi => range l
 # own joins the surface by having an instance. `@Str` and `@Array` are the packed
 # byte buffers (`@acat`), `@Vec` copies, and a List rebuilds its left spine onto the
 # right with a lazy tail, so the rest of the join happens as the result is walked.
-$ ICat : @struct t = cat: t -> t -> t,
+$ ICat : (t: @Type) -> @Type = @struct cat: t -> t -> t,
 
 $ (++) : @use { d: ICat t } -> t -> t -> t = \a b => d.cat a b
 
@@ -911,7 +911,7 @@ $ impl_ISlice_for_str : @ISlice @Str @Str = .{ .slice = \s lo hi => @array_slice
 # view; the compiler matches sequence patterns by unfolding it. An `@ISeqViewBack`
 # instance returns the same view from the other end (the last element and
 # everything before it), which `rest ++ [z]` patterns step.
-$ SeqView : @union s t = Empty: {}, More: { t, s },
+$ SeqView : (s: @Type) -> (t: @Type) -> @Type = @union Empty: {}, More: { t, s },
 
 # The built-in growable vector `@Vec` joins the `[..]`/`::`/`++` PATTERN surface: its
 # view is `Empty` when empty, else the first element and the tail (a slice). `[...]`
@@ -974,7 +974,7 @@ $ impl_IRangeFrom_for_List : @IRangeFrom @Int (List @Int) = .{ .range_from = \lo
 # type. A function that never returns needs no such type (its result is a type
 # variable, like `@abort`'s); this marks an input that cannot exist, such as the
 # `Err` side of a `Result t InconstructibleUnion`.
-$ InconstructibleUnion : @union =
+$ InconstructibleUnion : @Type = @union
 
 # Turn an impossible value into any type. The match has no arms because there is
 # nothing to match.
@@ -982,13 +982,13 @@ $ absurd : InconstructibleUnion -> a = \n => n |> @absurd
 
 # The outcome of a computation that can go wrong: `Ok` with the answer or `Err`
 # with what went wrong. RESULT holds the functions over it.
-$ Result : @union t e =
+$ Result : (t: @Type) -> (e: @Type) -> @Type = @union
     Ok: t,
     Err: e,
 
 # A value that may be absent: `Some` carries it, `None` is the absence. A lookup
 # answers with one; ARESxOPT holds the functions over it.
-$ Opt : @union t =
+$ Opt : (t: @Type) -> @Type = @union
     Some: t,
     None: {},
 
@@ -996,7 +996,7 @@ $ Opt : @union t =
 # value to a `Result`: the good case and what it carries become `Ok`, the bad case
 # `Err`. A `@Bool` is `Ok {}` or `Err {}`; an `Opt` is `Ok` its payload or
 # `Err {}`.
-$ IToResult : @struct c t e = to_result: c -> Result t e,
+$ IToResult : (c: @Type) -> (t: @Type) -> (e: @Type) -> @Type = @struct to_result: c -> Result t e,
 
 $ impl_IToResult_for_bool : IToResult @Bool {} {} =
     .{ .to_result = \c => if c => Result.Ok.{ {} } else Result.Err.{ {} } }
@@ -1046,7 +1046,7 @@ $ impl_IInterpHole_for_code_str : @IInterpHole @Code @Str =
 # where the literal is written. For `&sql "WHERE id = ?(id)"` the macro gets
 # `pieces = ["WHERE id = ", ""]` and `holes` holding the code `id`, which it
 # can splice back or type with `@check`.
-$ Template : @struct = pieces: @Vec @Str, holes: @Vec @Code
+$ Template : @Type = @struct pieces: @Vec @Str, holes: @Vec @Code
 $ impl_IStrLit_for_Template : @IStrLit Template =
     .{ .of_str = \s => .{ .pieces = [s], .holes = [] } }
 

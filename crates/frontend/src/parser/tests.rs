@@ -12,7 +12,7 @@ fn type_names_must_be_capitalized() {
         Err(e) => e.to_string(),
         Ok(_) => panic!("expected a parse error for {src:?}"),
     };
-    assert!(err("$ @mod M\n$ point : @struct = a: @Int,").contains("capital letter"));
+    assert!(err("$ @mod M\n$ point : @Type = @struct a: @Int,").contains("capital letter"));
     // A lowercase name in type-use position is a type variable and parses.
     assert!(parse("$ @mod M\n$ id : a -> a = \\x => x").is_ok());
     // A capitalized type also parses.
@@ -32,7 +32,7 @@ fn value_and_function_names_must_be_lowercase() {
     assert!(parse("$ @mod M\n$ Foo : @Int = 3").is_ok());
     // Lowercase values/functions parse; capitalized names stay for type decls.
     assert!(parse("$ @mod M\n$ foo : @Int = 3").is_ok());
-    assert!(parse("$ @mod M\n$ Point : @struct = a: @Int,").is_ok());
+    assert!(parse("$ @mod M\n$ Point : @Type = @struct a: @Int,").is_ok());
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn lambda_if_and_comparison() {
 
 #[test]
 fn struct_decl_and_literal_and_field() {
-    let src = "$ @mod M\n$ Person : @struct =\n name: @Str,\n age: @Int,\n\
+    let src = "$ @mod M\n$ Person : @Type = @struct\n name: @Str,\n age: @Int,\n\
                    $ p : Person = Person.{ .name = \"a\", .age = 1 }\n$ n = p.age";
     let p = prog(src);
     let items = p.ast.slice(p.program.items);
@@ -142,9 +142,9 @@ fn struct_decl_and_literal_and_field() {
 #[test]
 fn declared_type_params() {
     let src = "$ @mod M\n\
-               $ Weird : @struct a b = fst: a, has: @Int, snd: b\n\
-               $ Pair : @union a b = Left: a, Right: b\n\
-               $ Stream : @struct t = head: t, tail: Stream t\n\
+               $ Weird : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, has: @Int, snd: b\n\
+               $ Pair : (a: @Type) -> (b: @Type) -> @Type = @union Left: a, Right: b\n\
+               $ Stream : (t: @Type) -> @Type = @struct head: t, tail: Stream t\n\
                $ MapInt : @Type -> @Type = \\v => Map @Int v";
     let p = prog(src);
     let names = |ps: utilities::Slice<utilities::StrId>| {
@@ -385,8 +385,8 @@ fn one_import_per_item() {
 
 #[test]
 fn union_effect_import_and_directives() {
-    let src = "$ @mod M\n$ @import Foo\n$ @private\n$ Color : @union = Red, Green, Blue\n\
-                   $ State : @effect = get : @Int, put : @Int -> @Int\n$ &1";
+    let src = "$ @mod M\n$ @import Foo\n$ @private\n$ Color : @Type = @union Red, Green, Blue\n\
+                   $ State : @Type = @effect get : @Int, put : @Int -> @Int\n$ &1";
     let p = prog(src);
     let items = p.ast.slice(p.program.items);
     assert!(matches!(items[0], Item::Import { .. }));
@@ -553,7 +553,7 @@ fn blessed_interface_prefix_rule() {
         Ok(_) => panic!("expected a parse error for {src:?}"),
     };
     // A blessed interface is a declarable `@`-name, as a one-field `@struct`.
-    assert!(parse("$ @mod M\n$ @IIndex : @struct s i t = index: s -> i -> t,").is_ok());
+    assert!(parse("$ @mod M\n$ @IIndex : (s: @Type) -> (i: @Type) -> (t: @Type) -> @Type = @struct index: s -> i -> t,").is_ok());
     // It is a TYPE, so a value signature on the same name is rejected.
     assert!(err("$ @mod M\n$ @IIndex : a -> @Int -> a = \\t i => t").contains("one-field '@struct'"));
     // Any other `@`-name is a compiler intrinsic, not extensible in user code.
@@ -581,7 +581,7 @@ fn angle_brackets_are_comparisons_in_expressions() {
 #[test]
 fn effect_rows_still_parse_in_type_position() {
     for sig in ["<E> @Int", "<E | e> @Int", "<| e> @Int", "<> @Int"] {
-        let src = format!("$ @mod M\n$ E : @effect = op : @Int -> @Int\n$ f : @Int -> {sig} = \\n => n");
+        let src = format!("$ @mod M\n$ E : @Type = @effect op : @Int -> @Int\n$ f : @Int -> {sig} = \\n => n");
         assert!(parse(&src).is_ok(), "signature `{sig}` failed to parse");
     }
 }
@@ -773,7 +773,7 @@ fn else_no_longer_ends_a_match_or_a_handler() {
 
 #[test]
 fn effect_operation_names_must_be_lowercase() {
-    let err = match parse("$ @mod M\n$ E : @effect = Op : @Int -> {},") {
+    let err = match parse("$ @mod M\n$ E : @Type = @effect Op : @Int -> {},") {
         Err(e) => e.to_string(),
         Ok(_) => panic!("expected a parse error"),
     };
@@ -850,7 +850,7 @@ fn a_rest_left_unnamed_says_how_to_write_it() {
 fn ext_is_an_ordinary_name() {
     // #312: `ext` was a keyword no parser rule consumed, so it could not name
     // anything and the error did not say why.
-    prog("$ @mod KW\n$ S : @struct = a : @Str, ext : @Str,");
+    prog("$ @mod KW\n$ S : @Type = @struct a : @Str, ext : @Str,");
     prog("$ @mod KW\n$ ext : @Int -> @Int = \\ext => ext");
 }
 
@@ -887,7 +887,7 @@ fn a_multi_arm_lambda_is_a_lambda_over_a_match() {
         assert_eq!(p.ast.slice(*arms).len(), 3);
     }
     // A handler's operation clause still ends the arms of a multi-arm lambda.
-    prog("$ @mod M\n$ E : @effect = op: @Int -> @Int\n$ f = \\u => do u {} ctl k | op x => \\ | 0 => 1 | _ => 2 | v => v");
+    prog("$ @mod M\n$ E : @Type = @effect op: @Int -> @Int\n$ f = \\u => do u {} ctl k | op x => \\ | 0 => 1 | _ => 2 | v => v");
 }
 
 /// `\ | p, q => e` takes one argument per comma-separated pattern: a lambda of
@@ -1013,7 +1013,7 @@ fn a_union_may_state_its_signature_and_results() {
         "$ @mod M\n$ Vec : (a: @Type 1) -> Nat -> @Type 1 = @union Nil: {} -> Vec a Nat.Zero, \
          Cons: {m: Nat, h: a, t: Vec a m} -> Vec a Nat.Succ.{ m }",
     );
-    let Item::Union { sig: Some(_), variants, .. } = &p.ast.slice(p.program.items)[0] else {
+    let Item::Union { variants, .. } = &p.ast.slice(p.program.items)[0] else {
         panic!("expected a union with a signature")
     };
     let variants = p.ast.slice(*variants);

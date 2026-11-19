@@ -7,8 +7,8 @@ use kernel::{check_script, normal_form, Signature};
 
 /// Shared definitions, checked before every case.
 const PRELUDE: &str = r"$ @mod RULE
-$ Nat : @union = Zero: {}, Succ: Nat
-$ Bool : @union = False: {}, True: {}
+$ Nat : @Type 1 = @union Zero: {}, Succ: Nat
+$ Bool : @Type 1 = @union False: {}, True: {}
 $ List : @ctx {u: @l} -> (a: @Type (u + 1)) -> @Type (u + 1) = @union Nil: {}, Cons: {h: a, t: List @ctx {.u = u} a}
 $ add : Nat -> Nat -> Nat = \m n => Nat.elim @ctx {.m = 1} (\_ => Nat) n (\_ r => Nat.Succ.{ r }) m
 $ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }
@@ -369,8 +369,8 @@ fn proof_witness() {
 // Test [Data-Form]
 #[test]
 fn data_form() {
-    applies("$ Tree : @union = Leaf: {}, Node: {Tree, Nat, Tree}\n");
-    blocked("$ Big : @union = Mk: @Type 1\n", "too large");
+    applies("$ Tree : @Type 1 = @union Leaf: {}, Node: {Tree, Nat, Tree}\n");
+    blocked("$ Big : @Type 1 = @union Mk: @Type 1\n", "too large");
     blocked("$ Yes : @Type 0 = @union Yes: {}\n", "inductive propositions are not supported");
 }
 
@@ -410,9 +410,9 @@ fn data_iota() {
 // Test [Positivity-Restricted]
 #[test]
 fn positivity_restricted() {
-    applies("$ Rose : @union = Leaf: {}, Node: {Rose, Rose}\n");
-    blocked("$ Bad : @union = Mk: {Bad -> Bad}\n", "may only occur as the result of a field");
-    blocked("$ Nest : @union = Mk: List @ctx {.u = 0} Nest\n", "may only occur as the result of a field");
+    applies("$ Rose : @Type 1 = @union Leaf: {}, Node: {Rose, Rose}\n");
+    blocked("$ Bad : @Type 1 = @union Mk: {Bad -> Bad}\n", "may only occur as the result of a field");
+    blocked("$ Nest : @Type 1 = @union Mk: List @ctx {.u = 0} Nest\n", "may only occur as the result of a field");
 }
 
 // Test [Positivity-Branching]
@@ -420,7 +420,7 @@ fn positivity_restricted() {
 fn positivity_branching() {
     // A countable ordinal and the length of its leftmost branch.
     let ord = r"
-$ Ord : @union = Oz: {}, Os: Ord, Lim: {f: Nat -> Ord}
+$ Ord : @Type 1 = @union Oz: {}, Os: Ord, Lim: {f: Nat -> Ord}
 $ left : Ord -> Nat = \o => Ord.elim @ctx {.m = 1} (\_ => Nat) Nat.Zero (\_ r => Nat.Succ.{ r }) (\_ r => Nat.Succ.{ r Nat.Zero }) o
 $ n : Nat = left Ord.Lim.{ \k => Nat.elim @ctx {.m = 1} (\_ => Ord) Ord.Oz (\_ r => Ord.Os.{ r }) k }
 ";
@@ -445,8 +445,8 @@ $ d : Nat = depth Nat.Zero T.Tn.{ \k => T.Tl.{ k } }
         &format!("{ord}$ bad : Ord -> Nat = \\o => Ord.elim @ctx {{.m = 1}} (\\_ => Nat) Nat.Zero (\\_ r => Nat.Succ.{{ r }}) (\\_ r => Nat.Succ.{{ r }}) o\n"),
         "expected `Nat`, found `Nat -> Nat`",
     );
-    blocked("$ Bad : @union = Mk: {(Bad -> Nat) -> Bad}\n", "may only occur as the result of a field");
-    blocked("$ Bad : @union = Mk: {Nat -> List @ctx {.u = 0} Bad}\n", "may only occur as the result of a field");
+    blocked("$ Bad : @Type 1 = @union Mk: {(Bad -> Nat) -> Bad}\n", "may only occur as the result of a field");
+    blocked("$ Bad : @Type 1 = @union Mk: {Nat -> List @ctx {.u = 0} Bad}\n", "may only occur as the result of a field");
 }
 
 // ## Quotients

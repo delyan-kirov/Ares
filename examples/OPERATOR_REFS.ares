@@ -32,7 +32,7 @@ $ summed : @Int = foldl (+) 0 [1, 2, 3]
 
 # A type of your own joins `+` by implementing its interface: `+` on a `Money` goes
 # through this instance, `+` on an `@Int` through CORE's.
-$ Money : @struct = cents: @Int
+$ Money : @Type = @struct cents: @Int
 
 $ impl_IAdd_for_Money : IAdd Money = .{ .add = \a b => Money.{ .cents = a.cents + b.cents } }
 

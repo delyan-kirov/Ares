@@ -15,8 +15,8 @@ $ @import ARESxALGO
 $ @import ARESxSTR
 $ @import ARESxVEC
 
-$ Rgb : @struct = r: @Int, g: @Int, b: @Int
-$ Shape : @union = Dot: {}, Square: @Int, Rect: { @Int, @Int }
+$ Rgb : @Type = @struct r: @Int, g: @Int, b: @Int
+$ Shape : @Type = @union Dot: {}, Square: @Int, Rect: { @Int, @Int }
 $ area : Shape -> @Int = \
     | Shape.Dot           => 0
     | Shape.Square.{ s }  => s * s

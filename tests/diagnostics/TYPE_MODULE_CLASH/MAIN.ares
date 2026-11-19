@@ -5,4 +5,4 @@ $ @mod MAIN
 $ @import SHAPES
 $ @import Box = ARESxLIST  #~ error[DUPLICATE_SYMBOL]: `Box` names both a type and an import alias
 $ @import Pair = ARESxVEC  #~ error[DUPLICATE_SYMBOL]: `Pair` names both a type and an import alias
-$ Pair : @struct = a: @Int, b: @Int,
+$ Pair : @Type = @struct a: @Int, b: @Int,

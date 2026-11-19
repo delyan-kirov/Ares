@@ -4,7 +4,7 @@ $ @mod AGTxSUM
 
 # A struct type declaration. Fields are `name : Type`, comma-separated; a
 # trailing comma is allowed but not required.
-$ Token : @union =
+$ Token : @Type = @union
     Num: @Int,
     Op: { Token, Token },
     # Sum types should support lazy recursion
@@ -27,7 +27,7 @@ $ chk0b : @Int = is_num (Token.Txt.{ "x" }) |> \ | @false => 0 | _ => 1
 
 # `Maybe` is generic: the free `T in its body is an implicit type parameter, so
 # `Maybe @Int` and `Maybe @Str` are distinct instantiations of one declaration.
-$ Maybe : @union t = Just: t, None: {}
+$ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}
 
 # Match a variant, bind its payload, fall back through a `| _` arm. The signature
 # fixes the element type with `Maybe @Int` (application is juxtaposition).
@@ -54,7 +54,7 @@ $ chk2d : @Int = get 8 none_i |> \ | 8 => 0 | _ => 1
 
 # Two type parameters, ordered by first appearance: `Pair `A `B`. Named payload
 # written out of declared order; LL normalizes it positionally.
-$ Pair : @union a b = P: { lhs: a, rhs: b }
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = @union P: { lhs: a, rhs: b }
 $ mk : Pair @Int @Int = Pair.P.{ .rhs = 2, .lhs = 1 }
 $ chk4 : @Int = mk |> \ | Pair.P.{ .lhs = l, .rhs = r } => (r - l |> \ | 1 => 0 | _ => 1)
 

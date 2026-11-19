@@ -142,7 +142,7 @@ fn equality_proofs_must_typecheck() {
 // Naturals up to parity: `R m n` is `even m ~ even n`, an equality of
 // booleans, so it computes.
 const PARITY: &str = r"
-$ Bool : @union = False: {}, True: {}
+$ Bool : @Type 1 = @union False: {}, True: {}
 $ not : Bool -> Bool = \b => Bool.elim @ctx {.m = 1} (\_ => Bool) Bool.True Bool.False b
 $ even : Nat -> Bool = \n => Nat.elim @ctx {.m = 1} (\_ => Nat -> Bool) (\_ => Bool.True) (\_ r _ => not (r Nat.Zero)) n Nat.Zero
 $ R : Nat -> Nat -> @Type 0 = \m n => even m ~ even n

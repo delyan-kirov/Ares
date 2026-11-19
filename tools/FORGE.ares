@@ -16,30 +16,30 @@ $ @import ARESxVEC
 $ @import ARESxRESULT
 $ @import SH
 
-$ Issue : @struct =
+$ Issue : @Type = @struct
     title: @Str,
     open: @Bool,
 
 # `Unreachable` is the host not answering (offline, CLI missing or logged
 # out), as opposed to the issue not existing.
-$ Lookup : @union =
+$ Lookup : @Type = @union
     Found: Issue,
     Missing: {},
     Unreachable: {},
 
-$ Pr : @union =
+$ Pr : @Type = @union
     Absent: {},
     Open: @Str,
     Merged: {},
     Closed: {},
 
-$ PrSpec : @struct =
+$ PrSpec : @Type = @struct
     branch: @Str,
     base: @Str,
     title: @Str,
     body: @Str,
 
-$ Forge : @effect =
+$ Forge : @Type = @effect
     issue : @Int -> Lookup,
     create_issue : @Str -> Opt @Int,
     pr : @Str -> Pr,

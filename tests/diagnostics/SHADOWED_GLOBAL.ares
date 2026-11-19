@@ -2,7 +2,7 @@ $ @mod SHADOWED_GLOBAL
 
 # A module's globals cannot be rebound by any local binder.
 $ c : @Int = 5
-$ P : @struct = c: @Int, d: @Int
+$ P : @Type = @struct c: @Int, d: @Int
 
 $ lambda : @Int -> @Int = \c => c + 1  #~ error[SHADOWED_GLOBAL]: `c` shadows the global `c` of module `SHADOWED_GLOBAL`
 $ arm : @Int -> @Int = \n => n |> \ | 1 => c + 10 | c => c + 20  #~ error[SHADOWED_GLOBAL]: `c` shadows the global `c`

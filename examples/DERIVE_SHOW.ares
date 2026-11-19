@@ -11,12 +11,12 @@ $ @mod DERIVE_SHOW
 $ @import ARESxDERIVE
 $ @import DERIVE_LIB
 
-$ Rgb : @struct =
+$ Rgb : @Type = @struct
     r: @Int,
     g: @Int,
     b: @Int,
 
-$ Shape : @union =
+$ Shape : @Type = @union
     Dot: {},
     Circle: { @Int },
     Rect: { @Int, @Int },
@@ -24,13 +24,13 @@ $ Shape : @union =
 # A GENERIC union: one type parameter. `derive_show` reflects the parameter and
 # generates `$ to_string : Box t -> @Str  @ctx to_string : t -> @Str`, one generic
 # instance covering every element type.
-$ Box : @union t =
+$ Box : (t: @Type) -> @Type = @union
     Empty: {},
     Full: { t },
 
 # A GENERIC struct with TWO type parameters: one `@ctx to_string` dictionary per
 # parameter, each resolved by type.
-$ Pair : @struct a b =
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct
     fst: a,
     snd: b,
 

@@ -10,7 +10,7 @@ $ @import ARESxVEC
 $ @import ARESxLIST
 $ @import ARESxOPT
 
-$ Yield : @effect = yield : @Int -> {},
+$ Yield : @Type = @effect yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
     do a {}
     ctl k | Yield.yield v => v + k {} | _ => 0

@@ -321,6 +321,7 @@ impl<'a> Checker<'a> {
         for u in other.unions.values() {
             for v in &u.variants {
                 roots.extend(v.payload.iter().map(|(_, t)| *t));
+                roots.extend(v.result);
             }
         }
         roots.extend(other.aliases.values().map(|(_, t)| *t));
@@ -335,6 +336,9 @@ impl<'a> Checker<'a> {
             }
             if let Some(&n) = other.effect_arity.get(&effect) {
                 self.effect_arity.insert(effect, n);
+            }
+            if let Some(kinds) = other.effect_kinds.get(&effect) {
+                self.effect_kinds.insert(effect, kinds.clone());
             }
             for (&op, &scheme) in &other.effect_ops[&effect] {
                 let qualified = self.import_scheme(scheme);

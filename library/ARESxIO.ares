@@ -58,11 +58,11 @@ $ read_dir : @Str -> <@IO> @Vec @Str = \dir =>
 # Empty when the directory cannot be read.
 $ list_dir : @Str -> <@IO> @Vec Entry = \dir => entries (C.list_dir dir) 0 (@vec_new {})
 
-$ Entry : @struct =
+$ Entry : @Type = @struct
     kind: EntryKind,
     name: @Str,
 
-$ EntryKind : @union =
+$ EntryKind : @Type = @union
     Dir: {},
     File: {},
     Link: {},

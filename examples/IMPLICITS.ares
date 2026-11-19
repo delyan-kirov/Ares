@@ -11,10 +11,10 @@ $ @mod IMPLICITS
 #       supplies one by hand. It elaborates to a leading argument, so the backends
 #       need no special support.
 
-$ Ordering : @union = LT: {}, EQ: {}, GT: {}
+$ Ordering : @Type = @union LT: {}, EQ: {}, GT: {}
 
 # The interface, and one implementation for `@Int`.
-$ IOrder : @struct t = compare: t -> t -> Ordering,
+$ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
 
 $ impl_IOrder_for_int : IOrder @Int = .{
     .compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
@@ -42,7 +42,7 @@ $ ck_by_hand : @Int =
 # A GENERIC INSTANCE: `IOrder (Pair a b)` is built from the orders of its parts, so
 # resolving it resolves them too, recursively. Two requirements travel as one tuple,
 # which the call site builds; nothing of the bundled type has to exist.
-$ Pair : @struct a b = fst: a, snd: b,
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,
 
 $ impl_IOrder_for_Pair : @use { oa: IOrder a, ob: IOrder b } -> IOrder (Pair a b) = .{
     .compare = \p q =>

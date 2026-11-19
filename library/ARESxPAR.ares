@@ -98,7 +98,8 @@ $ map_chunks : @Int -> (a -> b) -> @Vec a -> @Vec b = \chunks f v =>
         join_chunks (spawn_chunks f v size 0 (@vec_new {})) 0 (@vec_new {})
 
 # A parallel `fmap`: equal to `fmap f xs`, element for element, for a pure `f`.
-$ IParMap : @struct s a t b = par_map: (a -> b) -> s -> t,
+$ IParMap : (s: @Type) -> (a: @Type) -> (t: @Type) -> (b: @Type) -> @Type = @struct
+    par_map: (a -> b) -> s -> t,
 $ par_map : @use { d: IParMap s a t b } -> (a -> b) -> s -> t = \f xs => d.par_map f xs
 
 $ impl_IParMap_for_vec : IParMap (@Vec a) a (@Vec b) b =

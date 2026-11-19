@@ -2,4 +2,4 @@ $ @mod BB
 
 $ @import AA
 
-$ Outer : @struct = items : @Vec Inner,
+$ Outer : @Type = @struct items : @Vec Inner,
