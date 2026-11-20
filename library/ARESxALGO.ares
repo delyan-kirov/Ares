@@ -16,7 +16,9 @@ $ @mod ARES
 # `break` stops the loop, `continue` skips the rest of the current step. Neither
 # resumes or carries a value (each just aborts the body). Any OTHER effects the
 # body performs pass through to the outer handler.
-$ Loop : @Type = @effect break : {} -> a, continue : {} -> a,
+$ Loop : @Type = @effect
+    break : @ctx { a: @Type } -> {} -> a,
+    continue : @ctx { a: @Type } -> {} -> a,
 $ break : @ctx { a: @Type } -> {} -> <Loop> a = Loop.break {}
 $ continue : @ctx { a: @Type } -> {} -> <Loop> a = Loop.continue {}
 

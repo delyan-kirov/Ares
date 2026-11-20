@@ -9,7 +9,8 @@ $ @mod EFFECTS
 
 $ @import ARESxALGO
 
-$ Exn : @Type = @effect throw : @Str -> a, # never resumes -> polymorphic result
+$ Exn : @Type = @effect
+    throw : @ctx { a: @Type } -> @Str -> a, # never resumes -> polymorphic result
 $ Yield : @Type = @effect yield : @Int -> {},
 $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 

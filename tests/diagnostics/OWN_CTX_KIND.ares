@@ -1,0 +1,5 @@
+$ @mod OWN_CTX_KIND
+
+# A constructor's `@ctx` says what each of its own variables ranges over.
+$ Len : @Nat -> @Type =
+    @union Z: {} -> Len 0, S: @ctx {n: @Type} -> {Len n} -> Len (n + 1)  #~ error[TYPE_MISMATCH]: `n` is a `@Type`, but it stands where a `@Nat` is expected

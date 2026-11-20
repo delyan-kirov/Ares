@@ -203,6 +203,12 @@ payload_decl
    * payload's arrow is its own type, so only a braced payload states one. */
   | LBRACE RBRACE ARROW expr
   | LBRACE payload_fields opt_comma RBRACE ARROW expr
+  /* Its own variables, those of the result beyond the parameters, are bound
+   * in a `@ctx` ahead of the payload (#558):
+   * `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`. Only a
+   * constructor that states its result has one. */
+  | ctx_param ARROW LBRACE RBRACE ARROW expr
+  | ctx_param ARROW LBRACE payload_fields opt_comma RBRACE ARROW expr
   | app_nb
   | app_nb ARROW expr
   | app_nb ARROW eff_row expr
@@ -213,6 +219,9 @@ payload_field  : expr | LIDENT COLON expr ;
 
 effect_body : op_decls opt_comma ;
 op_decls    : op_decl | op_decls COMMA op_decl ;
+/* An operation's type may open with a `@ctx` binding its own variables,
+ * chosen by each performer: `throw : @ctx {a: @Type} -> @Str -> a` (#558).
+ * `expr` admits `ctx_param ARROW expr`; parser.rs takes only a leading one. */
 op_decl     : LIDENT COLON expr ;
 
 opt_comma   : /* empty */ | COMMA ;
@@ -236,7 +245,8 @@ use_param  : AT_USE LBRACE use_fields opt_comma RBRACE ;
  * signature binds every type variable it names this way. Like `@use`: any
  * number, anywhere on a global's signature, at least one field, names unique
  * across the signature; never inside a parameter's type, an annotation, a
- * local `let`'s type or a field type, which parser.rs enforces. A use leaves
+ * local `let`'s type or a field type, which parser.rs enforces. A constructor
+ * or an effect operation opens with one binding its own variables (#558). A use leaves
  * the fields to unification or gives some by name, `f @ctx {.t = @Int}`. */
 ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE ;
 use_fields : LIDENT COLON expr | use_fields COMMA LIDENT COLON expr ;

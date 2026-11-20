@@ -1175,6 +1175,23 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// The `@ctx {..} ->` opening a constructor's or effect operation's type,
+    /// binding the variables it uses beyond the declaration's parameters.
+    /// Levels are the declaration's, so `@l` fields are an error here.
+    fn parse_own_ctx(&mut self, what: &str) -> Result<Vec<UseField>> {
+        if !(self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace)) {
+            return Ok(Vec::new());
+        }
+        let (mut levels, mut ctx, mut uses) = (Vec::new(), Vec::new(), Vec::new());
+        self.parse_ctx_fields(0, true, &mut levels, &mut ctx, &mut uses)?;
+        if let Some(l) = levels.first() {
+            return Err(Diagnostic::error(Code::UnexpectedToken, l.span, 0, format!("{what} binds no level"))
+                .with_help(format!("bind `{}` in the declaration's signature", l.name)));
+        }
+        self.binder_arrow("@ctx")?;
+        Ok(ctx)
+    }
+
     /// After `->` and its row: a type must follow.
     fn expect_type_after_arrow(&mut self) -> Result<()> {
         let t = self.peek()?;
@@ -1444,7 +1461,9 @@ impl<'a> Parser<'a> {
             }
             let name = self.bump_word()?;
             expect!(self, Kind::Colon, "expected ':' after the operation name");
+            let ctx = self.parse_own_ctx("an effect operation")?;
             let ty = self.parse_type()?;
+            self.record_ctx(ty, Vec::new(), ctx);
             ops.push(FieldDecl { name, ty });
             if !self.eat(|k| matches!(k, Kind::Comma))? {
                 break;
@@ -1485,10 +1504,12 @@ impl<'a> Parser<'a> {
                 Kind::Word => {
                     let tag_span = self.peek()?.span;
                     let tag = self.bump_word()?;
-                    let payload = if self.eat(|k| matches!(k, Kind::Colon))? {
-                        self.parse_payload()?
+                    let (ctx, ctx_at, payload) = if self.eat(|k| matches!(k, Kind::Colon))? {
+                        let at = self.here()?;
+                        let ctx = self.parse_own_ctx("a constructor")?;
+                        (ctx, Some(at), self.parse_payload()?)
                     } else {
-                        Payload::None
+                        (Vec::new(), None, Payload::None)
                     };
                     // `Tag: {fields} -> D a i`: an indexed family's constructor
                     // states its result. A bare payload's arrow is its own type.
@@ -1498,7 +1519,18 @@ impl<'a> Parser<'a> {
                     } else {
                         None
                     };
-                    variants.push(VariantDecl { tag, tag_span, payload, result });
+                    if let (Some(f), None) = (ctx.first(), result) {
+                        return Err(Diagnostic::error(
+                            Code::UnexpectedToken,
+                            tag_span,
+                            0,
+                            format!("constructor `{tag}` binds `{}` in `@ctx` but states no result", f.name),
+                        )
+                        .with_note("a constructor's own variables are those of the result it states, as in `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`")
+                        .with_help("write the payload in braces and state the result: `{T} -> D a i`"));
+                    }
+                    let ctx = self.ast.make_slice(ctx);
+                    variants.push(VariantDecl { tag, tag_span, ctx, ctx_at, payload, result });
                 }
                 _ => break,
             }
@@ -1607,7 +1639,7 @@ impl<'a> Parser<'a> {
             at.line,
             "a `@ctx` parameter stands only on the arrows of a global's signature",
         )
-        .with_note("not inside a parameter's type, an annotation, a local `let`'s type, or a field type"))
+        .with_note("or first in a constructor's or effect operation's type; not inside a parameter's type, an annotation, a local `let`'s type, or a field type"))
     }
 
     fn use_param_misplaced(&mut self) -> Result<Diagnostic> {
