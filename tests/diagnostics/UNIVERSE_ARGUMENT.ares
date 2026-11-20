@@ -1,0 +1,9 @@
+$ @mod UNIVERSE_ARGUMENT
+
+# A type argument fits the universe of its parameter, and a definition that
+# passes its own parameter on keeps that bound for its callers.
+$ count : (t: @Type 1) -> @Int = 0
+$ again : (s: @Type) -> @Int = count s
+$ fine : @Int = again @Int
+$ big : @Int = count (@Type 1)  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ through : @Int = again (@Type 1)  #~ error[TYPE_MISMATCH]: universe level mismatch

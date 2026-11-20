@@ -111,6 +111,14 @@ impl Unifier {
                 let (x, y) = (self.subst_vars(a, sub), self.subst_vars(b, sub));
                 self.types.add(TypeNode::NatMul(x, y))
             }
+            TypeNode::LevelMax(a, b) => {
+                let (x, y) = (self.subst_vars(a, sub), self.subst_vars(b, sub));
+                self.types.add(TypeNode::LevelMax(x, y))
+            }
+            TypeNode::LevelAdd(l, n) => {
+                let l = self.subst_vars(l, sub);
+                self.types.add(TypeNode::LevelAdd(l, n))
+            }
             TypeNode::Arrow(from, to, eff) => {
                 let (f, t, e) = (
                     self.subst_vars(from, sub),

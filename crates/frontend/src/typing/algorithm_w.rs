@@ -1209,9 +1209,9 @@ impl<'a> Checker<'a> {
             Expr::Type(t) => {
                 let t = *t;
                 let mut tvars = self.scoped_tvars.clone();
-                self.ty_reporting(t, &mut tvars, None);
+                let ty = self.ty_reporting(t, &mut tvars, None);
                 self.type_terms.insert(e);
-                Ok(self.unifier.types.con(ty::UNIVERSE))
+                Ok(self.universe_holding(ty))
             }
         }
     }
@@ -1835,7 +1835,8 @@ impl<'a> Checker<'a> {
         } else if self.scoped_tvars.get(&name).is_some_and(|t| !self.unifier.is_size_var(*t)) {
             // A `@ctx {t: @Type}` field as a value is the type, erased.
             self.type_terms.insert(site);
-            Ok(self.unifier.types.con(ty::UNIVERSE))
+            let t = self.scoped_tvars[&name];
+            Ok(self.universe_holding(t))
         } else if let Some(kind) = self.type_kind(name) {
             self.type_terms.insert(site);
             Ok(kind)

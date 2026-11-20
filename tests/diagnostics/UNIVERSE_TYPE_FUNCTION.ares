@@ -1,0 +1,6 @@
+$ @mod UNIVERSE_TYPE_FUNCTION
+
+# A type-level function's argument fits the universe of its parameter.
+$ Twice : @Type 1 -> @Type 1 = \t => {t, t}
+$ pair : @Type 1 = Twice @Int
+$ big : @Type 3 = Twice (@Type 1)  #~ error[TYPE_MISMATCH]: universe level mismatch

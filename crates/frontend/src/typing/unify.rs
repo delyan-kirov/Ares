@@ -23,6 +23,7 @@
 //! Entry points: [`Unifier::unify`], [`Unifier::generalize`],
 //! [`Unifier::instantiate`].
 
+pub mod levels;
 pub mod rows;
 pub mod sizes;
 
@@ -78,6 +79,15 @@ pub struct Unifier {
     /// Set while [`Unifier::wake`] runs, so a binding it makes does not wake
     /// the equations again from inside.
     waking: bool,
+    /// The level each type variable bound with a universe stands at.
+    /// See Note [Level constraints].
+    var_levels: HashMap<VarId, Type>,
+    /// Level constraints waiting for their definition to settle them.
+    level_le: Vec<levels::LevelLe>,
+    /// Level constraints over generalised variables, copied at each
+    /// instantiation, and their index by variable.
+    scheme_le: Vec<levels::LevelLe>,
+    scheme_le_by_var: HashMap<VarId, Vec<usize>>,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -85,6 +95,8 @@ pub struct Unifier {
 enum Whnf {
     /// A size, evaluated: the `Nat` case of normalisation.
     Size(sizes::Poly),
+    /// A universe level, which [`Unifier::unify_level`] compares by normal form.
+    Level,
     /// Any other type: its head node.
     Node(TypeNode),
 }
@@ -101,6 +113,10 @@ enum Undo {
     Postponed,
     /// Put this postponed size equation back, unsolved.
     Woken(usize, sizes::Postponed),
+    /// Forget this type variable's level again.
+    VarLevel(VarId),
+    /// Drop the last waiting level constraint again.
+    LevelLe,
 }
 
 /// A checkpoint of the [`Unifier`] state, taken by [`Unifier::save`] and rewound by
@@ -129,6 +145,10 @@ impl Unifier {
             keep: HashSet::new(),
             postponed: Vec::new(),
             waking: false,
+            var_levels: HashMap::new(),
+            level_le: Vec::new(),
+            scheme_le: Vec::new(),
+            scheme_le_by_var: HashMap::new(),
         }
     }
 
@@ -280,6 +300,12 @@ impl Unifier {
                     self.postponed.pop();
                 }
                 Undo::Woken(i, c) => self.postponed[i] = Some(c),
+                Undo::VarLevel(id) => {
+                    self.var_levels.remove(&id);
+                }
+                Undo::LevelLe => {
+                    self.level_le.pop();
+                }
             }
         }
         self.vars.truncate(save.vars);
@@ -339,6 +365,7 @@ impl Unifier {
                 Whnf::Size(self.normalize_size(ty))
             }
             TypeNode::Var(id) if self.is_nat_var(id) => Whnf::Size(self.normalize_size(ty)),
+            TypeNode::Level(_) | TypeNode::LevelAdd(..) | TypeNode::LevelMax(..) => Whnf::Level,
             node => Whnf::Node(node),
         }
     }
@@ -361,6 +388,9 @@ impl Unifier {
             TypeNode::NatMul(a, b) => {
                 let (x, y) = (self.zonk(a), self.zonk(b));
                 self.types.add(TypeNode::NatMul(x, y))
+            }
+            TypeNode::Level(_) | TypeNode::LevelAdd(..) | TypeNode::LevelMax(..) => {
+                self.level_of_nf(&self.normalize_level(ty))
             }
             TypeNode::Arrow(from, to, eff) => {
                 let (f, t, e) = (self.zonk(from), self.zonk(to), self.zonk(eff));
@@ -447,6 +477,10 @@ impl Unifier {
             (Whnf::Node(TypeNode::Var(i)), Whnf::Size(_)) => return self.bind(i, b),
             (Whnf::Size(_), Whnf::Node(_)) => return Err(self.kind_mismatch(self.found_first)),
             (Whnf::Node(_), Whnf::Size(_)) => return Err(self.kind_mismatch(!self.found_first)),
+            (Whnf::Level, Whnf::Level) => return self.unify_level(a, b, where_),
+            (Whnf::Level, Whnf::Node(TypeNode::Var(j))) => return self.bind(j, a),
+            (Whnf::Node(TypeNode::Var(i)), Whnf::Level) => return self.bind(i, b),
+            (Whnf::Level, _) | (_, Whnf::Level) => return Err(self.mismatch(written_a, written_b, where_)),
             (Whnf::Node(na), Whnf::Node(nb)) => (na, nb),
         };
         match (na, nb) {
@@ -523,6 +557,7 @@ impl Unifier {
         };
         self.check_kind(id, ty)?;
         self.occurs_and_adjust(id, level, ty)?;
+        self.bind_level(id, ty)?;
         self.set_var(id, VarState::Linked(ty));
         self.wake()
     }
@@ -548,13 +583,14 @@ impl Unifier {
                 }
                 Ok(())
             }
-            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => Ok(()),
+            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::Level(_) | TypeNode::RowEmpty => Ok(()),
             TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
             TypeNode::App(head, arg) => {
                 self.occurs_and_adjust(id, level, head)?;
                 self.occurs_and_adjust(id, level, arg)
             }
-            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) => {
+            TypeNode::LevelAdd(l, _) => self.occurs_and_adjust(id, level, l),
+            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) | TypeNode::LevelMax(a, b) => {
                 self.occurs_and_adjust(id, level, a)?;
                 self.occurs_and_adjust(id, level, b)
             }
@@ -610,6 +646,11 @@ impl Unifier {
     /// constrained by an unresolved requirement must stay a unification variable so
     /// a later use can pin it, rather than becoming spuriously polymorphic.
     pub fn generalize_except(&mut self, ty: Type, mono: &HashSet<VarId>) {
+        self.generalize_rec(ty, mono);
+        self.attach_generic_constraints();
+    }
+
+    fn generalize_rec(&mut self, ty: Type, mono: &HashSet<VarId>) {
         match self.head(ty) {
             TypeNode::Var(id) => {
                 if mono.contains(&id) {
@@ -618,37 +659,41 @@ impl Unifier {
                 if let VarState::Unbound { level } = self.vars[id as usize] {
                     if level > self.level {
                         self.set_var(id, VarState::Generic);
+                        if let Some(l) = self.var_level(id) {
+                            self.generalize_rec(l, mono);
+                        }
                     }
                 }
             }
             TypeNode::App(head, arg) => {
-                self.generalize_except(head, mono);
-                self.generalize_except(arg, mono);
+                self.generalize_rec(head, mono);
+                self.generalize_rec(arg, mono);
             }
-            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) => {
-                self.generalize_except(a, mono);
-                self.generalize_except(b, mono);
+            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) | TypeNode::LevelMax(a, b) => {
+                self.generalize_rec(a, mono);
+                self.generalize_rec(b, mono);
             }
+            TypeNode::LevelAdd(l, _) => self.generalize_rec(l, mono),
             TypeNode::Arrow(from, to, eff) => {
-                self.generalize_except(from, mono);
-                self.generalize_except(to, mono);
-                self.generalize_except(eff, mono);
+                self.generalize_rec(from, mono);
+                self.generalize_rec(to, mono);
+                self.generalize_rec(eff, mono);
             }
             TypeNode::Tuple(items) => {
                 for t in self.types.items(items).to_vec() {
-                    self.generalize_except(t, mono);
+                    self.generalize_rec(t, mono);
                 }
             }
             TypeNode::RowExtend(_, args, rest) => {
-                self.generalize_except(args, mono);
-                self.generalize_except(rest, mono);
+                self.generalize_rec(args, mono);
+                self.generalize_rec(rest, mono);
             }
-            TypeNode::Record(row) => self.generalize_except(row, mono),
+            TypeNode::Record(row) => self.generalize_rec(row, mono),
             TypeNode::RowField(_, ty, rest) => {
-                self.generalize_except(ty, mono);
-                self.generalize_except(rest, mono);
+                self.generalize_rec(ty, mono);
+                self.generalize_rec(rest, mono);
             }
-            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => {}
+            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::Level(_) | TypeNode::RowEmpty => {}
             TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
         }
     }
@@ -664,10 +709,11 @@ impl Unifier {
                 self.collect_vars(head, out);
                 self.collect_vars(arg, out);
             }
-            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) => {
+            TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) | TypeNode::LevelMax(a, b) => {
                 self.collect_vars(a, out);
                 self.collect_vars(b, out);
             }
+            TypeNode::LevelAdd(l, _) => self.collect_vars(l, out),
             TypeNode::Arrow(from, to, eff) => {
                 self.collect_vars(from, out);
                 self.collect_vars(to, out);
@@ -687,7 +733,7 @@ impl Unifier {
                 self.collect_vars(ty, out);
                 self.collect_vars(rest, out);
             }
-            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => {}
+            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::Level(_) | TypeNode::RowEmpty => {}
             TypeNode::Alias(..) => unreachable!("`head` looks through aliases"),
         }
     }
@@ -696,7 +742,9 @@ impl Unifier {
     /// with a fresh unbound variable, consistently within this one call.
     pub fn instantiate(&mut self, ty: Type) -> Type {
         let mut mapping = HashMap::new();
-        self.instantiate_with(ty, &mut mapping)
+        let t = self.instantiate_with(ty, &mut mapping);
+        self.emit_scheme_constraints(&mut mapping);
+        t
     }
 
     /// Instantiate an effect operation's scheme for a handler clause. The
@@ -758,13 +806,12 @@ impl Unifier {
     /// requires (an `Ito_string (Box t)` instance and its `Ito_string t` share `t`).
     pub fn instantiate_bundle(&mut self, tys: &[Type]) -> Vec<Type> {
         let mut mapping = HashMap::new();
-        tys.to_vec()
-            .into_iter()
-            .map(|t| self.instantiate_with(t, &mut mapping))
-            .collect()
+        let out = tys.to_vec().into_iter().map(|t| self.instantiate_with(t, &mut mapping)).collect();
+        self.emit_scheme_constraints(&mut mapping);
+        out
     }
 
-    fn instantiate_with(&mut self, ty: Type, mapping: &mut HashMap<VarId, Type>) -> Type {
+    pub(super) fn instantiate_with(&mut self, ty: Type, mapping: &mut HashMap<VarId, Type>) -> Type {
         if let Some((name, args, body)) = self.glued(ty) {
             let args = args.into_iter().map(|a| self.instantiate_with(a, mapping)).collect();
             let body = self.instantiate_with(body, mapping);
@@ -784,6 +831,10 @@ impl Unifier {
                         }
                     }
                     mapping.insert(id, fresh);
+                    if let Some(l) = self.var_level(id) {
+                        let l = self.instantiate_with(l, mapping);
+                        self.set_var_level(fresh, l);
+                    }
                     fresh
                 }
                 _ => self.types.add(TypeNode::Var(id)),
@@ -808,6 +859,17 @@ impl Unifier {
                     self.instantiate_with(b, mapping),
                 );
                 self.types.add(TypeNode::NatMul(x, y))
+            }
+            TypeNode::LevelMax(a, b) => {
+                let (x, y) = (
+                    self.instantiate_with(a, mapping),
+                    self.instantiate_with(b, mapping),
+                );
+                self.types.add(TypeNode::LevelMax(x, y))
+            }
+            TypeNode::LevelAdd(l, n) => {
+                let l = self.instantiate_with(l, mapping);
+                self.types.add(TypeNode::LevelAdd(l, n))
             }
             TypeNode::Arrow(from, to, eff) => {
                 let (f, t, e) = (

@@ -1476,6 +1476,20 @@ fn an_operation_variable_is_opaque_in_the_handler() {
 }
 
 #[test]
+fn a_universe_has_a_level() {
+    // `@Type n` is the universe at level `n` (#538): levels compare by value,
+    // and a bare `@Type` takes whatever level its use needs.
+    let m = "$ @mod T\n$ f : @Type 1 -> @Int = \\_ => 0\n";
+    assert_eq!(type_of(m, "f"), "@Type 1 -> @Int");
+    assert_eq!(errors(&format!("{m}$ g : @Type (1 + 1) -> @Int = \\_ => 0\n$ h : @Type 2 -> @Int = g\n")), "");
+    let e = errors(&format!("{m}$ g : @Type 2 -> @Int = f\n"));
+    assert!(e.contains("universe level mismatch") && e.contains("expected 1, found 2"), "got: {e:?}");
+    let any = "$ @mod T\n$ f : @Type -> @Int = \\_ => 0\n$ g : @Type 3 -> @Int = f\n";
+    assert_eq!(errors(any), "");
+    assert_eq!(type_of(any, "f"), "@Type -> @Int");
+}
+
+#[test]
 fn a_handler_cannot_resume_with_a_value_of_its_own() {
     let src = "$ @mod M\n$ Exn : @Type = @effect throw : @Int -> a,\n\
                $ ok : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => n\n\

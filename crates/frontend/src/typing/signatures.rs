@@ -37,12 +37,31 @@ impl<'a> Checker<'a> {
         for f in self.ast.slice(fields).to_vec() {
             let t = match self.kind_of_ast(f.ty) {
                 Some(ParamKind::Nat) => self.unifier.fresh_nat(),
-                Some(_) => self.unifier.fresh(),
+                Some(ParamKind::Type) => self.leveled_var(f.ty),
+                Some(ParamKind::Row) => self.unifier.fresh(),
                 None => continue,
             };
             tvars.insert(f.name, t);
         }
         tvars
+    }
+
+    /// A fresh type variable ranging over the universe `universe` (`@Type`
+    /// or `@Type n`). See Note [Level constraints].
+    pub(super) fn leveled_var(&mut self, universe: Aol<Ty>) -> Type {
+        let t = self.unifier.fresh();
+        let u = self.ty_of_ast(universe, &mut HashMap::new());
+        if let Some(l) = self.unifier.types.universe_level(self.unifier.resolve(u)) {
+            self.unifier.set_var_level(t, l);
+        }
+        t
+    }
+
+    /// The type of the type `ty` used as a value: the one universe it lives
+    /// in. See Note [Level constraints].
+    pub(super) fn universe_holding(&mut self, ty: Type) -> Type {
+        let own = self.unifier.level_of(ty);
+        self.unifier.types.universe(own)
     }
 
     /// The variable `name` stands for: the one `tvars` binds, else a fresh one
@@ -440,18 +459,33 @@ impl<'a> Checker<'a> {
     /// takes `@Nat` for each parameter it uses as a size and `@Type` for the
     /// rest; a base type takes its element type. `None` when `name` is not a
     /// type.
-    pub(super) fn type_kind(&self, name: StrId) -> Option<Type> {
-        let types = &self.unifier.types;
+    pub(super) fn type_kind(&mut self, name: StrId) -> Option<Type> {
         let kinds = self.param_kinds(name)?;
-        let universe = types.con(ty::UNIVERSE);
-        Some(kinds.iter().rev().fold(universe, |to, kind| {
-            let from = match kind {
-                ParamKind::Type => universe,
-                ParamKind::Nat => types.con(ty::NAT),
-                ParamKind::Row => types.con(StrId::intern("@Row")),
+        // A data type lives in the universe of its largest parameter, and at
+        // level 1 without one.
+        let froms: Vec<Type> = kinds
+            .iter()
+            .map(|k| match k {
+                ParamKind::Type => self.unifier.fresh_universe(),
+                ParamKind::Nat => self.unifier.types.con(ty::NAT),
+                ParamKind::Row => self.unifier.types.con(StrId::intern("@Row")),
+            })
+            .collect();
+        let one = self.unifier.types.add(TypeNode::Level(1));
+        let result = froms
+            .iter()
+            .filter_map(|f| self.unifier.types.universe_level(*f))
+            .fold(one, |acc, l| self.unifier.types.add(TypeNode::LevelMax(acc, l)));
+        let mut kind = self.unifier.types.universe(result);
+        for (k, from) in kinds.iter().zip(froms).rev() {
+            let from = match k {
+                ParamKind::Type => from,
+                ParamKind::Nat => self.unifier.types.con(ty::NAT),
+                ParamKind::Row => self.unifier.types.con(StrId::intern("@Row")),
             };
-            types.arrow(from, to)
-        }))
+            kind = self.unifier.types.arrow(from, kind);
+        }
+        Some(kind)
     }
 
     /// Why an expression in type position that did not reduce to a type is
@@ -569,11 +603,20 @@ impl<'a> Checker<'a> {
         self.check_type_arity(ty, false);
         let mut sub: HashMap<StrId, Type> = HashMap::new();
         let mut written = Vec::new();
+        let levels = self.alias_param_levels.get(&name).cloned().unwrap_or_default();
         for (i, p) in params.iter().enumerate() {
             let t = match args.get(i) {
                 Some(&a) => self.ty_of_ast(a, tvars),
                 None => self.unifier.fresh(),
             };
+            if let Some(Some(n)) = levels.get(i) {
+                let own = self.unifier.level_of(t);
+                let at = self.unifier.types.add(TypeNode::Level(*n));
+                if let Err(d) = self.unifier.unify(at, own, "in a type argument") {
+                    let span = args.get(i).and_then(|a| self.ast.ty_span(*a)).unwrap_or(Span::at(0));
+                    self.universe_errors.push(d.fill_span(span));
+                }
+            }
             if i < args.len() {
                 written.push(t);
             }
@@ -836,6 +879,38 @@ impl<'a> Checker<'a> {
         self.unifier.types.con(name)
     }
 
+    /// Elaborate the level of `@Type l`: a number, or a level plus one.
+    fn level_of_ast(&mut self, ty: Aol<Ty>) -> Type {
+        match self.tnode(ty) {
+            Ty::Nat(n) => match u32::try_from(*n) {
+                Ok(n) => self.unifier.types.add(TypeNode::Level(n)),
+                Err(_) => {
+                    self.defer_type_error(diag!(
+                        Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                        "the level {n} is too large";
+                        note: "a level is below 2^32"
+                    ));
+                    self.unifier.fresh()
+                }
+            },
+            Ty::SizeAdd(l, k) => {
+                let (l, k) = (*l, *k);
+                let l = self.level_of_ast(l);
+                match self.tnode(k) {
+                    Ty::Nat(k) if u32::try_from(*k).is_ok() => self.unifier.types.add(TypeNode::LevelAdd(l, *k as u32)),
+                    _ => {
+                        self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a level other than a number or a level plus a number"));
+                        self.unifier.fresh()
+                    }
+                }
+            }
+            _ => {
+                self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a level parameter"));
+                self.unifier.fresh()
+            }
+        }
+    }
+
     pub(super) fn ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
         // An alias at the head of an application spine expands first, so `MapInt Bool`
         // substitutes into `Map Int Bool` rather than forming `App(alias, Bool)`.
@@ -843,6 +918,13 @@ impl<'a> Checker<'a> {
             return t;
         }
         match self.tnode(ty) {
+            // A bare `@Type` is a universe at a fresh level, which the
+            // definition's scheme generalises. See Note [Universe levels].
+            Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE => self.unifier.fresh_universe(),
+            Ty::App(head, level) if matches!(self.tnode(*head), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {
+                let level = self.level_of_ast(*level);
+                self.unifier.types.universe(level)
+            }
             Ty::Con { .. } => {
                 self.check_type_arity(ty, true);
                 self.con_of_ast(ty)
@@ -910,7 +992,7 @@ impl<'a> Checker<'a> {
                     (Some(name), Some(kind @ (ParamKind::Type | ParamKind::Nat))) => {
                         let v = match kind {
                             ParamKind::Nat => self.unifier.fresh_nat(),
-                            _ => self.unifier.fresh(),
+                            _ => self.leveled_var(from),
                         };
                         tvars.insert(name, v);
                         let head = if kind == ParamKind::Nat { SIZE_OF } else { ty::TYPE_OF };

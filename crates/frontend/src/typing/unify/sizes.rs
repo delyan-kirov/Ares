@@ -371,7 +371,7 @@ impl Unifier {
                 [(k, vars)] if vars.is_empty() => Some(*k),
                 _ => None,
             },
-            Whnf::Node(_) => None,
+            Whnf::Node(_) | Whnf::Level => None,
         }
     }
 
