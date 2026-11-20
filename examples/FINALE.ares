@@ -9,7 +9,7 @@ $ @mod FINALE
 # observes its cleanup by performing an effect a handler collects.
 
 $ Y : @Type = @effect yield : @Int -> {},
-$ Exn : @Type = @effect throw : @Str -> a,
+$ Exn : @Type = @effect throw : @ctx { a: @Type } -> @Str -> a,
 
 # Sum every yielded value, plus the body's own result.
 $ sum : ({} -> <Y> @Int) -> @Int = \body =>

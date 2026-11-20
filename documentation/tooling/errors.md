@@ -124,6 +124,9 @@ A lowercase name in a type that nothing binds is a type variable the signature
 forgot to bind: a signature binds each in `@ctx`, as in
 `$ id : @ctx {t: @Type} -> t -> t`. The fix adds it there, as a `@Type`, a
 `@Nat` (a size) or a `@Row` (an effect row) by how the signature uses it.
+The same holds for a constructor's own variables, bound in a `@ctx` ahead of
+its payload (`Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`), and for
+an effect operation's (`throw : @ctx {a: @Type} -> @Str -> a`).
 
 ## TYPE_ANNOTATION_REQUIRED
 

@@ -1,0 +1,5 @@
+$ @mod OWN_CTX_NO_RESULT
+
+# A constructor's own variables are those of the result it states, so one
+# with a `@ctx` states it.
+$ Box : (a: @Type) -> @Type = @union Put: @ctx {b: @Type} -> {b},  #~ error[UNEXPECTED_TOKEN]: constructor `Put` binds `b` in `@ctx` but states no result

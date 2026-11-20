@@ -158,42 +158,26 @@ impl<'a> Checker<'a> {
     pub(super) fn report_unbound(&mut self, sig: Option<Aol<Ty>>) {
         let mut unbound = std::mem::take(&mut self.unbound);
         unbound.sort_by_key(|u| u.span.map_or(usize::MAX, |s| s.start));
-        let Some(first) = unbound.first() else { return };
-        let fields: Vec<String> = unbound
+        if unbound.is_empty() {
+            return;
+        }
+        let names: Vec<(StrId, Option<Span>, ParamKind)> = unbound
             .iter()
             .map(|u| {
                 let kind = match (u.row, self.unifier.is_size_var(u.ty)) {
-                    (true, _) => "@Row",
-                    (false, true) => "@Nat",
-                    (false, false) => "@Type",
+                    (true, _) => ParamKind::Row,
+                    (false, true) => ParamKind::Nat,
+                    (false, false) => ParamKind::Type,
                 };
-                format!("{}: {kind}", u.name)
+                (u.name, u.span, kind)
             })
             .collect();
-        let names: Vec<String> = unbound.iter().map(|u| format!("`{}`", u.name)).collect();
-        let (names, verb) = match names.as_slice() {
-            [one] => (one.clone(), "is"),
-            [init @ .., last] => (format!("{} and {last}", init.join(", ")), "are"),
-            [] => unreachable!("at least one unbound name"),
+        let fields = ctx_fields(&names);
+        let binder = match sig {
+            Some(s) => Binder::Signature(self.ctx_insertion(s, &fields)),
+            None => Binder::Body,
         };
-        let mut d = diag!(
-            Code::TypeUnbound, first.span.unwrap_or(Span::at(0)), 0,
-            "{names} {verb} not bound";
-            note: "a signature binds its type variables in `@ctx`, as in `@ctx {{t: @Type}} -> t -> t`"
-        );
-        for u in &unbound[1..] {
-            if let Some(span) = u.span {
-                d = d.with_label(span, "");
-            }
-        }
-        let fix = format!("bind {names} in the signature's `@ctx`");
-        d = match sig.and_then(|s| self.ctx_insertion(s, &fields)) {
-            Some(edit) => d.with_fix(fix, vec![edit], Applicability::MachineApplicable),
-            None if sig.is_some() => d.with_help(format!("{fix}: `@ctx {{{}}} -> ...`", fields.join(", "))),
-            None => d.with_help(format!(
-                "bind {names} in the enclosing definition's `@ctx`, or write `_` for a type left to inference"
-            )),
-        };
+        let d = unbound_names(&names, binder);
         self.errors.push(d);
     }
 
@@ -975,4 +959,59 @@ pub(super) enum SizeError {
     Cycle,
     /// A subterm conversion cannot evaluate (a call, a negative literal).
     Term(Aol<Expr>),
+}
+
+/// The `name: @Kind` fields that bind `names` in a `@ctx`.
+pub(super) fn ctx_fields(names: &[(StrId, Option<Span>, ParamKind)]) -> Vec<String> {
+    names.iter().map(|(n, _, k)| format!("{n}: {}", k.written())).collect()
+}
+
+/// What binds the names an [`unbound_names`] error reports, with the edit
+/// that binds them there if one can be made.
+pub(super) enum Binder {
+    /// A global's or effect operation's signature, whose leading `@ctx` takes them.
+    Signature(Option<Edit>),
+    /// A constructor's `@ctx`.
+    Constructor(Option<Edit>),
+    /// An annotation inside a body: the enclosing definition's signature.
+    Body,
+}
+
+/// The error for type variables nothing binds, `names` in order of first use,
+/// each with the kind its uses give.
+pub(super) fn unbound_names(names: &[(StrId, Option<Span>, ParamKind)], binder: Binder) -> Diagnostic {
+    let fields = ctx_fields(names);
+    let quoted: Vec<String> = names.iter().map(|(n, _, _)| format!("`{n}`")).collect();
+    let (shown, verb) = match quoted.as_slice() {
+        [one] => (one.clone(), "is"),
+        [init @ .., last] => (format!("{} and {last}", init.join(", ")), "are"),
+        [] => unreachable!("at least one unbound name"),
+    };
+    let first = names[0].1.unwrap_or(Span::at(0));
+    let note = match binder {
+        Binder::Constructor(_) => {
+            "a constructor binds its own variables in `@ctx`, as in `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`"
+        }
+        _ => "a signature binds its type variables in `@ctx`, as in `@ctx {t: @Type} -> t -> t`",
+    };
+    let mut d = Diagnostic::error(Code::TypeUnbound, first, 0, format!("{shown} {verb} not bound")).with_note(note);
+    for (_, span, _) in &names[1..] {
+        if let Some(span) = span {
+            d = d.with_label(*span, "");
+        }
+    }
+    let (whose, edit) = match binder {
+        Binder::Signature(edit) => ("signature", edit),
+        Binder::Constructor(edit) => ("constructor", edit),
+        Binder::Body => {
+            return d.with_help(format!(
+                "bind {shown} in the enclosing definition's `@ctx`, or write `_` for a type left to inference"
+            ))
+        }
+    };
+    let fix = format!("bind {shown} in the {whose}'s `@ctx`");
+    match edit {
+        Some(edit) => d.with_fix(fix, vec![edit], Applicability::MachineApplicable),
+        None => d.with_help(format!("{fix}: `@ctx {{{}}} -> ...`", fields.join(", "))),
+    }
 }

@@ -1,0 +1,10 @@
+$ @mod OWN_VAR_UNBOUND
+
+# A constructor binds the variables of its result beyond the declaration's
+# parameters in its own `@ctx`, and an effect operation those each performer
+# chooses (#558): a name nothing binds is an error, fixed by binding it there.
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)  #~ error[TYPE_UNBOUND]: `n` is not bound
+
+$ Exn : @Type = @effect throw : @Str -> a,  #~ error[TYPE_UNBOUND]: `a` is not bound
+

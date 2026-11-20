@@ -1,0 +1,6 @@
+$ @mod OWN_CTX_PARAM
+
+# A constructor sees the declaration's parameters: its `@ctx` binds only
+# variables of its own.
+$ Vec : (a: @Type) -> @Nat -> @Type =
+    @union Nil: {} -> Vec a 0, Cons: @ctx {a: @Type, n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)  #~ error[DUPLICATE_SYMBOL]: `a` is a parameter of `Vec`

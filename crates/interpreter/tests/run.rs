@@ -1158,7 +1158,7 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
     // `Y.yield`, so their effects are observable in the total.
     let prelude = "$ @mod M\n\
         $ Y : @Type = @effect yield : @Int -> {},\n\
-        $ Exn : @Type = @effect throw : @Str -> a,\n\
+        $ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n\
         $ sum : ({} -> <Y> @Int) -> @Int = \
           \\body => do body {} ctl k | Y.yield v => v + k {} | x => x\n";
     // Normal completion: body yields 1 and returns 100, cleanup yields 2 -> 103.
