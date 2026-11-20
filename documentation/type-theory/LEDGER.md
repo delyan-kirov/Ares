@@ -97,6 +97,15 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | GCST19 | Gilbert, Cockx, Sozeau, Tabareau. Definitional Proof-Irrelevance without K. POPL 2019 | https://doi.org/10.1145/3290316 | GCST19/paper.pdf | 3b14f8d2c37705def11232369b9c0da7c3680f3a463e5b06b5d156ed77387e8e | CC-BY-NC-SA-4.0 |
 | sott | Atkey. sott, Simplified Observational Type Theory, commit 65f684453910d6988f1e5c825ac8e6ee27927469 | https://github.com/bobatkey/sott/tree/65f684453910d6988f1e5c825ac8e6ee27927469 | - | - | no licence, link only |
 | LJB01 | Lee, Jones, Ben-Amram. The Size-Change Principle for Program Termination. POPL 2001 | https://doi.org/10.1145/360204.360210 | - | - | ACM copyright, link only |
+| Ahm18 | Ahman. Handling Fibred Algebraic Effects. POPL 2018 | https://doi.org/10.1145/3158095 | Ahm18/paper.pdf | b46c9db975a32f686f4dc465504d4b5b894bc9c1d9918b17ef3890aeb4cd78e1 | CC-BY-4.0 |
+| AHMM17 | Ahman, Hriţcu, Maillard, Martínez, Plotkin, Protzenko, Rastogi, Swamy. Dijkstra Monads for Free. POPL 2017 | https://doi.org/10.1145/3009837.3009878 | AHMM17/paper.pdf | 7ee44014b71c48915879d6baddb40e32dc630d600e7c18a92727571069be2ead | CC-BY-4.0 |
+| Cap05 | Capretta. General Recursion via Coinductive Types. LMCS 1(2) 2005 | https://doi.org/10.2168/LMCS-1(2:1)2005 | Cap05/paper.pdf | 7841cee031bc4e47563cac8d9b1ea2a10dc143d388d4dcca99a1fc1bff445db4 | CC-BY-ND-2.0 |
+| PT20 | Pédrot, Tabareau. The Fire Triangle: How to Mix Substitution, Dependent Elimination, and Effects. POPL 2020 | https://doi.org/10.1145/3371126 | - | - | ACM copyright, link only |
+| PT18 | Pédrot, Tabareau. Failure is Not an Option: An Exceptional Type Theory. ESOP 2018 | https://doi.org/10.1007/978-3-319-89884-1_9 | - | - | HAL deposit without a licence, link only |
+| AGP16 | Ahman, Ghani, Plotkin. Dependent Types and Fibred Computational Effects. FoSSaCS 2016 | https://doi.org/10.1007/978-3-662-49630-5_3 | - | - | Springer copyright, link only |
+| Ahm17 | Ahman. Fibred Computational Effects. PhD thesis, University of Edinburgh 2017 | https://arxiv.org/abs/1710.02594 | - | - | arXiv non-exclusive licence, link only |
+| Vak15 | Vákár. A Framework for Dependent Types and Effects. arXiv 2015 | https://arxiv.org/abs/1512.08009 | - | - | arXiv non-exclusive licence, link only |
+| Bra13 | Brady. Programming and Reasoning with Algebraic Effects and Dependent Types. ICFP 2013 | https://doi.org/10.1145/2500365.2500581 | - | - | ACM copyright, link only |
 
 ## Theorems
 
