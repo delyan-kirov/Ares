@@ -1,6 +1,6 @@
 $ @mod INDEXED_INDEX_MISMATCH
 
 $ Vec : (a: @Type) -> @Nat -> @Type =
-    @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)
+    @union Nil: {} -> Vec a 0, Cons: @ctx { n: @Nat } -> {a, Vec a n} -> Vec a (n + 1)
 
 $ two : Vec @Int 2 = Vec.Cons.{ 1, Vec.Nil }  #~ error[TYPE_MISMATCH]: expected `1`, found `0`

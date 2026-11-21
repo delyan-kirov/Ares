@@ -47,6 +47,9 @@ The hashes live in the ledger only, where the test checks them.
 | Rocq | Rocq kernel, `kernel/uGraph.ml` | LGPL-2.1 |
 | GCST19 | Gilbert, Cockx, Sozeau, Tabareau. Definitional Proof-Irrelevance without K. POPL 2019 | CC-BY-NC-SA 4.0 |
 | nanoda | nanoda_lib, a Lean 4 kernel in Rust: `src/level.rs`, `src/tc.rs` | Apache-2.0 |
+| Ahm18 | Ahman. Handling Fibred Algebraic Effects. POPL 2018 | CC-BY 4.0 |
+| AHMM17 | Ahman, Hriţcu, Maillard et al. Dijkstra Monads for Free. POPL 2017 | CC-BY 4.0 |
+| Cap05 | Capretta. General Recursion via Coinductive Types. LMCS 2005 | CC-BY-ND 2.0 |
 
 Code is pinned to the commit in its `entry.bib`, so a `file:line` citation
 stays valid. Not vendored: sott, whose repository has no licence; the ledger links it.

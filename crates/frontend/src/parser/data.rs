@@ -342,7 +342,7 @@ pub enum Item {
     /// `$ Name : sig = @union Tag: payload, ...`. `params` name the leading
     /// binders of `sig` that every constructor's stated result passes through
     /// as themselves; the binders after them are indices, which a constructor
-    /// states after its payload, `Cons: {a, Vec a n} -> Vec a (n + 1)`.
+    /// states after its payload, `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`.
     /// `splices` are `&X` entries generating variants, as for structs.
     Union {
         name: StrId,
@@ -407,12 +407,17 @@ pub struct EntrySplice {
 }
 
 /// One `Tag : payload` arm of a union declaration. `result` is the stated
-/// result of an indexed family's constructor, `Tag: {fields} -> D a i`.
+/// result of an indexed family's constructor, `Tag: {fields} -> D a i`, and
+/// `ctx` the `@ctx` fields binding the constructor's own variables,
+/// `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`.
 #[derive(Clone, Debug)]
 pub struct VariantDecl {
     pub tag: StrId,
     /// Where the tag is written.
     pub tag_span: Span,
+    pub ctx: Slice<UseField>,
+    /// Where what follows `Tag:` starts, the place a new `@ctx` goes.
+    pub ctx_at: Option<usize>,
     pub payload: Payload,
     pub result: Option<Aol<Ty>>,
 }

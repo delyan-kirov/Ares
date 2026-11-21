@@ -1226,7 +1226,7 @@ fn unreachable_arms_warn() {
 
 #[test]
 fn handler_value_arms_are_checked() {
-    let src = "$ @mod T\n$ Exn : @Type = @effect throw : @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
+    let src = "$ @mod T\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
                $ g : {} -> <Exn> M = M.Miss\n\
                $ f : @Int = do g {} ctl k | Exn.throw m => 0 | .Hit.{ v } => v\n";
     let (err, _) = coverage(src);
@@ -1467,10 +1467,10 @@ fn one_handler_serves_one_instance() {
 
 #[test]
 fn an_operation_variable_is_opaque_in_the_handler() {
-    let ok = "$ @mod M\n$ Put : @Type = @effect put : a -> {},\n\
+    let ok = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
               $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => k {} | u => 0\n";
     assert_eq!(errors(ok), "");
-    let bad = "$ @mod M\n$ Put : @Type = @effect put : a -> {},\n\
+    let bad = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
                $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => x + 0 | u => 0\n";
     assert!(errors(bad).contains("`a` of `Put.put`"), "got: {:?}", errors(bad));
 }
@@ -1490,8 +1490,41 @@ fn a_universe_has_a_level() {
 }
 
 #[test]
+fn constructor_and_operation_variables_are_bound_in_their_ctx() {
+    let m = "$ @mod T\n";
+    let fixed = |src: &str| {
+        with_checker(src, |checker, prog| {
+            let err = checker.check_program(prog).err().expect("an unbound name");
+            assert!(err.to_string().contains("is not bound"), "{err}");
+            let edits: Vec<utilities::Edit> = err.helps().iter().flat_map(|h| h.located_edits().unwrap_or_default()).cloned().collect();
+            utilities::error::apply_edits(src, &edits)
+        })
+    };
+    let vec = |cons: &str| format!("{m}$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil: {{}} -> Vec a 0, Cons: {cons}\n");
+    assert_eq!(
+        fixed(&vec("{a, Vec a n} -> Vec a (n + 1)")),
+        vec("@ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)")
+    );
+    let pair = |both: &str| format!("{m}$ E : @Type -> @Type = @union Lit: {{@Int}} -> E @Int, Both: {both}\n");
+    assert_eq!(
+        fixed(&pair("@ctx {a: @Type} -> {E a, E b} -> E {a, b}")),
+        pair("@ctx {a: @Type, b: @Type} -> {E a, E b} -> E {a, b}")
+    );
+    let exn = |throw: &str| format!("{m}$ Exn : @Type = @effect throw : {throw},\n");
+    assert_eq!(fixed(&exn("@Str -> a")), exn("@ctx {a: @Type} -> @Str -> a"));
+    // Bound, they check, and a built value carries the size its binder names.
+    let src = format!(
+        "{}$ two : Vec @Int 2 = Vec.Cons.{{ 1, Vec.Cons.{{ 2, Vec.Nil }} }}\n",
+        vec("@ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)")
+    );
+    assert_eq!(errors(&src), "");
+    let src = format!("{}$ f : @Int -> <Exn> @Str = \\n => Exn.throw \"no\"\n", exn("@ctx {a: @Type} -> @Str -> a"));
+    assert_eq!(errors(&src), "");
+}
+
+#[test]
 fn a_handler_cannot_resume_with_a_value_of_its_own() {
-    let src = "$ @mod M\n$ Exn : @Type = @effect throw : @Int -> a,\n\
+    let src = "$ @mod M\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Int -> a,\n\
                $ ok : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => n\n\
                $ bad : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => k n\n";
     let e = errors(src);

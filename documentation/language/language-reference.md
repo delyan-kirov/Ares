@@ -1034,13 +1034,17 @@ are indices. Building a value checks its index:
 
 ```ares
 $ Vec : (a: @Type) -> @Nat -> @Type =
-    @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)
+    @union Nil: {} -> Vec a 0, Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)
 $ two : Vec @Int 2 = Vec.Cons.{ 1, Vec.Cons.{ 2, Vec.Nil } }
 $ length : @ctx {a: @Type, n: @Nat} -> Vec a n -> @Int = \v => v |> \ | Vec.Cons.{ _, t } => 1 + length t | Vec.Nil => 0
 ```
 
 A variable of a stated result that is not a parameter, `n` above, belongs to
-the constructor. A match does not tell what it was built with yet (dependent
+the constructor, which binds it in a `@ctx` ahead of its payload (#558), as a
+signature binds its own (3.6). Only a constructor that states its result has
+one, and it binds only names of its own, not the declaration's parameters. A
+name nothing binds is a `TYPE_UNBOUND` error whose fix adds it to the
+constructor's `@ctx`. A match does not tell what it was built with yet (dependent
 matching, #543): in `Vec.Cons.{ _, t }`, `t` has the type `Vec a n` for an `n`
 of its own, which the arm may not take for any other size. Indices are erased,
 so a `Vec` is a list at run time.
@@ -1216,11 +1220,11 @@ $ sum_to : @Int -> @Int -> @Int = \n acc =>
 ## 8.1 Declaring an effect `@effect`
 `$ Name : @Type = @effect op : Arg -> Resume, ...`. Each operation takes one argument
 and names its resume type. An operation whose handler never resumes (an
-exception) names a type variable as its result.
+exception) names a type variable of its own as its result, `@ctx {a: @Type}`.
 
 ```ares
 $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
-$ Exn   : @Type = @effect throw : @Str -> a,
+$ Exn   : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
 $ Yield : @Type = @effect yield : @Int -> {},
 ```
 
@@ -1239,13 +1243,14 @@ $ count : {} -> <State @Int> @Int = let n = get {} in put (n + 1); n
 ```
 
 An operation's type may also use variables the effect does not declare, like
-`throw` above. Each use chooses those types, so a handler clause sees them as
+`throw` above, bound in a `@ctx` that opens its type (#558); a name nothing
+binds is a `TYPE_UNBOUND` error whose fix adds it there. Each use chooses those types, so a handler clause sees them as
 opaque: it can pass such a value along (resume with the argument it was given,
 store it), but it cannot make one up or inspect it. A clause that needs a
 concrete type takes it from an effect parameter instead.
 
 ```ares
-$ Exn : @Type = @effect throw : @Str -> a,
+$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
 $ safe : @Int = do 1 + Exn.throw "no" ctl k | Exn.throw m => 0     # aborts: fine
 # `| Exn.throw m => k 0` is an error: `k` wants `a` of `Exn.throw`, not @Int
 ```

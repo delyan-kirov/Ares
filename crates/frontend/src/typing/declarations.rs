@@ -10,6 +10,7 @@
 //! Entry points: [`Checker::register_types`], [`Checker::register_effects`].
 
 use super::*;
+use super::signatures::{ctx_fields, unbound_names, Binder};
 
 // ## Type parameters
 
@@ -120,7 +121,7 @@ impl<'a> Checker<'a> {
     }
 
     /// A constructor's stated result builds its own union, applied to every
-    /// parameter and index: `Cons: {a, Vec a n} -> Vec a (n + 1)`.
+    /// parameter and index: `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`.
     fn check_variant_result(&self, union: StrId, tag: StrId, result: Aol<Ty>, arity: usize) -> Result<()> {
         let mut args = 0;
         let mut head = result;
@@ -170,7 +171,8 @@ impl<'a> Checker<'a> {
     /// Check that each type declared in this module uses its parameters as
     /// what they range over: a `@Nat` one as a size, a `@Row` one as a row
     /// tail or an effect's row argument, a `@Type` one as a type. A
-    /// constructor's own variables take the kind of their first use.
+    /// constructor's or operation's own variables are bound by its `@ctx`,
+    /// which says what each ranges over.
     pub(super) fn check_decl_kinds(&mut self, program: &Program) -> Result<()> {
         for item in self.ast.slice(program.items) {
             let (name, members): (StrId, Vec<Aol<Ty>>) = match item {
@@ -192,32 +194,84 @@ impl<'a> Checker<'a> {
             };
             let env: HashMap<StrId, ParamKind> = params.into_iter().zip(kinds).collect();
             for ty in members {
-                self.check_kind(ty, Some(ParamKind::Type), &mut env.clone())?;
+                let mut env = env.clone();
+                self.bind_own_ctx(self.ast.ctx_params.get(ty).copied(), &mut env);
+                self.check_kind(ty, Some(ParamKind::Type), &mut env)?;
             }
-            if let Some(info) = self.unions.get(&name).filter(|_| matches!(item, Item::Union { .. })) {
-                let mut owns = Vec::new();
-                for v in &info.variants {
-                    let mut env = env.clone();
-                    if let Some(result) = v.result {
-                        self.check_kind(result, Some(ParamKind::Type), &mut env)?;
-                    }
-                    for (_, ty) in &v.payload {
-                        self.check_kind(*ty, Some(ParamKind::Type), &mut env)?;
-                    }
-                    let mut vars = Vec::new();
-                    v.result.iter().for_each(|r| collect_tyvars(self.ast, *r, &mut vars));
-                    v.payload.iter().for_each(|(_, t)| collect_tyvars(self.ast, *t, &mut vars));
-                    let own = vars
+            let Item::Union { variants: decls, .. } = item else { continue };
+            let info = self.unions[&name].clone();
+            let uniform = &info.params[..info.uniform];
+            let mut owns = Vec::new();
+            for (v, decl) in info.variants.iter().zip(self.ast.slice(*decls)) {
+                self.check_own_ctx(name, v.tag, uniform, Some(decl.ctx))?;
+                let mut env = env.clone();
+                let ctx = self.ast.slice(decl.ctx).to_vec();
+                self.bind_own_ctx(Some(decl.ctx), &mut env);
+                if let Some(result) = v.result {
+                    self.check_kind(result, Some(ParamKind::Type), &mut env)?;
+                }
+                for (_, ty) in &v.payload {
+                    self.check_kind(*ty, Some(ParamKind::Type), &mut env)?;
+                }
+                let mut own: Vec<(StrId, ParamKind)> =
+                    ctx.iter().filter_map(|f| self.kind_of_ast(f.ty).map(|k| (f.name, k))).collect();
+                if v.result.is_some() {
+                    let mut uses = Vec::new();
+                    v.payload.iter().for_each(|(_, t)| collect_tyvar_uses(self.ast, *t, &mut uses));
+                    v.result.iter().for_each(|r| collect_tyvar_uses(self.ast, *r, &mut uses));
+                    let unbound: Vec<(StrId, Option<Span>, ParamKind)> = uses
                         .into_iter()
-                        .filter(|x| v.result.is_some() && !info.params[..info.uniform].contains(x))
-                        .filter_map(|x| env.get(&x).map(|k| (x, *k)))
-                        .collect::<Vec<_>>();
-                    owns.push(own);
+                        .filter(|(x, _)| !uniform.contains(x) && !own.iter().any(|(o, _)| o == x))
+                        .filter_map(|(x, span)| env.get(&x).map(|k| (x, span, *k)))
+                        .collect();
+                    if !unbound.is_empty() {
+                        let fields = ctx_fields(&unbound).join(", ");
+                        let edit = match (ctx.last(), decl.ctx_at) {
+                            (Some(last), _) => Some(Edit::new(Span::at(last.span.end), format!(", {fields}"))),
+                            (None, Some(at)) => Some(Edit::new(Span::at(at), format!("@ctx {{{fields}}} -> "))),
+                            (None, None) => None,
+                        };
+                        self.errors.push(unbound_names(&unbound, Binder::Constructor(edit)));
+                        own.extend(unbound.into_iter().map(|(x, _, k)| (x, k)));
+                    }
                 }
-                let info = self.unions.get_mut(&name).expect("registered above");
-                for (v, own) in info.variants.iter_mut().zip(owns) {
-                    v.own = own;
-                }
+                owns.push(own);
+            }
+            let info = self.unions.get_mut(&name).expect("registered above");
+            for (v, own) in info.variants.iter_mut().zip(owns) {
+                v.own = own;
+            }
+        }
+        Ok(())
+    }
+
+    /// Give each field of a constructor's or operation's `@ctx` the kind it
+    /// declares.
+    fn bind_own_ctx(&self, ctx: Option<Slice<UseField>>, env: &mut HashMap<StrId, ParamKind>) {
+        for f in ctx.map(|c| self.ast.slice(c).to_vec()).unwrap_or_default() {
+            if let Some(k) = self.kind_of_ast(f.ty) {
+                env.insert(f.name, k);
+            }
+        }
+    }
+
+    /// Check a constructor's or operation's `@ctx` (`member` of `decl`) binds
+    /// only variables of its own, each a type, a size or a row.
+    pub(super) fn check_own_ctx(&self, decl: StrId, member: StrId, params: &[StrId], ctx: Option<Slice<UseField>>) -> Result<()> {
+        for f in ctx.map(|c| self.ast.slice(c).to_vec()).unwrap_or_default() {
+            if params.contains(&f.name) {
+                return Err(diag!(
+                    Code::DuplicateSymbol, f.span, 0,
+                    "`{}` is a parameter of `{decl}`, which `{member}`'s `@ctx` cannot bind again", f.name;
+                    help: "drop `{}` from the `@ctx`: `{member}` sees `{decl}`'s parameters", f.name
+                ));
+            }
+            if self.kind_of_ast(f.ty).is_none() {
+                return Err(diag!(
+                    Code::TypeMismatch, f.span, 0,
+                    "`@ctx` field `{}` of `{member}` is not a type, a size or a row", f.name;
+                    note: "`@ctx` binds what unification solves: `@Type`, `@Nat` or `@Row`"
+                ));
             }
         }
         Ok(())
@@ -235,7 +289,7 @@ impl<'a> Checker<'a> {
                     return Err(diag!(
                         Code::TypeMismatch, self.ty_span_or_none(ty), 0,
                         "`{v}` is a `{}`, but it stands where a `{}` is expected", have.written(), want.written();
-                        help: "declare it as `({v}: {})` if that is what it ranges over", want.written()
+                        help: "declare `{v}` as a `{}` if that is what it ranges over", want.written()
                     ));
                 }
             }
@@ -307,7 +361,7 @@ impl<'a> Checker<'a> {
             return Err(diag!(
                 Code::TypeMismatch, self.ty_span_or_none(at), 0,
                 "`{tail}` is a `{}`, but it stands where a `@Row` is expected", have.written();
-                help: "declare it as `({tail}: @Row)` if that is what it ranges over"
+                help: "declare `{tail}` as a `@Row` if that is what it ranges over"
             ));
         }
         Ok(())
@@ -867,6 +921,8 @@ impl<'a> Checker<'a> {
             let mut op_schemes = HashMap::new();
             for op in self.ast.slice(*ops).iter() {
                 let op_name = op.name;
+                self.check_own_ctx(effect, op_name, &params, self.ast.ctx_params.get(op.ty).copied())?;
+                self.check_ctx_fields(op_name, op.ty);
                 let scheme = self.op_scheme(effect, &params, op.ty)?;
                 op_schemes.insert(op_name, scheme);
                 per_op.entry(op_name).or_default().push(scheme);
@@ -914,7 +970,7 @@ impl<'a> Checker<'a> {
         sig: Aol<Ty>,
     ) -> Result<Type> {
         self.unifier.enter_level();
-        let mut tvars: HashMap<StrId, Type> = HashMap::new();
+        let mut tvars = self.sig_tvars(sig);
         let param_tys: Vec<Type> = params
             .iter()
             .map(|p| {
@@ -929,7 +985,7 @@ impl<'a> Checker<'a> {
             self.unifier.types.tuple(param_tys)
         };
         let saved = self.effect_self.replace((effect, args));
-        let ty = self.ty_of_ast(sig, &mut tvars);
+        let ty = self.ty_reporting(sig, &mut tvars, Some(sig));
         self.effect_self = saved;
         let ty = match self.unifier.types.node(ty) {
             TypeNode::Arrow(from, to, _) => {
@@ -1234,6 +1290,34 @@ pub(super) fn subst_from_args(
         subst.insert(*p, a);
     }
     subst
+}
+
+/// The type variables of `ty` in order of first use, each with where that use
+/// is written (for a row tail, the record it ends).
+pub(super) fn collect_tyvar_uses(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<(StrId, Option<Span>)>) {
+    let mut push = |name: StrId| {
+        if !out.iter().any(|(n, _)| *n == name) {
+            out.push((name, ast.ty_span(ty)));
+        }
+    };
+    match ast.ty(ty) {
+        Ty::Var(name) => push(*name),
+        Ty::Record { fields, tail } => {
+            let tail = *tail;
+            ast.slice(*fields).iter().for_each(|f| collect_tyvar_uses(ast, f.ty, out));
+            if let Some(t) = tail {
+                if !out.iter().any(|(n, _)| *n == t) {
+                    out.push((t, ast.ty_span(ty)));
+                }
+            }
+        }
+        Ty::App(a, b) | Ty::Arrow { from: a, to: b, .. } | Ty::Sized { size: a, elem: b, .. } | Ty::SizeAdd(a, b) | Ty::SizeMul(a, b) => {
+            collect_tyvar_uses(ast, *a, out);
+            collect_tyvar_uses(ast, *b, out);
+        }
+        Ty::Tuple(items) => ast.slice(*items).iter().for_each(|t| collect_tyvar_uses(ast, *t, out)),
+        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
+    }
 }
 
 pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {

@@ -256,6 +256,9 @@ impl Lower<'_> {
     }
 
     fn constructor(&self, v: &frontend::VariantDecl, item_span: Span) -> Result<RawConstructor> {
+        if let Some(f) = self.ast.slice(v.ctx).first() {
+            return Err(self.error(f.span, format!("a kernel constructor binds `{}` as a field, not in `@ctx`", f.name)));
+        }
         let mut fields = Vec::new();
         match &v.payload {
             Payload::None => {}

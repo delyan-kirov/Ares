@@ -128,7 +128,7 @@ struct VariantSig {
     payload: Vec<(Option<StrId>, Aol<Ty>)>,
     result: Option<Aol<Ty>>,
     /// The variables of a stated result that are not parameters, `n` in
-    /// `Cons: {a, Vec a n} -> Vec a (n + 1)`, each with what it ranges over.
+    /// `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`, each with what it ranges over.
     own: Vec<(StrId, ParamKind)>,
 }
 

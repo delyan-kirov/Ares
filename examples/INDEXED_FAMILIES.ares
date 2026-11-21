@@ -17,7 +17,7 @@ $ Step : (e: @Row) -> @Type = @struct run: @Int -> <e> @Int,
 # result; the `@Nat` after it is an index, which each constructor states.
 $ Vec : (a: @Type) -> @Nat -> @Type = @union
     Nil: {} -> Vec a 0,
-    Cons: { a, Vec a n } -> Vec a (n + 1)
+    Cons: @ctx { n: @Nat } -> { a, Vec a n } -> Vec a (n + 1)
 
 $ cons : @ctx { a: @Type, n: @Nat } -> a -> Vec a n -> Vec a (n + 1) = \x xs => Vec.Cons.{ x, xs }
 
@@ -33,7 +33,7 @@ $ to_list : @ctx { a: @Type, n: @Nat } -> Vec a n -> List a = \v =>
 $ Expr : @Type -> @Type = @union
     Num: { @Int } -> Expr @Int,
     Flag: { @Bool } -> Expr @Bool,
-    Both: { Expr a, Expr b } -> Expr { a, b }
+    Both: @ctx { a: @Type, b: @Type } -> { Expr a, Expr b } -> Expr { a, b }
 
 $ both : Expr { @Int, @Bool } = Expr.Both.{ Expr.Num.{ 1 }, Expr.Flag.{ @true } }
 
