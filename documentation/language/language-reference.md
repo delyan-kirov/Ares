@@ -523,6 +523,57 @@ at another type, as one without a signature cannot.
 `_` in a term (a value left to elaboration) waits for dependent types (#406).
 `???` (4.12) is different: it is always an error, reporting the type it needs.
 
+## 3.12 Universes and levels
+Types are values, and a type's type is a universe `@Type n`, the types at
+level `n`. Data (`@Int`, `{@Str, Bool}`, `@Int -> @Int`) lives in `@Type 1`,
+and `@Type n` itself in `@Type (n + 1)`. Universes are not cumulative: a type
+lives in exactly one, so `@Type 1` is in `@Type 2` and nowhere else.
+
+```ares
+$ Count : @Type 1 = @Int
+$ small : @Type 2 = @Type 1
+```
+
+A bare `@Type` is level-polymorphic: each use picks its level, and the checker
+infers the constraints between levels from the definition's body. A signature
+names its levels in its first `@ctx`, as `u: @l` fields ahead of every
+parameter, and writes `@Type u`, `@Type (u + 1)` or `@Type (@max u v)`. A
+named level is the signature's own, so the body cannot fix it; a use leaves it
+to unification or gives it as a `@ctx` argument.
+
+```ares
+$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
+$ three : @Int = id @ctx {.u = 1} @Int 3
+```
+
+Without an `if`, the constraints between named levels are inferred as for a
+bare `@Type`. An `if` ending the `@ctx` states them exactly: `<`, `<=`, `>`,
+`>=` and `==` between levels, joined by `&&`. The body may need only what the
+`if` entails, and every use must meet it.
+
+```ares
+$ Both : (a: @Type) -> (b: @Type) -> @Type = {a, b}
+$ same_level : @ctx {w: @l} -> (t: @Type w) -> (p: @Type w) -> @Int = 0
+$ check : @ctx {u: @l, v: @l if v <= u} -> (a: @Type u) -> (b: @Type v) -> @Int = same_level (Both a b) a
+```
+
+A declared type (`@struct`, `@union`, `@effect`) lives in the universe its
+signature states, and every member must fit in it. A bare `@Type` there is the
+least universe that holds every member, so `List t` is at the level of `t`. A
+constructor or operation that binds a type in its own `@ctx` stores a
+universe, which makes its type large, and an effectful arrow `a -> <E x> b`
+lives at the level of its effects too. A declared type's level names must each
+be the universe of one of its parameters.
+
+```ares
+$ Pair : @ctx {u: @l} -> (a: @Type u) -> (b: @Type u) -> @Type u = @struct fst: a, snd: b,
+$ Kinds : @Type 2 = @struct small: @Type 1,
+```
+
+Levels range over 1 and up. `@Type 0`, the universe of propositions, and an
+`if` that lets a level reach it (`u >= 0`) come with propositions in the
+frontend (#406); the kernel already has them (16).
+
 ---
 
 # 4. Expressions and syntactic sugar

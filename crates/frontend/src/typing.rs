@@ -177,6 +177,9 @@ pub struct Checker<'a> {
     /// Type arguments in the wrong universe, met while expanding an alias:
     /// reported by the declaration being checked, or at the end of the module.
     universe_errors: Vec<Diagnostic>,
+    /// The level variables that stand for a signature's `@ctx {u: @l}`
+    /// names. See Note [Level parameters].
+    level_names: HashSet<Type>,
     /// Globals of type `@Nat`, by name, with their bodies: a lowercase name in
     /// a size means one of these before a size variable, and unfolds to its
     /// value (#535).
@@ -627,6 +630,7 @@ impl<'a> Checker<'a> {
             aliases: HashMap::new(),
             alias_param_levels: HashMap::new(),
             universe_errors: Vec::new(),
+            level_names: HashSet::new(),
             nat_consts: HashMap::new(),
             effect_ops: HashMap::new(),
             imported_effect_ops: HashMap::new(),
@@ -840,6 +844,7 @@ impl<'a> Checker<'a> {
         self.unknown_type = saved_unknown;
         self.register_effects(program)?;
         self.check_decl_kinds(program)?;
+        self.check_decl_levels(program)?;
         self.check_alias_levels(program)?;
 
         let defs: Vec<Def> = self
@@ -947,7 +952,7 @@ impl<'a> Checker<'a> {
         // the candidates a context requirement searches.
         for d in &defs {
             let Some(sig) = d.sig else { continue };
-            if self.ast.ctx_params.get(sig).is_some() {
+            if self.ast.ctx_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() {
                 self.own_ctx_sigs.push((d.name, sig));
                 self.qualified_ctx_sigs.insert((self.module_name, d.name), sig);
                 self.ctx_sigs.insert(d.name, sig);
@@ -1154,10 +1159,14 @@ impl<'a> Checker<'a> {
         for decl in &declared {
             self.unifier.vars_with_levels(*decl, &mut keep);
         }
-        if let Err((c, lhs, rhs)) = self.unifier.settle_levels(level_mark, &keep) {
+        if let Err((c, _, _)) = self.unifier.settle_levels(level_mark, &keep) {
             let first = &defs[component[0]];
             let at = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
-            return Err(universe_error(c.span.unwrap_or(at), &lhs, &rhs));
+            let shown = self.unifier.show_all_named(&[c.lhs, c.rhs], self.sig_names(first.name));
+            return Err(universe_error(c.span.unwrap_or(at), &shown[0], &shown[1]));
+        }
+        for &i in component {
+            self.check_level_if(&defs[i], level_mark)?;
         }
         self.unifier.leave_level();
         let mono = self.pending_vars();
@@ -1173,7 +1182,8 @@ impl<'a> Checker<'a> {
     /// elaborated outside any (a global's signature at registration).
     fn finish_levels(&mut self) {
         let mut found = std::mem::take(&mut self.universe_errors);
-        found.dedup_by(|a, b| a.to_string() == b.to_string());
+        let mut seen = HashSet::new();
+        found.retain(|d| seen.insert(d.to_string()));
         self.errors.extend(found);
         if let Err((c, lhs, rhs)) = self.unifier.settle_levels(0, &HashSet::new()) {
             self.errors.push(universe_error(c.span.unwrap_or(Span::at(0)), &lhs, &rhs));
@@ -1490,6 +1500,105 @@ impl<'a> Checker<'a> {
         shown
     }
 
+    /// A signature's `if` makes its levels exact: the body may fix none of
+    /// them, and needs no constraint the `if` does not entail. The `if` then
+    /// goes with the scheme, for each use to meet. See Note [Level parameters].
+    fn check_level_if(&mut self, def: &Def, mark: usize) -> Result<()> {
+        let Some(sig) = def.sig else { return Ok(()) };
+        let Some(cond) = self.ast.level_constraints.get(sig).copied() else { return Ok(()) };
+        let at = self.ast.expr_span(cond).or(def.name_span).unwrap_or(Span::at(0));
+        let names: HashMap<StrId, Type> = self
+            .var_names
+            .get(&def.name)
+            .into_iter()
+            .flatten()
+            .filter(|(t, _)| self.level_names.contains(t))
+            .map(|(t, n)| (*n, *t))
+            .collect();
+        let mut hyps = Vec::new();
+        self.level_hyps(cond, &names, &mut hyps)?;
+        let mut seen: HashMap<VarId, StrId> = HashMap::new();
+        let mut named = HashSet::new();
+        for (&n, &t) in &names {
+            let r = self.unifier.resolve(t);
+            let fixed = match self.unifier.types.node(r) {
+                TypeNode::Var(id) => seen.insert(id, n).map(|other| format!("equal to `{other}`")),
+                _ => Some(format!("at {}", self.unifier.show(r))),
+            };
+            if let Some(how) = fixed {
+                return Err(diag!(
+                    Code::TypeMismatch, def.name_span.unwrap_or(at), 0,
+                    "the body of `{}` needs the level `{n}` {how}, which its `if` does not allow", def.name;
+                    note: "with an `if`, a signature's levels are exactly as general as it states";
+                    help: "state it in the `if`, or leave the `if` out to have the levels inferred"
+                ));
+            }
+            self.unifier.vars_with_levels(r, &mut named);
+        }
+        let nfs: Vec<(crate::typing::unify::levels::LevelNf, crate::typing::unify::levels::LevelNf)> =
+            hyps.iter().map(|(l, r)| (self.unifier.normalize_level(*l), self.unifier.normalize_level(*r))).collect();
+        let Some(closed) = crate::typing::unify::levels::LevelHyps::new(&nfs) else {
+            return Err(diag!(Code::TypeMismatch, at, 0, "the constraints of this `if` cannot all hold"));
+        };
+        let names_shown = self.sig_names(def.name);
+        for c in self.unifier.pending_levels(mark) {
+            let mut vars = HashSet::new();
+            self.unifier.vars_with_levels(c.lhs, &mut vars);
+            self.unifier.vars_with_levels(c.rhs, &mut vars);
+            if vars.is_disjoint(&named) {
+                continue;
+            }
+            let (l, r) = (self.unifier.normalize_level(c.lhs), self.unifier.normalize_level(c.rhs));
+            if !closed.entails(&l, &r) {
+                let shown = self.unifier.show_all_named(&[c.lhs, c.rhs], names_shown);
+                return Err(diag!(
+                    Code::TypeMismatch, c.span.unwrap_or(at), 0,
+                    "the body of `{}` needs `{} <= {}`, which its `if` does not entail", def.name, shown[0], shown[1];
+                    note: "with an `if`, a signature's levels are exactly as general as it states";
+                    help: "add it to the `if`, or leave the `if` out to have the constraints inferred"
+                ));
+            }
+        }
+        for (l, r) in hyps {
+            self.unifier.constrain_level(l, r, Some(at));
+        }
+        Ok(())
+    }
+
+    /// The constraints an `if` states, each `(lhs, rhs)` for `lhs <= rhs`:
+    /// comparisons of levels joined by `&&`.
+    fn level_hyps(&mut self, e: Aol<Expr>, names: &HashMap<StrId, Type>, out: &mut Vec<(Type, Type)>) -> Result<()> {
+        let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
+        match *self.node(e) {
+            Expr::If { cond, then, alt } if matches!(self.node(alt), Expr::Bool(false)) => {
+                self.level_hyps(cond, names, out)?;
+                self.level_hyps(then, names, out)
+            }
+            Expr::BinOp { op, lhs, rhs } if matches!(op.as_str(), "<" | "<=" | ">" | ">=" | "==") => {
+                if op.as_str() == ">=" && matches!(self.node(rhs), Expr::Int(0)) {
+                    return Err(dependent_only(Some(span), "a level that may be 0 (a universe of propositions)"));
+                }
+                let (a, b) = (self.level_of_expr(lhs, names)?, self.level_of_expr(rhs, names)?);
+                let one_more = |c: &mut Self, t: Type| c.unifier.types.add(TypeNode::LevelAdd(t, 1));
+                match op.as_str() {
+                    "<" => out.push((one_more(self, a), b)),
+                    "<=" => out.push((a, b)),
+                    ">" => out.push((one_more(self, b), a)),
+                    ">=" => out.push((b, a)),
+                    _ => {
+                        out.push((a, b));
+                        out.push((b, a));
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(diag!(
+                Code::TypeMismatch, span, 0,
+                "a level constraint compares levels with `<`, `<=`, `>`, `>=` or `==`, joined by `&&`"
+            )),
+        }
+    }
+
     /// The names `name`'s signature gives its variables.
     fn sig_names(&self, name: StrId) -> HashMap<VarId, String> {
         let mut out = HashMap::new();
@@ -1501,17 +1610,23 @@ impl<'a> Checker<'a> {
         out
     }
 
-    /// `@ctx {t: @Type, ...}` as `name`'s signature writes it, if it has one.
+    /// `@ctx {u: @l, t: @Type u, ... if ...}` as `name`'s signature writes
+    /// it, its levels first, if it has one.
     fn show_ctx_binder(&self, name: StrId) -> Option<String> {
-        let sig = self.ctx_sigs.get(&name)?;
-        let fields = self.ast.ctx_params.get(*sig)?;
-        let shown: Vec<String> = self
-            .ast
-            .slice(*fields)
-            .iter()
+        let sig = *self.ctx_sigs.get(&name)?;
+        let fields = [self.ast.level_params.get(sig), self.ast.ctx_params.get(sig)];
+        let shown: Vec<String> = fields
+            .into_iter()
+            .flatten()
+            .flat_map(|fs| self.ast.slice(*fs).iter())
             .map(|f| format!("{}: {}", f.name, self.ast.ty_source(f.ty).unwrap_or_default()))
             .collect();
-        Some(format!("@ctx {{{}}}", shown.join(", ")))
+        if shown.is_empty() {
+            return None;
+        }
+        let cond = self.ast.level_constraints.get(sig).and_then(|e| self.ast.level_constraint_source(*e, 0));
+        let cond = cond.map_or(String::new(), |c| format!(" if {c}"));
+        Some(format!("@ctx {{{}{cond}}}", shown.join(", ")))
     }
 
     /// `@use {d: IOrd a, s: ISub a} -> a -> a`: the context `ctx` split into the

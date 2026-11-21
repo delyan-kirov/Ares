@@ -11,6 +11,7 @@
 
 use super::*;
 use super::signatures::{ctx_fields, unbound_names, Binder};
+use super::unify::levels::{DeclLevel, ParamLevel};
 
 // ## Type parameters
 
@@ -552,7 +553,7 @@ impl<'a> Checker<'a> {
             self.unifier.enter_level();
             let mark = self.unifier.level_mark();
             let saved = self.unknown_type.take();
-            let mut tvars = HashMap::new();
+            let mut tvars = self.level_tvars(sig);
             let mut cur = sig;
             let mut i = 0;
             while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
@@ -560,14 +561,14 @@ impl<'a> Checker<'a> {
                 if let Some(p) = params.get(i) {
                     let v = match self.kind_of_ast(from) {
                         Some(ParamKind::Nat) => self.unifier.fresh_nat(),
-                        _ => self.leveled_var(from),
+                        _ => self.leveled_var(from, &tvars),
                     };
                     tvars.insert(*p, v);
                 }
                 i += 1;
                 cur = to;
             }
-            let result = self.ty_of_ast(cur, &mut HashMap::new());
+            let result = self.ty_of_ast(cur, &mut tvars.clone());
             let body = self.ty_of_ast(ty, &mut tvars);
             self.unknown_type = saved;
             let span = self.ast.ty_span(ty).or(at.name).unwrap_or(at.full);
@@ -590,6 +591,260 @@ impl<'a> Checker<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Give each struct, union and effect declared here its universe, and
+    /// check every member fits a stated one. See Note [Declaration levels].
+    /// A recursive type reads its own closed form, so the forms are computed
+    /// again until none grows.
+    pub(super) fn check_decl_levels(&mut self, program: &Program) -> Result<()> {
+        let decls = self.level_decls(program);
+        let mut grown = None;
+        for _ in 0..DECL_LEVEL_ROUNDS {
+            grown = None;
+            for d in &decls {
+                let level = self.decl_level(d)?;
+                if self.unifier.decl_levels.get(&d.name) != Some(&level) {
+                    self.unifier.decl_levels.insert(d.name, level);
+                    grown = Some(d);
+                }
+            }
+            if grown.is_none() {
+                return Ok(());
+            }
+        }
+        let d = grown.expect("a declaration grew in the last round");
+        Err(diag!(
+            Code::TypeMismatch, d.span, 0,
+            "the universe of `{}` grows with each unfolding of its members", d.name;
+            note: "a type that mentions itself at a larger universe has no universe of its own"
+        ))
+    }
+
+    /// The struct, union and effect declarations of `program`, as members to
+    /// level.
+    fn level_decls(&self, program: &Program) -> Vec<LevelDecl> {
+        let mut out = Vec::new();
+        let items = self.ast.slice(program.items);
+        let spans = self.ast.slice(program.spans);
+        for (item, at) in items.iter().zip(spans) {
+            let span = at.name.unwrap_or(at.full);
+            let (name, sig, params, members, effect) = match item {
+                Item::Struct { name, sig, params, fields, .. } => {
+                    let members = self.ast.slice(*fields).iter().map(|f| (vec![f.ty], self.ast.ctx_params.get(f.ty).copied())).collect();
+                    (*name, *sig, self.ast.slice(*params).to_vec(), members, false)
+                }
+                Item::Union { name, sig, variants, .. } => {
+                    let info = &self.unions[name];
+                    let members = info
+                        .variants
+                        .iter()
+                        .zip(self.ast.slice(*variants))
+                        .map(|(v, decl)| (v.payload.iter().map(|(_, t)| *t).collect(), Some(decl.ctx)))
+                        .collect();
+                    (*name, *sig, info.params[..info.uniform].to_vec(), members, false)
+                }
+                Item::Effect { name, sig, params, ops } => {
+                    let members = self.ast.slice(*ops).iter().map(|f| (vec![f.ty], self.ast.ctx_params.get(f.ty).copied())).collect();
+                    (*name, *sig, self.ast.slice(*params).to_vec(), members, true)
+                }
+                _ => continue,
+            };
+            out.push(LevelDecl { name, sig, params, members, effect, span });
+        }
+        out
+    }
+
+    /// The closed form of one declaration's universe, read with the forms
+    /// found so far. See Note [Declaration levels].
+    fn decl_level(&mut self, d: &LevelDecl) -> Result<DeclLevel> {
+        self.unifier.enter_level();
+        let mark = self.unifier.level_mark();
+        let saved = self.unknown_type.take();
+        let mut tvars = self.level_tvars(d.sig);
+        let mut param_levels: Vec<Option<Type>> = Vec::new();
+        let mut cur = d.sig;
+        while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+            let (from, to) = (*from, *to);
+            let Some(&p) = d.params.get(param_levels.len()) else { break };
+            let (v, level) = match self.kind_of_ast(from) {
+                Some(ParamKind::Type) => {
+                    let v = self.leveled_var(from, &tvars);
+                    (v, Some(self.unifier.level_of(v)))
+                }
+                Some(ParamKind::Nat) => (self.unifier.fresh_nat(), None),
+                _ => (self.unifier.fresh(), None),
+            };
+            tvars.insert(p, v);
+            param_levels.push(level);
+            cur = to;
+        }
+        let stated = self.stated_universe(cur);
+        // A universe at a level parameter, `@Type u`: exact, like a number.
+        let named = match (stated, self.ast.ty(cur)) {
+            (None, Ty::App(..)) => {
+                let u = self.ty_of_ast(cur, &mut tvars.clone());
+                self.unifier.types.universe_level(self.unifier.resolve(u))
+            }
+            _ => None,
+        };
+        let saved_self = d.effect.then(|| {
+            let args: Vec<Type> = d.params.iter().filter_map(|p| tvars.get(p).copied()).collect();
+            let args = if args.is_empty() { self.unifier.types.row_empty() } else { self.unifier.types.tuple(args) };
+            self.effect_self.replace((d.name, args))
+        });
+        let mut members: Vec<(Type, Span)> = Vec::new();
+        for (tys, ctx) in &d.members {
+            let span = tys.first().and_then(|t| self.ast.ty_span(*t)).unwrap_or(d.span);
+            let mut tvars = tvars.clone();
+            for f in ctx.map(|c| self.ast.slice(c).to_vec()).unwrap_or_default() {
+                let t = match self.kind_of_ast(f.ty) {
+                    Some(ParamKind::Nat) => self.unifier.fresh_nat(),
+                    Some(ParamKind::Type) => {
+                        let t = self.leveled_var(f.ty, &tvars);
+                        let own = self.unifier.level_of(t);
+                        members.push((self.unifier.types.add(TypeNode::LevelAdd(own, 1)), span));
+                        t
+                    }
+                    Some(ParamKind::Row) => self.unifier.fresh(),
+                    None => continue,
+                };
+                tvars.insert(f.name, t);
+            }
+            for ty in tys {
+                let t = self.ty_of_ast(*ty, &mut tvars);
+                let span = self.ast.ty_span(*ty).unwrap_or(span);
+                members.push((self.unifier.level_of(t), span));
+            }
+        }
+        if let Some(saved_self) = saved_self {
+            self.effect_self = saved_self;
+        }
+        self.unknown_type = saved;
+        // A parameter whose level a member fixed is at that level; one still
+        // free is a variable of the closed form, bounded by what the members
+        // require of it.
+        let mut keep = HashSet::new();
+        for l in param_levels.iter().flatten() {
+            self.unifier.vars_with_levels(*l, &mut keep);
+        }
+        let settled = self.unifier.settle_levels(mark, &keep);
+        let mut params = Vec::new();
+        let mut free: HashMap<VarId, usize> = HashMap::new();
+        for (i, l) in param_levels.iter().enumerate() {
+            let Some(l) = l else {
+                params.push(ParamLevel::Other);
+                continue;
+            };
+            let nf = self.unifier.normalize_level(*l);
+            match (nf.ground(), nf.vars.as_slice()) {
+                (Some(n), _) => params.push(ParamLevel::Stated(n)),
+                (None, &[(u, 0)]) if nf.konst == 0 => match free.get(&u) {
+                    Some(&j) => params.push(ParamLevel::Like(j)),
+                    None => {
+                        free.insert(u, i);
+                        params.push(ParamLevel::Free { at_most: None });
+                    }
+                },
+                _ => params.push(ParamLevel::Free { at_most: None }),
+            }
+        }
+        for (v, k, c) in self.unifier.upper_bounds(mark) {
+            if let (Some(&i), Some(m)) = (free.get(&v), c.checked_sub(k)) {
+                if let ParamLevel::Free { at_most } = &mut params[i] {
+                    *at_most = Some(at_most.map_or(m, |a| a.min(m)));
+                }
+            }
+        }
+        self.unifier.forget_levels(mark);
+        let mut konst = 1;
+        let mut terms: Vec<(usize, u32)> = Vec::new();
+        let mut too_large = None;
+        let mut named_too_large = None;
+        for (l, span) in members {
+            let nf = self.unifier.normalize_level(l);
+            let (mut own, mut low) = (nf.konst, nf.konst);
+            for (v, k) in nf.vars {
+                low = low.max(k + 1);
+                match free.get(&v) {
+                    Some(&i) => match terms.iter_mut().find(|(j, _)| *j == i) {
+                        Some((_, j)) => *j = (*j).max(k),
+                        None => terms.push((i, k)),
+                    },
+                    None => own = own.max(k + 1),
+                }
+            }
+            konst = konst.max(own);
+            if stated.is_some_and(|c| low > c) && too_large.is_none() {
+                too_large = Some((span, low));
+            }
+            if let Some(r) = named {
+                let r = self.unifier.normalize_level(r);
+                if !self.unifier.level_leq(&self.unifier.normalize_level(l), &r) && named_too_large.is_none() {
+                    named_too_large = Some((span, self.unifier.show(l), self.unifier.show(self.unifier.level_of_nf(&r))));
+                }
+            }
+        }
+        self.unifier.leave_level();
+        if let Err((c, lhs, rhs)) = settled {
+            return Err(universe_error(c.span.unwrap_or(d.span), &lhs, &rhs));
+        }
+        // Rule [Frontend-Data-Level]
+        if let (Some((span, low)), Some(c)) = (too_large, stated) {
+            return Err(diag!(
+                Code::TypeMismatch, span, 0,
+                "universe inconsistency: this member is at level {low} or more, too large for the universe `@Type {c}`";
+                note: "a type's members live in its universe or below, and `@Type n` is a type at level `n + 1`";
+                help: "state a larger universe, or a bare `@Type` for the least one that holds every member"
+            ));
+        }
+        if let Some((span, l, r)) = named_too_large {
+            return Err(universe_error(span, &l, &r).with_note("a type's members live in its universe or below"));
+        }
+        if let Some(r) = named {
+            let r = self.unifier.normalize_level(r);
+            let mut terms = Vec::new();
+            for (v, k) in r.vars {
+                let Some(&i) = free.get(&v) else {
+                    return Err(diag!(
+                        Code::TypeMismatch, self.ty_span_or_none(cur), 0,
+                        "the universe of `{}` is at a level no type parameter's universe fixes", d.name;
+                        note: "a declared type's universe follows its parameters, as in `(a: @Type u) -> @Type u`"
+                    ));
+                };
+                terms.push((i, k));
+            }
+            terms.sort_unstable();
+            return Ok(DeclLevel { params, konst: r.konst, terms });
+        }
+        terms.sort_unstable();
+        Ok(match stated {
+            Some(c) => {
+                for (i, k) in terms {
+                    if let ParamLevel::Free { at_most } = &mut params[i] {
+                        *at_most = Some(at_most.map_or(c - k, |a| a.min(c - k)));
+                    }
+                }
+                DeclLevel { params, konst: c, terms: Vec::new() }
+            }
+            None => {
+                let konst = if terms.iter().any(|(_, k)| konst <= k + 1) { 1 } else { konst };
+                DeclLevel { params, konst, terms }
+            }
+        })
+    }
+
+    /// The constant `n` of a declaration's stated universe `@Type n`, `None`
+    /// for a bare `@Type`.
+    fn stated_universe(&self, ty: Aol<Ty>) -> Option<u32> {
+        let Ty::App(head, n) = self.ast.ty(ty) else { return None };
+        if !matches!(self.ast.ty(*head), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) {
+            return None;
+        }
+        match self.ast.ty(*n) {
+            Ty::Nat(n) => u32::try_from(*n).ok(),
+            _ => None,
+        }
     }
 
     /// A type-level function's parameters are types or sizes, and it returns
@@ -662,6 +917,13 @@ impl<'a> Checker<'a> {
         let items = self.ast.slice(program.items);
         let spans = self.ast.slice(program.spans);
         for (item, at) in items.iter().zip(spans) {
+            let decl_sig = match item {
+                Item::Struct { sig, .. } | Item::Union { sig, .. } | Item::Effect { sig, .. } | Item::Alias { sig, .. } => Some(*sig),
+                _ => None,
+            };
+            if let Some(cond) = decl_sig.and_then(|s| self.ast.level_constraints.get(s)) {
+                return Err(dependent_only(self.ast.expr_span(*cond), "an `if` on the levels of a type"));
+            }
             let Item::Def { name, sig, .. } = item else { continue };
             let span = at.name.unwrap_or(at.full);
             if sig.is_some_and(|s| self.returns_type(s)) {
@@ -677,10 +939,6 @@ impl<'a> Checker<'a> {
                     "a value's name is lowercase by convention; a capitalized name reads as a type";
                     help: "rename `{name}` to `{}`", lower_first(name.as_str())
                 ));
-            }
-            if let Some(levels) = sig.and_then(|s| self.ast.level_params.get(s)) {
-                let span = self.ast.slice(*levels).first().map_or(span, |l| l.span);
-                return Err(dependent_only(Some(span), "a level parameter"));
             }
         }
         Ok(())
@@ -1047,7 +1305,7 @@ impl<'a> Checker<'a> {
     pub(super) fn variant_sig(&mut self, union: StrId, tag: StrId, opaque: bool) -> Option<(Type, VariantPayload, Vec<(StrId, Type)>)> {
         let info = self.unions.get(&union)?.clone();
         let pos = info.variants.iter().position(|v| v.tag == tag)?;
-        let (mut args, mut subst) = self.instantiate_params(&info.params[..info.uniform], &info.kinds[..info.uniform]);
+        let (mut args, mut subst) = self.instantiate_params(union, &info.params[..info.uniform], &info.kinds[..info.uniform]);
         let variant = &info.variants[pos];
         let mut own = Vec::new();
         for &(name, kind) in &variant.own {
@@ -1239,12 +1497,34 @@ impl<'a> Checker<'a> {
         Some(self.ty_of_ast(ast_ty, subst))
     }
 
-    /// A fresh variable for each parameter, a size variable for a `@Nat` one.
-    pub(super) fn instantiate_params(&mut self, params: &[StrId], kinds: &[ParamKind]) -> (Vec<Type>, HashMap<StrId, Type>) {
+    /// A fresh variable for each parameter of the type `decl`, a size
+    /// variable for a `@Nat` one, and a type variable at the level the
+    /// parameter takes. See Note [Declaration levels].
+    pub(super) fn instantiate_params(&mut self, decl: StrId, params: &[StrId], kinds: &[ParamKind]) -> (Vec<Type>, HashMap<StrId, Type>) {
+        let levels = self.unifier.decl_levels.get(&decl).map(|d| d.params.clone()).unwrap_or_default();
         let mut subst = HashMap::new();
         let mut args = Vec::with_capacity(params.len());
-        for (p, kind) in params.iter().zip(kinds) {
+        for (i, (p, kind)) in params.iter().zip(kinds).enumerate() {
             let v = self.fresh_of(*kind);
+            match levels.get(i) {
+                Some(ParamLevel::Stated(n)) => {
+                    let level = self.unifier.types.add(TypeNode::Level(*n));
+                    self.unifier.set_var_level(v, level);
+                }
+                Some(ParamLevel::Free { at_most: Some(m) }) => {
+                    let level = self.unifier.fresh();
+                    let bound = self.unifier.types.add(TypeNode::Level(*m));
+                    self.unifier.constrain_level(level, bound, None);
+                    self.unifier.set_var_level(v, level);
+                }
+                Some(ParamLevel::Like(j)) => {
+                    if let Some(&first) = args.get(*j) {
+                        let level = self.unifier.level_of(first);
+                        self.unifier.set_var_level(v, level);
+                    }
+                }
+                _ => {}
+            }
             subst.insert(*p, v);
             args.push(v);
         }
@@ -1328,6 +1608,8 @@ pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
                 out.push(name);
             }
         }
+        // The level of `@Type u` names a level, never a type variable.
+        Ty::App(a, _) if matches!(ast.ty(*a), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {}
         Ty::App(a, b) => {
             collect_tyvars(ast, *a, out);
             collect_tyvars(ast, *b, out);
@@ -1475,4 +1757,20 @@ fn unstated_result(union: StrId, tag: StrId, params: &[StrId]) -> Diagnostic {
 fn lower_first(name: &str) -> String {
     let mut cs = name.chars();
     cs.next().map_or_else(String::new, |c| c.to_ascii_lowercase().to_string() + cs.as_str())
+}
+
+/// How many times the declarations' universes are computed before one that
+/// still grows is an error. See Note [Declaration levels].
+const DECL_LEVEL_ROUNDS: usize = 8;
+
+/// A struct, union or effect declaration, as `check_decl_levels` reads it:
+/// the parameters its members see, and each member's types with the `@ctx`
+/// that binds its own variables.
+struct LevelDecl {
+    name: StrId,
+    sig: Aol<Ty>,
+    params: Vec<StrId>,
+    members: Vec<(Vec<Aol<Ty>>, Option<Slice<UseField>>)>,
+    effect: bool,
+    span: Span,
 }

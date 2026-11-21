@@ -32,7 +32,7 @@ use std::rc::Rc;
 
 use utilities::{Code, Diagnostic, Result, Span, StrId};
 
-use crate::typing::types::{display, Level, Type, TypeNode, Types, VarId};
+use crate::typing::types::{display, Level, LevelView, Type, TypeNode, Types, VarId};
 
 /// The state of one unification variable.
 #[derive(Clone, Debug)]
@@ -88,6 +88,9 @@ pub struct Unifier {
     /// instantiation, and their index by variable.
     scheme_le: Vec<levels::LevelLe>,
     scheme_le_by_var: HashMap<VarId, Vec<usize>>,
+    /// The universe of each declared struct, union and effect as a function
+    /// of its parameters' levels. See Note [Declaration levels].
+    pub decl_levels: HashMap<StrId, levels::DeclLevel>,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -149,6 +152,7 @@ impl Unifier {
             level_le: Vec::new(),
             scheme_le: Vec::new(),
             scheme_le_by_var: HashMap::new(),
+            decl_levels: HashMap::new(),
         }
     }
 
@@ -477,9 +481,11 @@ impl Unifier {
             (Whnf::Node(TypeNode::Var(i)), Whnf::Size(_)) => return self.bind(i, b),
             (Whnf::Size(_), Whnf::Node(_)) => return Err(self.kind_mismatch(self.found_first)),
             (Whnf::Node(_), Whnf::Size(_)) => return Err(self.kind_mismatch(!self.found_first)),
-            (Whnf::Level, Whnf::Level) => return self.unify_level(a, b, where_),
-            (Whnf::Level, Whnf::Node(TypeNode::Var(j))) => return self.bind(j, a),
-            (Whnf::Node(TypeNode::Var(i)), Whnf::Level) => return self.bind(i, b),
+            // A variable against a level is a level atom, so `u = u + 0` and
+            // `u = @max u v` are level equations, not occurs failures.
+            (Whnf::Level, Whnf::Level) | (Whnf::Level, Whnf::Node(TypeNode::Var(_))) | (Whnf::Node(TypeNode::Var(_)), Whnf::Level) => {
+                return self.unify_level(a, b, where_)
+            }
             (Whnf::Level, _) | (_, Whnf::Level) => return Err(self.mismatch(written_a, written_b, where_)),
             (Whnf::Node(na), Whnf::Node(nb)) => (na, nb),
         };
@@ -927,6 +933,9 @@ impl Unifier {
     /// binds them; the rest take the letters those names leave free.
     pub fn show_all_named(&self, tys: &[Type], mut names: HashMap<VarId, String>) -> Vec<String> {
         let taken: HashSet<String> = names.values().cloned().collect();
+        let named: HashSet<VarId> = names.keys().copied().collect();
+        let of = |id: VarId| self.var_level(id).map(|l| self.zonk(l));
+        let levels = LevelView { of: &of, named: &named };
         let mut next = 0u32;
         let mut namer = |id: VarId| {
             names
@@ -945,7 +954,7 @@ impl Unifier {
         tys.iter()
             .map(|t| {
                 let zonked = self.zonk(*t);
-                display(&self.types, zonked, &mut namer)
+                display(&self.types, zonked, &mut namer, &levels)
             })
             .collect()
     }

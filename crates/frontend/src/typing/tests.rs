@@ -1494,6 +1494,110 @@ fn a_universe_has_a_level() {
     assert_eq!(type_of(any, "f"), "@Type -> @Int");
 }
 
+// Test [Frontend-Univ]
+#[test]
+fn a_universe_holds_the_types_one_level_below() {
+    let applies = |src: &str| assert_eq!(errors(&format!("$ @mod T\n{src}")), "", "{src}");
+    let blocked = |src: &str| {
+        let e = errors(&format!("$ @mod T\n{src}"));
+        assert!(e.contains("universe"), "{src}: got {e:?}");
+    };
+    applies("$ t : @Type 2 = @Type 1\n");
+    blocked("$ t : @Type 1 = @Type 1\n");
+    blocked("$ t : @Type 3 = @Type 1\n");
+}
+
+// Test [Frontend-Level-Polymorphism]
+#[test]
+fn a_signature_binds_its_levels() {
+    let id = "$ @mod T\n$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\x => x\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{id}{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("{id}{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ n : @Int = id @Int 3\n");
+    applies("$ n : @Int = id @ctx {.u = 1} @Int 3\n");
+    blocked("$ n : @Int = id @ctx {.u = 2} @Int 3\n", "universe level mismatch");
+    applies("$ g : @ctx {v: @l} -> (t: @Type v) -> t -> t = \\x => id @ctx {.u = v} t x\n");
+    blocked("$ g : @ctx {v: @l} -> (t: @Type v) -> t -> t = \\x => id @ctx {.u = w} t x\n", "the level `w` is not bound");
+    // The body may not fix a named level.
+    blocked("$ count : (t: @Type 1) -> @Int = 0\n$ f : @ctx {u: @l} -> (t: @Type u) -> @Int = count t\n", "needs `u` to be `1`");
+    // An `if` makes the constraints exact; without one they are inferred.
+    let need = "$ Pair : (a: @Type) -> (b: @Type) -> @Type = {a, b}\n$ need : @ctx {w: @l} -> (t: @Type w) -> (p: @Type w) -> @Int = 0\n";
+    let body = "(a: @Type u) -> (b: @Type v) -> @Int = need (Pair a b) a\n";
+    applies(&format!("{need}$ f : @ctx {{u: @l, v: @l if v <= u}} -> {body}"));
+    applies(&format!("{need}$ f : @ctx {{u: @l, v: @l}} -> {body}$ k : @Int = f (@Type 1) @Int\n"));
+    blocked(&format!("{need}$ f : @ctx {{u: @l, v: @l}} -> {body}$ k : @Int = f @Int (@Type 1)\n"), "universe");
+    blocked(&format!("{need}$ f : @ctx {{u: @l, v: @l if u <= v}} -> {body}"), "which its `if` does not entail");
+    blocked("$ f : @ctx {u: @l, v: @l if u < v && v < u} -> (t: @Type u) -> @Int = 0\n", "cannot all hold");
+}
+
+/// The levels a signature states show in its printed type: a constant level,
+/// the `@ctx` level fields with their `if`, and the levels named there. An
+/// unnamed level stays the bare `@Type` it was written as.
+#[test]
+fn a_signature_shows_its_levels() {
+    let src = "$ @mod T
+$ count : (t: @Type 1) -> @Int = 0
+$ any : (t: @Type) -> @Int = 0
+$ up : @ctx {u: @l} -> (t: @Type (u + 1)) -> t -> t = \\x => x
+$ two : @ctx {u: @l, v: @l if v < u && u == @max u v} -> (t: @Type u) -> (s: @Type (@max u v)) -> @Int = 0
+";
+    let shown = with_checker(src, |checker, prog| {
+        checker.check_program(prog).unwrap_or_else(|e| panic!("{}", e.render(src, "test.ares")));
+        checker.own_values().iter().map(|(n, t)| format!("{n} : {}", checker.show_decl(*n, *t))).collect::<Vec<_>>()
+    });
+    assert_eq!(
+        shown,
+        [
+            "count : (t: @Type 1) -> @Int",
+            "any : (t: @Type) -> @Int",
+            "up : @ctx {u: @l} -> (t: @Type (u + 1)) -> t -> t",
+            "two : @ctx {u: @l, v: @l if v < u && u == @max u v} -> (t: @Type u) -> (s: @Type (@max u v)) -> @Int",
+        ]
+    );
+}
+
+// Test [Frontend-Data-Level]
+#[test]
+fn a_declared_type_lives_in_the_universe_of_its_members() {
+    let applies = |src: &str| assert_eq!(errors(&format!("$ @mod T\n{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("$ @mod T\n{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ Big : @Type 2 = @struct t: @Type 1,\n$ b : @Type 2 = Big\n");
+    blocked("$ Small : @Type 1 = @struct t: @Type 1,\n", "too large for the universe `@Type 1`");
+    // A bare `@Type` is the least universe holding every member, so a
+    // parameter's level carries through.
+    applies("$ L : (t: @Type) -> @Type = @union N: {}, C: {t, L t},\n$ k : @Type 2 = L (@Type 1)\n");
+    blocked("$ L : (t: @Type) -> @Type = @union N: {}, C: {t, L t},\n$ k : @Type 1 = L (@Type 1)\n", "universe");
+    // A constructor that stores a type is large.
+    blocked("$ P : @Type = @union P: @ctx {a: @Type} -> {a} -> P,\n$ k : @Type 1 = P\n", "universe");
+    // A stated universe bounds a parameter, at a written use and a construction.
+    let boxed = "$ Box : (t: @Type) -> @Type 1 = @struct x: t,\n";
+    applies(&format!("{boxed}$ k : @Type 1 = Box @Int\n"));
+    blocked(&format!("{boxed}$ k : @Type 1 = Box (@Type 1)\n"), "universe");
+    blocked(&format!("{boxed}$ x : @Int = Box.{{ .x = @Int }} |> \\_ => 0\n"), "universe");
+}
+
+// Test [Frontend-Effect-Level]
+#[test]
+fn an_effectful_arrow_lives_with_its_effects() {
+    let count = "$ @mod T\n$ count : (t: @Type 1) -> @Int = 0\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{count}{src}")), "", "{src}");
+    let blocked = |src: &str| {
+        let e = errors(&format!("{count}{src}"));
+        assert!(e.contains("universe"), "{src}: got {e:?}");
+    };
+    applies("$ Ask : @Type = @effect ask : {} -> @Int,\n$ c : @Int = count ({} -> <Ask> @Int)\n");
+    // An operation generic in a type ranges over a universe, so its effect is large.
+    blocked("$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ c : @Int = count ({} -> <Exn> @Int)\n");
+    // An effect's arguments count.
+    blocked("$ St : (s: @Type) -> @Type = @effect get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
+}
+
 #[test]
 fn constructor_and_operation_variables_are_bound_in_their_ctx() {
     let m = "$ @mod T\n";

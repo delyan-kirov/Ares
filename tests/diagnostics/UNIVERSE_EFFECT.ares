@@ -1,0 +1,7 @@
+$ @mod UNIVERSE_EFFECT
+
+# An effectful arrow lives at the level of its effects (#566), and an
+# operation generic in a type ranges over a universe, so `Exn` is large.
+$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
+$ count : (t: @Type 1) -> @Int = 0
+$ c : @Int = count ({} -> <Exn> @Int)  #~ error[TYPE_MISMATCH]: universe level mismatch

@@ -1,0 +1,5 @@
+$ @mod LEVEL_ZERO
+
+# A level ranges over 1 and up (#567): `@Type 0` holds propositions, and an
+# `if` that lets a level reach it waits for them in the frontend.
+$ same : @ctx {u: @l if u >= 0} -> (t: @Type u) -> t -> t = \x => x  #~ error[UNSUPPORTED]: a level that may be 0

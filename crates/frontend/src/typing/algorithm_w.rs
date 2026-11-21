@@ -1750,7 +1750,7 @@ impl<'a> Checker<'a> {
             let sig = self.qualified_ctx_sigs.get(&(m, name)).copied();
             if given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty()) {
                 let uses = self.qualified_ctx.contains_key(&(m, name));
-                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
+                return self.infer_ctx_given(site, name, sig, uses, false, &given.unwrap_or_default());
             }
             if let Some(sig) = self.qualified_ctx.get(&(m, name)).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
@@ -1793,7 +1793,7 @@ impl<'a> Checker<'a> {
             let ambiguous = !self.local_defs.contains(&name) && self.ambiguous_imports.contains_key(&name);
             if !ambiguous && (given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty())) {
                 let uses = self.global_ctx.contains_key(&name);
-                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
+                return self.infer_ctx_given(site, name, sig, uses, true, &given.unwrap_or_default());
             }
             if let Some(sig) = self.global_ctx.get(&name).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
@@ -2049,7 +2049,7 @@ impl<'a> Checker<'a> {
                 Some((name, info)) => {
                     self.struct_lit_names.insert(site, name);
                     struct_name = name;
-                    let (args, subst) = self.instantiate_params(&info.params, &info.kinds);
+                    let (args, subst) = self.instantiate_params(name, &info.params, &info.kinds);
                     (info, applied(&self.unifier.types, name, &args), subst)
                 }
                 // No fresh() escape hatch: a struct literal whose type cannot be

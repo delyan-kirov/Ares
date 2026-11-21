@@ -60,8 +60,12 @@ pub struct Ast {
     pub use_params: SecondaryMap<Ty, Slice<UseField>>,
     /// The level parameters of a signature's leading `@ctx {u: @l, ...} ->`,
     /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
-    /// `@l`. Only the kernel reads them so far (#406).
+    /// `@l`.
     pub level_params: SecondaryMap<Ty, Slice<UseField>>,
+    /// The `if` that closes a signature's leading `@ctx`, `{n: @l, m: @l if
+    /// n < m}`: the constraints on its levels, keyed like
+    /// [`Ast::level_params`].
+    pub level_constraints: SecondaryMap<Ty, Aol<Expr>>,
     /// The other `@ctx` fields of a signature, keyed like [`Ast::use_params`],
     /// in the order written: the types, sizes and rows its type variables are.
     pub ctx_params: SecondaryMap<Ty, Slice<UseField>>,
@@ -241,6 +245,39 @@ impl Ast {
                 let tail = tail.map_or(String::new(), |t| format!(" | {t}"));
                 format!("{{{}{tail}}}", fields?.join(", "))
             }
+        })
+    }
+
+    /// The `if` on a signature's levels rendered back to source: comparisons
+    /// of levels joined by `&&`. `prec` is what the context binds: 0 a
+    /// conjunction, 1 a comparison, 2 a sum, 3 an atom.
+    pub fn level_constraint_source(&self, e: Aol<Expr>, prec: u8) -> Option<String> {
+        let wrap = |s: String, at: u8| if prec > at { format!("({s})") } else { s };
+        Some(match self.expr(e) {
+            Expr::If { cond, then, alt } if matches!(self.expr(*alt), Expr::Bool(false)) => wrap(
+                format!(
+                    "{} && {}",
+                    self.level_constraint_source(*cond, 1)?,
+                    self.level_constraint_source(*then, 0)?
+                ),
+                0,
+            ),
+            Expr::BinOp { op, lhs, rhs } if op.as_str() == "+" => wrap(
+                format!("{} + {}", self.level_constraint_source(*lhs, 2)?, self.level_constraint_source(*rhs, 3)?),
+                2,
+            ),
+            Expr::BinOp { op, lhs, rhs } => wrap(
+                format!("{} {op} {}", self.level_constraint_source(*lhs, 2)?, self.level_constraint_source(*rhs, 2)?),
+                1,
+            ),
+            Expr::App(f, b) => wrap(
+                format!("{} {}", self.level_constraint_source(*f, 2)?, self.level_constraint_source(*b, 3)?),
+                2,
+            ),
+            Expr::Int(n) => n.to_string(),
+            Expr::Var { module: None, name } => name.to_string(),
+            Expr::Type(t) => self.ty_src(*t, if prec > 2 { 2 } else { 0 })?,
+            _ => return None,
         })
     }
 

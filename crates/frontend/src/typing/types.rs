@@ -10,6 +10,7 @@
 //! one place inference mutates.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 
 use utilities::{Aol, Slice, Store, StrId};
 
@@ -370,13 +371,46 @@ fn dependent_binder(types: &Types, ty: Type) -> Option<(&'static str, Type)> {
     }
 }
 
+/// How the levels of universes display: the level a type variable ranges
+/// over, and the level variables a signature names. A level shows when it
+/// is constant or built from named variables only; an unnamed level variable
+/// is generalised per definition, so naming it adds nothing a reader can use.
+pub struct LevelView<'a> {
+    pub of: &'a dyn Fn(VarId) -> Option<Type>,
+    pub named: &'a HashSet<VarId>,
+}
+
+impl LevelView<'_> {
+    fn shows(&self, types: &Types, level: Type) -> bool {
+        match types.node_raw(level) {
+            TypeNode::Var(id) => self.named.contains(&id),
+            TypeNode::Level(_) => true,
+            TypeNode::LevelAdd(l, _) => self.shows(types, l),
+            TypeNode::LevelMax(a, b) => self.shows(types, a) && self.shows(types, b),
+            _ => false,
+        }
+    }
+
+    /// The level `@Type` shows with for the type variable `v`, if any.
+    fn of_var(&self, types: &Types, v: Type) -> Option<Type> {
+        let TypeNode::Var(id) = types.node_raw(v) else { return None };
+        (self.of)(id).filter(|l| self.shows(types, *l))
+    }
+}
+
 /// Format a fully resolved type (no `Var` links left) for display. Variables are
 /// named `t0`, `t1`, ... by first appearance via `namer`.
-pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) -> String {
+pub fn display(
+    types: &Types,
+    ty: Type,
+    namer: &mut dyn FnMut(VarId) -> String,
+    levels: &LevelView,
+) -> String {
     fn go(
         types: &Types,
         ty: Type,
         namer: &mut dyn FnMut(VarId) -> String,
+        levels: &LevelView,
         out: &mut String,
         prec: u8,
     ) {
@@ -387,7 +421,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     out.push_str(types.name(name));
                     for arg in args {
                         out.push(' ');
-                        go(types, arg, namer, out, 4);
+                        go(types, arg, namer, levels, out, 4);
                     }
                 });
             }
@@ -395,32 +429,32 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
             TypeNode::Con(name) => out.push_str(types.name(name)),
             TypeNode::Nat(n) => out.push_str(&n.to_string()),
             TypeNode::NatAdd(a, b) => paren(out, prec > 2, |out| {
-                go(types, a, namer, out, 2);
+                go(types, a, namer, levels, out, 2);
                 out.push_str(" + ");
-                go(types, b, namer, out, 2);
+                go(types, b, namer, levels, out, 2);
             }),
             TypeNode::NatMul(a, b) => paren(out, prec > 3, |out| {
-                go(types, a, namer, out, 3);
+                go(types, a, namer, levels, out, 3);
                 out.push_str(" * ");
-                go(types, b, namer, out, 3);
+                go(types, b, namer, levels, out, 3);
             }),
             TypeNode::Level(n) => out.push_str(&n.to_string()),
             TypeNode::LevelAdd(l, n) => paren(out, prec > 2, |out| {
-                go(types, l, namer, out, 2);
+                go(types, l, namer, levels, out, 2);
                 out.push_str(&format!(" + {n}"));
             }),
             TypeNode::LevelMax(a, b) => paren(out, prec > 1, |out| {
                 out.push_str("@max ");
-                go(types, a, namer, out, 4);
+                go(types, a, namer, levels, out, 4);
                 out.push(' ');
-                go(types, b, namer, out, 4);
+                go(types, b, namer, levels, out, 4);
             }),
-            // A universe whose level is a variable shows as the bare `@Type`
-            // it was written as: a level variable is generalised per
-            // definition, so naming it adds nothing a reader can use.
+            // A universe at an unnamed level variable shows as the bare
+            // `@Type` it was written as.
             TypeNode::App(head, arg)
                 if matches!(types.node_raw(head), TypeNode::Con(c) if types.name(c) == UNIVERSE)
-                    && matches!(types.node_raw(arg), TypeNode::Var(_)) =>
+                    && matches!(types.node_raw(arg), TypeNode::Var(_))
+                    && !levels.shows(types, arg) =>
             {
                 out.push_str(UNIVERSE)
             }
@@ -428,16 +462,16 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                 if let Some((size, elem)) = tensor_spine_raw(types, ty) {
                     paren(out, prec > 1, |out| {
                         out.push_str("@Tensor ");
-                        go(types, size, namer, out, 4);
+                        go(types, size, namer, levels, out, 4);
                         out.push(' ');
-                        go(types, elem, namer, out, 2);
+                        go(types, elem, namer, levels, out, 2);
                     });
                 } else {
                     let wrap = prec > 1;
                     paren(out, wrap, |out| {
-                        go(types, head, namer, out, 1);
+                        go(types, head, namer, levels, out, 1);
                         out.push(' ');
-                        go(types, arg, namer, out, 4);
+                        go(types, arg, namer, levels, out, 4);
                     });
                 }
             }
@@ -447,18 +481,22 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     match dependent_binder(types, from) {
                         Some((kind, v)) => {
                             out.push('(');
-                            go(types, v, namer, out, 0);
+                            go(types, v, namer, levels, out, 0);
                             out.push_str(": ");
                             out.push_str(kind);
+                            if let Some(l) = levels.of_var(types, v).filter(|_| kind == UNIVERSE) {
+                                out.push(' ');
+                                go(types, l, namer, levels, out, 4);
+                            }
                             out.push(')');
                         }
-                        None => go(types, from, namer, out, 1),
+                        None => go(types, from, namer, levels, out, 1),
                     }
                     out.push_str(" -> ");
                     // Only a row with concrete labels is shown; a pure or
                     // fully-polymorphic effect (empty row / bare row variable) is
                     // elided, so ordinary functions read as `A -> B`.
-                    let (labels, tail) = row_parts(types, eff, namer);
+                    let (labels, tail) = row_parts(types, eff, namer, levels);
                     if !labels.is_empty() {
                         out.push('<');
                         out.push_str(&labels.join(", "));
@@ -468,7 +506,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                         }
                         out.push_str("> ");
                     }
-                    go(types, to, namer, out, 0);
+                    go(types, to, namer, levels, out, 0);
                 });
             }
             TypeNode::Tuple(items) => {
@@ -477,14 +515,14 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    go(types, *item, namer, out, 0);
+                    go(types, *item, namer, levels, out, 0);
                 }
                 out.push('}');
             }
             // A bare row outside an arrow (only shown in raw dumps / diagnostics).
             TypeNode::RowEmpty => out.push_str("<>"),
             TypeNode::RowExtend(..) => {
-                let (labels, tail) = row_parts(types, ty, namer);
+                let (labels, tail) = row_parts(types, ty, namer, levels);
                 out.push('<');
                 out.push_str(&labels.join(", "));
                 if let Some(t) = tail {
@@ -504,7 +542,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                             first = false;
                             out.push_str(types.name(label));
                             out.push_str(": ");
-                            go(types, fty, namer, out, 0);
+                            go(types, fty, namer, levels, out, 0);
                             cur = rest;
                         }
                         TypeNode::Var(id) => {
@@ -521,9 +559,9 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
             TypeNode::RowField(label, fty, rest) => {
                 out.push_str(types.name(label));
                 out.push_str(": ");
-                go(types, fty, namer, out, 0);
+                go(types, fty, namer, levels, out, 0);
                 out.push_str(" | ");
-                go(types, rest, namer, out, 0);
+                go(types, rest, namer, levels, out, 0);
             }
         }
     }
@@ -533,6 +571,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
         types: &Types,
         row: Type,
         namer: &mut dyn FnMut(VarId) -> String,
+        levels: &LevelView,
     ) -> (Vec<String>, Option<VarId>) {
         let mut labels = Vec::new();
         let mut cur = row;
@@ -543,7 +582,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                     if let TypeNode::Tuple(items) = types.node(args) {
                         for arg in types.items(items) {
                             text.push(' ');
-                            go(types, arg, namer, &mut text, 2);
+                            go(types, arg, namer, levels, &mut text, 2);
                         }
                     }
                     labels.push(text);
@@ -565,7 +604,7 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
         }
     }
     let mut out = String::new();
-    go(types, ty, namer, &mut out, 0);
+    go(types, ty, namer, levels, &mut out, 0);
     out
 }
 
@@ -586,7 +625,7 @@ fn tensor_spine_raw(types: &Types, ty: Type) -> Option<(Type, Type)> {
 /// output. Not a `Display` impl, because rendering needs the store.
 pub fn dump(types: &Types, ty: Type) -> String {
     let mut namer = |id: VarId| format!("?{id}");
-    display(types, ty, &mut namer)
+    display(types, ty, &mut namer, &LevelView { of: &|_| None, named: &HashSet::new() })
 }
 
 /// The one builtin effect: the outside world, handled by the runtime around
