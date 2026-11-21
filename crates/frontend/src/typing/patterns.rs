@@ -203,7 +203,7 @@ impl<'a> Checker<'a> {
                 "`{ty}.{{ .. }}` is not a struct pattern: `{ty}` is {what}"
             ));
         };
-        let (args, mut subst) = self.instantiate_params(&info.params, &info.kinds);
+        let (args, mut subst) = self.instantiate_params(ty, &info.params, &info.kinds);
         self.unifier
             .unify(expected, applied(&self.unifier.types, ty, &args), "in a struct pattern")?;
         // A pattern may bind fewer fields than the struct has, but never more: a

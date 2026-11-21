@@ -88,6 +88,9 @@ pub struct Unifier {
     /// instantiation, and their index by variable.
     scheme_le: Vec<levels::LevelLe>,
     scheme_le_by_var: HashMap<VarId, Vec<usize>>,
+    /// The universe of each declared struct, union and effect as a function
+    /// of its parameters' levels. See Note [Declaration levels].
+    pub decl_levels: HashMap<StrId, levels::DeclLevel>,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -149,6 +152,7 @@ impl Unifier {
             level_le: Vec::new(),
             scheme_le: Vec::new(),
             scheme_le_by_var: HashMap::new(),
+            decl_levels: HashMap::new(),
         }
     }
 

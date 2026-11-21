@@ -1,0 +1,6 @@
+$ @mod UNIVERSE_DECLARATION
+
+# A declared type's members live in its universe (#566): a field holding
+# `@Type 1` is at level 2, too large for `@Type 1`. A bare `@Type` would take
+# the least universe that holds it.
+$ Small : @Type 1 = @struct t: @Type 1,  #~ error[TYPE_MISMATCH]: too large for the universe `@Type 1`
