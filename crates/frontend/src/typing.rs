@@ -840,6 +840,7 @@ impl<'a> Checker<'a> {
         self.unknown_type = saved_unknown;
         self.register_effects(program)?;
         self.check_decl_kinds(program)?;
+        self.check_decl_levels(program)?;
         self.check_alias_levels(program)?;
 
         let defs: Vec<Def> = self
@@ -1173,7 +1174,8 @@ impl<'a> Checker<'a> {
     /// elaborated outside any (a global's signature at registration).
     fn finish_levels(&mut self) {
         let mut found = std::mem::take(&mut self.universe_errors);
-        found.dedup_by(|a, b| a.to_string() == b.to_string());
+        let mut seen = HashSet::new();
+        found.retain(|d| seen.insert(d.to_string()));
         self.errors.extend(found);
         if let Err((c, lhs, rhs)) = self.unifier.settle_levels(0, &HashSet::new()) {
             self.errors.push(universe_error(c.span.unwrap_or(Span::at(0)), &lhs, &rhs));
