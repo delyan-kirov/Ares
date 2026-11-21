@@ -9,7 +9,7 @@ $ @mod PIPES
 $ Y : @Type = @effect yield : @Int -> {},
 $ sum : ({} -> <Y> @Int) -> @Int = \body =>
     do body {}
-    ctl k | Y.yield v => v + k {} | r => r
+    is k | Y.yield v => v + k {} | r => r
 
 $ inc : @Int -> @Int = \x => x + 1
 $ dbl : @Int -> @Int = \x => x + x
@@ -58,4 +58,4 @@ $ ck : @Int =
 # Force-evaluate results for the combined test runner (pass = no fault).
 $ test : @Int = r_seq; r_fwd; r_bwd; r_part; r_prec; ck
 
-$ &assert (test == 0) "PIPES: a check failed"
+$ !assert (test == 0) "PIPES: a check failed"

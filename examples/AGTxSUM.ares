@@ -13,13 +13,13 @@ $ Token : @Type = @union
 # Basic way to create a token
 $ num_tok: Token = Token.Num.{ 1 }
 
-$ is_num: Token -> @Bool = \tok => tok |> \ | Token.Num.{ _ } => @true | _ => @false
+$ is_num: Token -> Bool = \tok => tok |> \ | Token.Num.{ _ } => true | _ => false
 
-# @Bool is genuinely built-in: its values are the literals `@true`/`@false`, so
+# Bool is genuinely built-in: its values are the literals `true`/`false`, so
 # matching them uses the `@`-spelling (lowercase `true`/`false` would bind a
-# variable). Since `@Bool` has exactly two values, these `when`s are exhaustive.
-$ chk0 : @Int = is_num num_tok |> \ | @true => 0 | _ => 1
-$ chk0b : @Int = is_num (Token.Txt.{ "x" }) |> \ | @false => 0 | _ => 1
+# variable). Since `Bool` has exactly two values, these `when`s are exhaustive.
+$ chk0 : @Int = is_num num_tok |> \ | Bool.True => 0 | _ => 1
+$ chk0b : @Int = is_num (Token.Txt.{ "x" }) |> \ | Bool.False => 0 | _ => 1
 
 # Sum types: constructor matching, payload binding, and lazy (non-strict)
 # data constructors. Each `chk*` is 0 when correct and divides by zero (a
@@ -70,4 +70,4 @@ $ chk4b : @Int =
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int = chk0 + chk0b + chk1 + chk2 + chk2b + chk2c + chk2d + chk4 + chk4b
 
-$ &assert (test == 0) "AGTxSUM: a check failed"
+$ !assert (test == 0) "AGTxSUM: a check failed"

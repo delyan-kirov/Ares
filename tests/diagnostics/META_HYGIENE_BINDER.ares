@@ -4,4 +4,4 @@ $ @import ARESxOPT
 
 # A binder a generator's quotation spells binds only the names it spells.
 $ some_pat : @Code = "Opt.Some.{x}"
-$ g : Opt @Int -> @Int = \ | &some_pat => x | _ => 0 #~ error[TYPE_UNBOUND]: unbound name `x`
+$ g : Opt @Int -> @Int = \ | !some_pat => x | _ => 0 #~ error[TYPE_UNBOUND]: unbound name `x`

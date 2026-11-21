@@ -26,12 +26,12 @@ pub const ARROW: Bp = bp(1, 1);
 /// Application by juxtaposition, the tightest binary form.
 pub const APP: Bp = bp(50, 51);
 
-/// Binding power of the unary prefix operators (`-`, `!`, `~~~`).
+/// Binding power of the unary prefix operators (`-`, `~~~`) and the splice `!`.
 pub const PREFIX: u8 = 40;
 
-/// The build-time splice `&X`. A prefix operator at [`PREFIX`] that names no
+/// The build-time splice `!X`. A prefix operator at [`PREFIX`] that names no
 /// global: the parser rewrites it into a splice node in every position.
-pub const SPLICE: &str = "&";
+pub const SPLICE: &str = "!";
 
 /// Binding power of `op` as an infix operator, or `None` if it is not infix.
 pub fn infix(op: &str) -> Option<Bp> {
@@ -47,7 +47,6 @@ pub fn prefix(op: &str) -> Option<&'static str> {
     match op_role(op)? {
         OpRole::Prefix | OpRole::InfixPrefix(..) => match op {
             "-" => Some("neg"),
-            "!" => Some("not"),
             "~~~" => Some("complement"),
             _ => None,
         },

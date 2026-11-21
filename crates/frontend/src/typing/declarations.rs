@@ -2,7 +2,7 @@
 //!
 //! [`Checker::register_types`] records every declaration before any body is
 //! checked, so definitions may refer to types declared later. It records which
-//! types still wait on `&` entry splices, rejects alias cycles, computes which constructor slots
+//! types still wait on `!` entry splices, rejects alias cycles, computes which constructor slots
 //! are lazy, and registers each struct's record row for the nominal-to-row
 //! bridge. The lookups below answer the questions inference asks of a
 //! declaration: a struct's fields, a variant's payload, a tag's union.
@@ -68,7 +68,7 @@ impl<'a> Checker<'a> {
 impl<'a> Checker<'a> {
     /// What each binder of a type declaration's signature ranges over; the
     /// signature ends in `@Type`.
-    /// A parameter of any other type, `(b: @Bool)`, makes the type depend on
+    /// A parameter of any other type, `(b: Bool)`, makes the type depend on
     /// a value, which needs the kernel.
     pub(super) fn decl_kinds(&self, sig: Aol<Ty>) -> Result<Vec<ParamKind>> {
         let mut kinds = Vec::new();
@@ -686,7 +686,7 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    /// Record that `name` still holds `&` entry splices, whose operands are
+    /// Record that `name` still holds `!` entry splices, whose operands are
     /// checked once the globals are in scope (`check_program`). Until the expand loop splices them in, the type is
     /// incomplete: reflecting on it faults, and a lenient round holds back the
     /// globals that fail against it (see [`Checker::awaits_splices`]).
@@ -1354,7 +1354,7 @@ pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
             collect_tyvars(ast, *a, out);
             collect_tyvars(ast, *b, out);
         }
-        // A `&X` type splice contributes no type variables: its type is unknown
+        // A `!X` type splice contributes no type variables: its type is unknown
         // until the driver expands it, after which this node no longer exists.
         Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
     }
@@ -1430,7 +1430,7 @@ pub(crate) fn payload_fields(ast: &Ast, p: &Payload) -> Vec<(Option<StrId>, Aol<
 }
 
 /// A type that declares a `{kind}` (`"field"`/`"variant"`) twice, by hand or
-/// through a `&` entry splice.
+/// through a `!` entry splice.
 pub(super) fn dup_member(ty: impl Display, member: impl Display, kind: &str) -> Diagnostic {
     diag!(
         Code::DuplicateSymbol, Span::at(0), 0,

@@ -479,7 +479,7 @@ $ shield_gap : Real = 0.0142
 
 # On a dark ground the figure is gold, like the shield, so a cut keeps them
 # apart; the rim line stays dark in both.
-$ hoplite : @Bool -> @Vec Layer = \dark =>
+$ hoplite : Bool -> @Vec Layer = \dark =>
     let body = if dark => gold else ink in
     let pieces =
         fmap (\p =>
@@ -514,7 +514,7 @@ $ square : Opt Rgb -> @Vec Layer -> Design = \bg layers =>
 
 # The gold hoplite on the dark ground, a margin around him: the touch icon
 # and the editor extension's badge.
-$ badge : Design = square Opt.Some.{ night } (fmap (place_layer 0.08 0.08 0.84) (hoplite @true))
+$ badge : Design = square Opt.Some.{ night } (fmap (place_layer 0.08 0.08 0.84) (hoplite true))
 
 # ---- the icon: the soldier as pixels ----
 
@@ -631,7 +631,7 @@ $ pixels : @Vec @Str -> @Int -> @Vec Figure = \rs code =>
         in
         run 0 (0 - 1) (@vec_new {})) (upto n)
 
-$ sprite_layers : @Str -> @Bool -> @Vec @Str -> @Vec Layer = \name dark rs =>
+$ sprite_layers : @Str -> Bool -> @Vec @Str -> @Vec Layer = \name dark rs =>
     let src = if dark => gapped rs else rs in
     filter (\l => @vec_len l.figures > 0) [
         Layer.{ name, Opt.Some.{ if dark => gold else ink }, pixels src code_k },
@@ -639,7 +639,7 @@ $ sprite_layers : @Str -> @Bool -> @Vec @Str -> @Vec Layer = \name dark rs =>
         Layer.{ name, Opt.Some.{ ink }, pixels src code_r },
     ]
 
-$ sprite : @Bool -> @Vec @Str -> Design = \dark rs =>
+$ sprite : Bool -> @Vec @Str -> Design = \dark rs =>
     square Opt.None (sprite_layers "soldier" dark rs)
 
 # The favicon carries both versions and shows the one for the color scheme.
@@ -650,10 +650,7 @@ $ favicon : Design = Design.{
     .width = 1.0,
     .height = 1.0,
     .background = Opt.None,
-    .layers = concat [
-        sprite_layers "light" @false soldier_16,
-        sprite_layers "dark" @true soldier_16
-    ],
+    .layers = concat [sprite_layers "light" false soldier_16, sprite_layers "dark" true soldier_16],
     .style = scheme_css,
 }
 
@@ -667,7 +664,7 @@ $ Font : @Type = @struct
     metrics: @Int,
     loca: @Int,
     glyf: @Int,
-    long_loca: @Bool,
+    long_loca: Bool,
     cap: Real,
 
 $ u8 : @Str -> @Int -> @Int = \b i => @array_get b i
@@ -676,7 +673,7 @@ $ i16 : @Str -> @Int -> @Int = \b i => let v = u16 b i in if v >= 32768 => v - 6
 $ u32 : @Str -> @Int -> @Int = \b i => u16 b i * 65536 + u16 b (i + 2)
 
 # Whether bit `mask` (a power of two) is set in `v`.
-$ bit : @Int -> @Int -> @Bool = \v mask => (v / mask) % 2 == 1
+$ bit : @Int -> @Int -> Bool = \v mask => (v / mask) % 2 == 1
 
 # Where the table tagged `tag` begins, 0 when the font has none.
 $ table : @Str -> @Str -> @Int = \b tag =>
@@ -795,7 +792,7 @@ $ deltas : @Str -> @Int -> @Vec @Int -> @Int -> @Int
 # A contour of on-curve (`on`) and off-curve points as a polygon: each
 # quadratic arc in eight chords, with the on-curve point implied between two
 # off-curve ones.
-$ OutlinePoint : @Type = { Real, Real, @Bool }
+$ OutlinePoint : @Type = { Real, Real, Bool }
 
 $ flatten : @Vec OutlinePoint -> @Vec Point = \pts =>
     let n = @vec_len pts in
@@ -912,7 +909,7 @@ $ tag_track : Real = 0.071
 
 # The hoplite `size` high at (x, y), ARES to his right and the tagline under
 # it, as wide as the word. Returns the layers and the right edge of the word.
-$ lockup_at : Fonts -> @Bool -> Rgb -> Rgb -> Real -> Real -> Real
+$ lockup_at : Fonts -> Bool -> Rgb -> Rgb -> Real -> Real -> Real
     -> { @Vec Layer, Real } = \fs dark color tag_color x y size =>
     let cap = 0.363 * size in
     let tx = x + size * 1.085 in
@@ -940,7 +937,7 @@ $ lockup_at : Fonts -> @Bool -> Rgb -> Rgb -> Real -> Real -> Real
         tx + ww,
     }
 
-$ lockup : Fonts -> @Bool -> Design = \fs dark =>
+$ lockup : Fonts -> Bool -> Design = \fs dark =>
     let color = if dark => gold else ink in
     let l = lockup_at fs dark color color 0.0 0.0 1.0 in
     Design.{
@@ -955,7 +952,7 @@ $ lockup : Fonts -> @Bool -> Design = \fs dark =>
 # dark ground, ARES to his right over a gold rule, the tagline under it.
 $ social : Fonts -> Design = \fs =>
     let size = 0.8125 in
-    let fig = fmap (place_layer 0.1094 0.0938 size) (hoplite @true) in
+    let fig = fmap (place_layer 0.1094 0.0938 size) (hoplite true) in
     let cap = 0.2078 in
     let tx = 1.0156 in
     let ww = text_width fs.bold cap word_track "ARES" in
@@ -1146,7 +1143,7 @@ $ crossings : Real -> Figure -> @Vec Real = \y f =>
 # A layer cut down to one row: its color and its outlines' crossings.
 $ Row : @Type = { Opt Rgb, @Vec Real }
 
-$ covers : Real -> @Vec Real -> @Bool = \x xs =>
+$ covers : Real -> @Vec Real -> Bool = \x xs =>
     (fold (\n c => if c > x => n + 1 else n) 0 xs) % 2 == 1
 
 # An eraser clears down to the background, not through it.
@@ -1241,16 +1238,16 @@ $ design_named : Opt Fonts -> @Str -> Opt Design = \fs name =>
         \build => fs |> \ | Opt.Some.{ f } => Opt.Some.{ build f } | Opt.None => Opt.None
     in
     name |> \
-        | "logo"         => Opt.Some.{ square Opt.None (hoplite @false) }
-        | "logo-dark"    => Opt.Some.{ square Opt.None (hoplite @true) }
+        | "logo"         => Opt.Some.{ square Opt.None (hoplite false) }
+        | "logo-dark"    => Opt.Some.{ square Opt.None (hoplite true) }
         | "icon"         => Opt.Some.{ favicon }
-        | "icon-light"   => Opt.Some.{ sprite @false soldier_16 }
-        | "icon-dark"    => Opt.Some.{ sprite @true soldier_16 }
-        | "icon32-light" => Opt.Some.{ sprite @false soldier_32 }
-        | "icon32-dark"  => Opt.Some.{ sprite @true soldier_32 }
+        | "icon-light"   => Opt.Some.{ sprite false soldier_16 }
+        | "icon-dark"    => Opt.Some.{ sprite true soldier_16 }
+        | "icon32-light" => Opt.Some.{ sprite false soldier_32 }
+        | "icon32-dark"  => Opt.Some.{ sprite true soldier_32 }
         | "badge"        => Opt.Some.{ badge }
-        | "lockup-light" => lettered (\f => lockup f @false)
-        | "lockup-dark"  => lettered (\f => lockup f @true)
+        | "lockup-light" => lettered (\f => lockup f false)
+        | "lockup-dark"  => lettered (\f => lockup f true)
         | "social"       => lettered social
         | "spear"        => Opt.Some.{ spear_sprite }
         | "spear-shield" => Opt.Some.{ spear_shield_sprite }

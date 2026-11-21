@@ -12,14 +12,14 @@ $ Config : @Type = @effect ask : {} -> @Str,
 # effect is <Reader> and the perform's effect must fit it.
 $ readEnv : @Int =
     do (ask {}) + 1
-    ctl k | Reader.ask u => k 10 # 11
+    is k | Reader.ask u => k 10 # 11
 
 # Fully qualified perform and clause for the other effect's `ask`.
 $ cfg : @Str =
     do Config.ask {}
-    ctl k | Config.ask u => k "hello" # "hello"
+    is k | Config.ask u => k "hello" # "hello"
 
 # Force-evaluate results for the combined test runner (pass = no fault).
 $ test : @Int = readEnv; cfg; 0
 
-$ &assert (test == 0) "EFFECT_OVERLOAD: a check failed"
+$ !assert (test == 0) "EFFECT_OVERLOAD: a check failed"

@@ -57,7 +57,7 @@ pub enum Kind {
     If,
     Else,
     Do,
-    Ctl,
+    Is,
 
     // Only the lexer emits this; peek/next skip it.
     Comment,
@@ -71,7 +71,7 @@ pub const KEYWORDS: &[(&str, Kind)] = &[
     ("if", Kind::If),
     ("else", Kind::Else),
     ("do", Kind::Do),
-    ("ctl", Kind::Ctl),
+    ("is", Kind::Is),
 ];
 
 /// The parser role of an operator lexeme, and the single source of truth for it.
@@ -170,10 +170,6 @@ pub const OPERATORS: &[OpDef] = &[
         lexeme: "^",
         role: OpRole::Infix(35, 34),
     },
-    OpDef {
-        lexeme: "!",
-        role: OpRole::Prefix,
-    },
     // Bitwise: `&&&` and the shifts bind like `*`, `|||` and `^^^` like `+`. The
     // single-character spellings are taken (`|` is a delimiter, `^` is power).
     OpDef {
@@ -200,10 +196,10 @@ pub const OPERATORS: &[OpDef] = &[
         lexeme: "~~~",
         role: OpRole::Prefix,
     },
-    // The build-time splice `&e`. Syntax, not a function: the parser rewrites it
+    // The build-time splice `!e`. Syntax, not a function: the parser rewrites it
     // into an `Expr::Splice`, so it has no global and no section.
     OpDef {
-        lexeme: "&",
+        lexeme: "!",
         role: OpRole::Prefix,
     },
     // Comparison (all one precedence, left-associative). `<` and `>` are also the

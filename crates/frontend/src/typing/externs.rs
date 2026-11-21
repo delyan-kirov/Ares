@@ -260,7 +260,7 @@ pub(super) fn crepr_field_error(ty: impl Display, field: impl Display, field_ty:
         "field `{field}` of C-repr struct `{ty}` has type `{field_ty}`, which is not \
          C-representable; a `@struct @extern \"C\"` field must be a sized number \
          (`@Int8..64`/`@Nat8..64`/`@Float32`/`@Float64`), `@Int`/`@Nat`/`Real`, `@Ptr`, \
-         `@Bool`, or another C-repr struct"
+         `Bool`, or another C-repr struct"
     )
 }
 
@@ -285,7 +285,7 @@ pub(super) fn scalar_ckind(name: &str, ptr_bits: u32) -> Option<utilities::CKind
         "@Int" => word,
         "@Nat" => uword,
         "@Ptr" => uword,
-        "@Bool" => U8,
+        ty::BOOL => U8,
         _ => return None,
     })
 }

@@ -25,4 +25,4 @@ $ chk_later : @Int = if later 6 {} == 7 => 0 else 1
 
 $ test : @Int = chk_add + chk_scale + chk_twice + chk_later
 
-$ &assert (test == 0) "NAMED_PARAMS: a check failed"
+$ !assert (test == 0) "NAMED_PARAMS: a check failed"

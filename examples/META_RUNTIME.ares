@@ -3,7 +3,7 @@ $ @mod META_RUNTIME
 # \file META_RUNTIME.ares
 # \info The compiler at run time. `@lex`, `@parse`, `@parse_str`, `@code`,
 #       `@unparse`, `@format` and `@eval` are pure, so they work in ordinary
-#       code as well as inside `&`. The interpreter runs them in-process; a
+#       code as well as inside `!`. The interpreter runs them in-process; a
 #       native build links the compiler as a library (`libares`) and calls into
 #       it. `@eval` compiles its fragment against the standard library and
 #       returns the value, which must be first-order data (no functions). The
@@ -35,7 +35,7 @@ $ built_src : @Str = @unparse built
 $ product : @Int = @eval (@parse_str source)
 $ from_tokens : @Int = @eval (@parse (@lex source))
 $ greeting : @Str = @eval (@parse_str "\"he\" ++ \"llo\"")
-$ pair : { @Int, @Bool } = @eval (@parse_str "{20, 1 < 2}")
+$ pair : { @Int, Bool } = @eval (@parse_str "{20, 1 < 2}")
 
 # --- formatting ------------------------------------------------------------
 $ tidy : @Str = @format "$ f   : @Int->@Int = \\x=>x+1"

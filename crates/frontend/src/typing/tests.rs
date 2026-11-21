@@ -106,12 +106,12 @@ fn undeclared_type_param_is_error() {
 
 #[test]
 fn parameterized_alias_expands() {
-    // `MapInt` fixes the key to @Int, so `MapInt @Bool` elaborates to `Map @Int @Bool`.
+    // `MapInt` fixes the key to @Int, so `MapInt Bool` elaborates to `Map @Int Bool`.
     let src = "$ @mod M\n\
                $ Map : (k: @Type) -> (v: @Type) -> @Type = @struct key: k, val: v\n\
                $ MapInt : @Type -> @Type = \\v => Map @Int v\n\
-               $ m : MapInt @Bool = .{ .key = 1, .val = @true }";
-    assert_eq!(type_of(src, "m"), "Map @Int @Bool");
+               $ m : MapInt Bool = .{ .key = 1, .val = true }";
+    assert_eq!(type_of(src, "m"), "Map @Int Bool");
 }
 
 #[test]
@@ -351,28 +351,33 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
 fn cross_module_import_brings_in_types_and_values() {
     let dep_src = "$ @mod OPT\n\
                        $ Option : (t: @Type) -> @Type = @union Some: t, None: {}\n\
-                       $ is_some : @ctx {t: @Type} -> Option t -> @Bool = \\o => \
-                       o |> \\ | Option.Some.{_} => @true | _ => @false\n\
+                       $ is_some : @ctx {t: @Type} -> Option t -> Bool = \\o => \
+                       o |> \\ | Option.Some.{_} => true | _ => false\n\
                        $ unwrap_or : @ctx {t: @Type} -> Option t -> t -> t = \\o d => \
                        o |> \\ | Option.Some.{x} => x | _ => d";
     let use_src = "$ @mod U\n\
                        $ @import OPT\n\
                        $ o : Option @Int = Option.Some.{ 41 }\n\
-                       $ present : @Bool = is_some o\n\
+                       $ present : Bool = is_some o\n\
                        $ value : @Int = unwrap_or o 0";
-    // Both modules parse into one shared `Ast` so cross-module handles resolve.
-    let (ast, dep) = crate::parse_into(crate::Ast::new(), dep_src).expect("parse dep");
+    // All modules parse into one shared `Ast` so cross-module handles resolve.
+    let (ast, core) = crate::parse_into(crate::Ast::new(), CORE_SRC).expect("parse CORE");
+    let (ast, dep) = crate::parse_into(ast, dep_src).expect("parse dep");
     let (ast, program) = crate::parse_into(ast, use_src).expect("parse use");
     let types = std::rc::Rc::new(crate::Types::new());
+    let mut core_checker = Checker::new(&ast, types.clone());
+    core_checker.check_program(&core).expect("check CORE");
     let mut dep_checker = Checker::new(&ast, types.clone());
+    dep_checker.import_from(&core_checker);
     dep_checker.check_program(&dep).expect("check dep");
     let mut checker = Checker::new(&ast, types.clone());
+    checker.import_from(&core_checker);
     checker.import_from(&dep_checker);
     let results = checker
         .check_program(&program)
         .unwrap_or_else(|e| panic!("{}", e.render(use_src, "U")));
     let ty = |name: &str| checker.show(results.iter().find(|(n, _)| *n == name).unwrap().1);
-    assert_eq!(ty("present"), "@Bool");
+    assert_eq!(ty("present"), "Bool");
     assert_eq!(ty("value"), "@Int");
 }
 
@@ -488,12 +493,12 @@ fn sequence_literal_is_type_directed() {
 #[test]
 fn effect_operation_is_bound_and_handler_types_result() {
     // `get`/`put` are bound from the effect declaration; `tick` performs State, so
-    // its arrow carries the `<State>` row; the `do/ctl` handler discharges it and
+    // its arrow carries the `<State>` row; the `do/is` handler discharges it and
     // types to the clause/`else` bodies' common type.
     let src = "$ @mod M\n\
                    $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
                    $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x\n\
-                   $ run : @Int = do tick {} ctl k | get u => k 0 | put n => k {} | x => x";
+                   $ run : @Int = do tick {} is k | get u => k 0 | put n => k {} | x => x";
     assert_eq!(type_of(src, "tick"), "{} -> <State> @Int");
     assert_eq!(type_of(src, "run"), "@Int");
 }
@@ -529,16 +534,16 @@ fn unknown_type_name_is_rejected() {
 
 #[test]
 fn numeric_literal_is_not_a_bool_condition() {
-    // `if` wants a `@Bool`; a bare integer literal is a number, not a truth value,
+    // `if` wants a `Bool`; a bare integer literal is a number, not a truth value,
     // so `if 1` is a type error (it used to silently mean "nonzero").
     assert!(
         errors("$ @mod M\n$ x : @Int = if 1 => 2 else 3").contains("numeric literal"),
         "expected `if 1` to be rejected: {:?}",
         errors("$ @mod M\n$ x : @Int = if 1 => 2 else 3")
     );
-    // A real condition (a comparison, or a `@Bool`) is fine.
+    // A real condition (a comparison, or a `Bool`) is fine.
     assert_eq!(errors("$ @mod M\n$ x : @Int = if 1 == 1 => 2 else 3"), "");
-    assert_eq!(errors("$ @mod M\n$ x : @Int = if @true => 2 else 3"), "");
+    assert_eq!(errors("$ @mod M\n$ x : @Int = if true => 2 else 3"), "");
     // A numeric literal cannot masquerade as a pointer either.
     assert!(errors("$ @mod M\n$ p : @Ptr = 0").contains("numeric literal"));
 }
@@ -640,7 +645,7 @@ fn signature_row_tail_stays_open() {
 #[test]
 fn meta_op_outside_e_is_an_unhandled_effect() {
     // The metaprogramming ops carry `<@Meta>`. Used in ordinary code (outside a
-    // `&`), the latent `<@Meta>` cannot be subsumed into the pure ambient,
+    // `!`), the latent `<@Meta>` cannot be subsumed into the pure ambient,
     // so it is a clean compile error rather than a runtime no-op/fault.
     let src = "$ @mod M\n$ bad : @Str = @fresh \"x\"";
     let e = errors(src);
@@ -649,38 +654,38 @@ fn meta_op_outside_e_is_an_unhandled_effect() {
 
 #[test]
 fn splice_discharges_meta_and_requires_code_or_data() {
-    // `&` handles `<@Meta>`: a meta op inside it type-checks and the surrounding
+    // `!` handles `<@Meta>`: a meta op inside it type-checks and the surrounding
     // context stays pure. It inserts code or a literal, so first-order data is
     // fine and anything else is an error.
     assert_eq!(
-        errors("$ @mod M\n$ ok : @Str = &(@parse_str <| @fresh \"x\")"),
+        errors("$ @mod M\n$ ok : @Str = !(@parse_str <| @fresh \"x\")"),
         "",
         "meta op inside & should type-check",
     );
-    assert_eq!(errors("$ @mod M\n$ ok : @Str = &@fresh \"x\""), "", "a `@Str` is data");
-    assert_eq!(errors("$ @mod M\n$ ok : @Int = &(1 + 2)"), "", "a number is data");
-    let e = errors("$ @mod M\n$ bad : @Int = &(\\(x: @Int) => x)");
+    assert_eq!(errors("$ @mod M\n$ ok : @Str = !@fresh \"x\""), "", "a `@Str` is data");
+    assert_eq!(errors("$ @mod M\n$ ok : @Int = !(1 + 2)"), "", "a number is data");
+    let e = errors("$ @mod M\n$ bad : @Int = !(\\(x: @Int) => x)");
     assert!(e.contains("inserts code or a literal") && e.contains("@Int -> @Int"), "got: {e:?}");
-    let e = errors("$ @mod M\n$ bad : {} = &{1, 2}");
+    let e = errors("$ @mod M\n$ bad : {} = !{1, 2}");
     assert!(e.contains("inserts code or a literal"), "got: {e:?}");
 }
 
 #[test]
 fn splice_is_not_a_function() {
-    for src in ["$ @mod M\n$ f : @Int = (&) 1\n", "$ @mod M\n$ (&) : @Int -> @Int = \\x => x\n"] {
-        let e = crate::parse(src).err().expect("`&` is no function");
-        assert!(format!("{e}").contains("`&` is a splice, not a function"), "got: {e}");
+    for src in ["$ @mod M\n$ f : @Int = (!) 1\n", "$ @mod M\n$ (!) : @Int -> @Int = \\x => x\n"] {
+        let e = crate::parse(src).err().expect("`!` is no function");
+        assert!(format!("{e}").contains("`!` is a splice, not a function"), "got: {e}");
     }
 }
 
 #[test]
 fn build_is_the_only_io_capable_compile_time_context() {
-    // `&` discharges `<@Meta>` only, so it cannot perform IO: that is what makes
+    // `!` discharges `<@Meta>` only, so it cannot perform IO: that is what makes
     // it hermetic, and what leaves `@build` (whose own signature carries `<@IO>`)
     // as the only place a generator may touch the world.
     let io_fn = "$ shout : @Str -> <@IO> @Int = @extern \"C\" \"puts\" \"libc\"\n";
     let e = errors(&format!(
-        "$ @mod M\n{io_fn}$ bad : @Int = &(shout \"hi\"; @parse_str \"1\")"
+        "$ @mod M\n{io_fn}$ bad : @Int = !(shout \"hi\"; @parse_str \"1\")"
     ));
     assert!(e.contains("@IO") && e.contains("not handled"), "got: {e:?}");
     // A `@build`-shaped row handles both `@Meta` and `@IO`.
@@ -775,8 +780,8 @@ fn same_operation_in_two_effects_resolves_by_result_type() {
     let src = "$ @mod M\n\
                    $ Reader : @Type = @effect ask : {} -> @Int,\n\
                    $ Config : @Type = @effect ask : {} -> @Str,\n\
-                   $ n : @Int = do (ask {}) + 1 ctl k | Reader.ask u => k 10\n\
-                   $ s : @Str = do Config.ask {} ctl k | Config.ask u => k \"hi\"";
+                   $ n : @Int = do (ask {}) + 1 is k | Reader.ask u => k 10\n\
+                   $ s : @Str = do Config.ask {} is k | Config.ask u => k \"hi\"";
     assert_eq!(type_of(src, "n"), "@Int");
     assert_eq!(type_of(src, "s"), "@Str");
 }
@@ -906,11 +911,11 @@ fn int_nat_friendly_spellings_are_dropped() {
 fn comparison_is_extended_by_an_instance() {
     let src = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
                $ ord_t : IOrd T = .{ .lt = \\a b => a.v < b.v }\n\
-               $ custom : @Bool = T.{ .v = 1 } < T.{ .v = 2 }\n\
-               $ prim : @Bool = 1 < 2";
+               $ custom : Bool = T.{ .v = 1 } < T.{ .v = 2 }\n\
+               $ prim : Bool = 1 < 2";
     assert_eq!(errors(src), "");
-    assert_eq!(type_of(src, "custom"), "@Bool");
-    assert_eq!(type_of(src, "prim"), "@Bool");
+    assert_eq!(type_of(src, "custom"), "Bool");
+    assert_eq!(type_of(src, "prim"), "Bool");
 }
 
 /// There is no structural fallback: `==` on a type with no `IEq` instance is an
@@ -919,25 +924,25 @@ fn comparison_is_extended_by_an_instance() {
 #[test]
 fn equality_needs_an_instance() {
     let bare = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
-                $ same : @Bool = T.{ .v = 1 } == T.{ .v = 1 }";
+                $ same : Bool = T.{ .v = 1 } == T.{ .v = 1 }";
     assert!(errors(bare).contains("no value of type `IEq T`"), "{}", errors(bare));
 
     let src = "$ @mod M\n$ T : @Type = @struct v: @Int\n\
                $ eq_t : IEq T = .{ .eq = \\a b => a.v == b.v }\n\
-               $ same : @Bool = T.{ .v = 1 } == T.{ .v = 1 }\n\
-               $ pair : @Bool = {1, \"a\"} == {1, \"a\"}";
+               $ same : Bool = T.{ .v = 1 } == T.{ .v = 1 }\n\
+               $ pair : Bool = {1, \"a\"} == {1, \"a\"}";
     assert_eq!(errors(src), "");
-    assert_eq!(type_of(src, "same"), "@Bool");
-    assert_eq!(type_of(src, "pair"), "@Bool");
+    assert_eq!(type_of(src, "same"), "Bool");
+    assert_eq!(type_of(src, "pair"), "Bool");
 }
 
 /// A generic comparison DECLARES its context, which is what makes it generic: an
 /// undeclared one has nothing to resolve, and says so instead of inventing a type.
 #[test]
 fn generic_comparison_declares_its_context() {
-    let src = "$ @mod M\n$ eq : @ctx {a: @Type} -> @use {d: IEq a} -> a -> a -> @Bool = \\x y => d.eq x y";
+    let src = "$ @mod M\n$ eq : @ctx {a: @Type} -> @use {d: IEq a} -> a -> a -> Bool = \\x y => d.eq x y";
     assert_eq!(errors(src), "");
-    assert_eq!(type_of(src, "eq"), "a -> a -> @Bool");
+    assert_eq!(type_of(src, "eq"), "a -> a -> Bool");
 
     let undeclared = errors("$ @mod M\n$ eq = \\x y => x == y");
     assert!(undeclared.contains("is not determined here"), "{undeclared}");
@@ -948,10 +953,10 @@ fn generic_comparison_declares_its_context() {
 #[test]
 fn comparison_operators_coexist_with_effect_rows() {
     let src = "$ @mod M\n$ Fail : @Type = @effect fail : {} -> @Int\n\
-               $ f : @ctx {e: @Row} -> @Int -> <Fail | e> @Bool = \\n => n < 3\n\
-               $ g : @ctx {e: @Row} -> @Int -> <| e> @Bool = \\n => n > 3";
+               $ f : @ctx {e: @Row} -> @Int -> <Fail | e> Bool = \\n => n < 3\n\
+               $ g : @ctx {e: @Row} -> @Int -> <| e> Bool = \\n => n > 3";
     assert_eq!(errors(src), "");
-    assert_eq!(type_of(src, "g"), "@Int -> @Bool");
+    assert_eq!(type_of(src, "g"), "@Int -> Bool");
 }
 
 // -- issue #209: the checker must not fabricate a type ---------------------
@@ -1160,18 +1165,18 @@ fn no_arms_cover_only_a_variantless_union() {
 
 #[test]
 fn guarded_arms_do_not_cover() {
-    let src = format!("{L}$ f : L -> @Int = \\l => l |> \\ | L.A => 0 | L.B => 1 | L.C if @true => 2\n");
+    let src = format!("{L}$ f : L -> @Int = \\l => l |> \\ | L.A => 0 | L.B => 1 | L.C if true => 2\n");
     assert!(coverage(&src).0.contains("`L.C`"));
-    let src = format!("{L}$ f : L -> @Int = \\l => l |> \\ | x if @true => 0 | L.A => 1 | L.B => 1 | L.C => 2\n");
+    let src = format!("{L}$ f : L -> @Int = \\l => l |> \\ | x if true => 0 | L.A => 1 | L.B => 1 | L.C => 2\n");
     assert_eq!(coverage(&src), (String::new(), vec![]));
 }
 
 #[test]
 fn nested_witness_is_named() {
     let src = "$ @mod T\n$ M : (a: @Type) -> @Type = @union No, Yes: {a},\n\
-               $ f : M @Bool -> @Int = \\m => m |> \\ | .No => 0 | .Yes.{ @true } => 1\n";
+               $ f : M Bool -> @Int = \\m => m |> \\ | .No => 0 | .Yes.{ Bool.True } => 1\n";
     let (err, _) = coverage(src);
-    assert!(err.contains("`M.Yes.{ false }`"), "{err}");
+    assert!(err.contains("`M.Yes.{ Bool.False }`"), "{err}");
 }
 
 #[test]
@@ -1190,14 +1195,14 @@ fn infinite_domains_need_a_catch_all() {
 
 #[test]
 fn bools_tuples_and_structs() {
-    let ok = "$ @mod T\n$ f : {@Bool, @Bool} -> @Int = \\p => p |> \\ | {@true, _} => 0 | {_, @true} => 1 | {@false, @false} => 2\n";
+    let ok = "$ @mod T\n$ f : {Bool, Bool} -> @Int = \\p => p |> \\ | {Bool.True, _} => 0 | {_, Bool.True} => 1 | {Bool.False, Bool.False} => 2\n";
     assert_eq!(coverage(ok), (String::new(), vec![]));
-    let (err, _) = coverage("$ @mod T\n$ f : {@Bool, @Bool} -> @Int = \\p => p |> \\ | {@true, _} => 0 | {_, @true} => 1\n");
-    assert!(err.contains("`{ false, false }`"), "{err}");
+    let (err, _) = coverage("$ @mod T\n$ f : {Bool, Bool} -> @Int = \\p => p |> \\ | {Bool.True, _} => 0 | {_, Bool.True} => 1\n");
+    assert!(err.contains("`{ Bool.False, Bool.False }`"), "{err}");
     let (err, _) = coverage(
-        "$ @mod T\n$ P : @Type = @struct x: @Bool, y: @Int,\n$ f : P -> @Int = \\p => p |> \\ | P.{ .x = @true } => 0\n",
+        "$ @mod T\n$ P : @Type = @struct x: Bool, y: @Int,\n$ f : P -> @Int = \\p => p |> \\ | P.{ .x = Bool.True } => 0\n",
     );
-    assert!(err.contains("`P.{ .x = false }`"), "{err}");
+    assert!(err.contains("`P.{ .x = Bool.False }`"), "{err}");
 }
 
 #[test]
@@ -1228,7 +1233,7 @@ fn unreachable_arms_warn() {
 fn handler_value_arms_are_checked() {
     let src = "$ @mod T\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
                $ g : {} -> <Exn> M = M.Miss\n\
-               $ f : @Int = do g {} ctl k | Exn.throw m => 0 | .Hit.{ v } => v\n";
+               $ f : @Int = do g {} is k | Exn.throw m => 0 | .Hit.{ v } => v\n";
     let (err, _) = coverage(src);
     assert!(err.contains("value arms do not cover `M.Miss`"), "{err}");
     assert!(!err.contains("%ret"), "{err}");
@@ -1357,7 +1362,7 @@ fn integer_ranges_cover_bounded_types() {
     assert!(err.contains("`10 ...`"), "{err}");
     let (_, w) = coverage("$ @mod T\n$ f : @Nat8 -> @Int = \\n => n |> \\ | 0 ... 200 => 0 | 100 ... 150 => 1 | _ => 2\n");
     assert_eq!(w.len(), 1, "{w:?}");
-    let (_, w) = coverage("$ @mod T\n$ f : {@Nat8, @Bool} -> @Int = \\p => p |> \\ | {0 ... 9, @true} => 0 | {5, _} => 1 | {_, _} => 2\n");
+    let (_, w) = coverage("$ @mod T\n$ f : {@Nat8, Bool} -> @Int = \\p => p |> \\ | {0 ... 9, Bool.True} => 0 | {5, _} => 1 | {_, _} => 2\n");
     assert!(w.is_empty(), "{w:?}");
 }
 
@@ -1376,9 +1381,9 @@ fn a_mismatch_names_expected_and_found_the_right_way_round() {
     let text = rendered_errors("$ @mod M\n$ x : @Int = \"s\"\n");
     assert!(text.contains("expected @Int, found @Str"), "{text}");
     let text = rendered_errors("$ @mod M\n$ x = ((>): @Int -> @Int -> @Int)\n");
-    assert!(text.contains("expected @Int, found @Bool"), "{text}");
+    assert!(text.contains("expected @Int, found Bool"), "{text}");
     assert!(text.contains("expected because of this annotation"), "{text}");
-    assert!(text.contains("found type `@Int -> @Int -> @Bool`"), "{text}");
+    assert!(text.contains("found type `@Int -> @Int -> Bool`"), "{text}");
 }
 
 #[test]
@@ -1468,10 +1473,10 @@ fn one_handler_serves_one_instance() {
 #[test]
 fn an_operation_variable_is_opaque_in_the_handler() {
     let ok = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
-              $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => k {} | u => 0\n";
+              $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} is k | Put.put x => k {} | u => 0\n";
     assert_eq!(errors(ok), "");
     let bad = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
-               $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} ctl k | Put.put x => x + 0 | u => 0\n";
+               $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} is k | Put.put x => x + 0 | u => 0\n";
     assert!(errors(bad).contains("`a` of `Put.put`"), "got: {:?}", errors(bad));
 }
 
@@ -1525,8 +1530,8 @@ fn constructor_and_operation_variables_are_bound_in_their_ctx() {
 #[test]
 fn a_handler_cannot_resume_with_a_value_of_its_own() {
     let src = "$ @mod M\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Int -> a,\n\
-               $ ok : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => n\n\
-               $ bad : @Int = do Exn.throw 1 + 2 ctl k | Exn.throw n => k n\n";
+               $ ok : @Int = do Exn.throw 1 + 2 is k | Exn.throw n => n\n\
+               $ bad : @Int = do Exn.throw 1 + 2 is k | Exn.throw n => k n\n";
     let e = errors(src);
     assert!(e.contains("expected `a` of `Exn.throw`") && e.contains("found @Int"), "got: {e:?}");
 }
@@ -1544,13 +1549,13 @@ fn mutual_recursion_keeps_a_row_parameter_open() {
 }
 
 /// Reflection reports members in source order with their types as source, and
-/// marks a type whose `&` entries are not spliced in yet as pending.
+/// marks a type whose `!` entries are not spliced in yet as pending.
 #[test]
 fn reflection_reports_member_sources_and_pending_types() {
     let src = "$ @mod M\n\
                $ Big : (a: @Type) -> @Type = @union D: {}, C: { n: @Int, a }, B: @Vec (@Vec a), A\n\
                $ P : (b: @Type) -> (e: @Row) -> (n: @Nat) -> @Type = @struct f: b -> <Log, State @Int | e> @Int, g: @Vec (@Tensor (2 * n + 1) {@Int, {}})\n\
-               $ Q : @Type = @struct &gen {}, x: @Int\n";
+               $ Q : @Type = @struct !gen {}, x: @Int\n";
     let (ast, prog) = crate::parse_into(Ast::new(), src).expect("parse");
     let mut checker = Checker::new(&ast, std::rc::Rc::new(crate::Types::new()));
     checker.set_lenient(true);

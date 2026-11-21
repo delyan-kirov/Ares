@@ -15,7 +15,7 @@ $ twice : _ -> _ = \n => succ n |> succ
 # Annotations inside a body take `_` too: a lambda parameter, a `let`, an
 # ascription.
 $ local : @Int =
-    let pair : { _, @Bool } = { 3, @true } in
+    let pair : { _, Bool } = { 3, true } in
     let f = \(n: _) => n * 2 in
     (f pair.0 : _) + (if pair.1 => 1 else 0)
 
@@ -23,4 +23,4 @@ $ test : @Int =
     (if succ 1 == 2 => 0 else 1) + (if same "x" == "x" => 0 else 2) + (if twice 0 == 2 => 0 else 4)
         + (if local == 7 => 0 else 8)
 
-$ &assert (test == 0) "WILDCARD_TYPES: a check failed"
+$ !assert (test == 0) "WILDCARD_TYPES: a check failed"

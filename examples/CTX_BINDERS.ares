@@ -31,7 +31,7 @@ $ size_of : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> @Nat = \_ => n
 $ double : @ctx { n: @Nat, a: @Type } -> @Tensor n a -> @Nat = \t => size_of t + size_of t
 
 # A size only the types mention is erased, so nothing has to supply it.
-$ nonempty : @ctx { n: @Nat, a: @Type } -> @Tensor (n + 1) a -> @Bool = \_ => @true
+$ nonempty : @ctx { n: @Nat, a: @Type } -> @Tensor (n + 1) a -> Bool = \_ => true
 
 # A size taken explicitly: `n` is the argument, at the type and at run time.
 $ width : (n: @Nat) -> @Tensor n @Int -> @Nat = \_ => n
@@ -51,10 +51,10 @@ $ test : @Int =
         5
     else if double v != 6 =>
         6
-    else if !nonempty v =>
+    else if not (nonempty v) =>
         7
     else if width 3 v != 3 =>
         8
     else
         0
-$ &assert (test == 0) "written binders, explicit and run-time arguments"
+$ !assert (test == 0) "written binders, explicit and run-time arguments"

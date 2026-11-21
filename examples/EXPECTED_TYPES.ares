@@ -39,4 +39,4 @@ $ chk_variant : @Int = by_variant |> \ | Opt.Some.{ t } => (if t.n == 50 => 0 el
 
 $ test : @Int = chk_call + chk_pair + chk_pipe + chk_tuple + chk_variant
 
-$ &assert (test == 0) "EXPECTED_TYPES: a check failed"
+$ !assert (test == 0) "EXPECTED_TYPES: a check failed"

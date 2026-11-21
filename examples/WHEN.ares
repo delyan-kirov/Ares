@@ -2,7 +2,7 @@ $ @mod WHEN
 
 # `when c <| \_ => body` is an `if` without an `else`: the body runs for its
 # effects, and any effects pass through to the caller. The condition goes through
-# the `IToResult` interface, so a `@Bool` gives the body `{}`, and an `Opt` or a
+# the `IToResult` interface, so a `Bool` gives the body `{}`, and an `Opt` or a
 # `Result` gives it the payload.
 
 $ @import ARESxALGO
@@ -13,7 +13,7 @@ $ @import ARESxOPT
 $ Yield : @Type = @effect yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
     do a {}
-    ctl k | Yield.yield v => v + k {} | _ => 0
+    is k | Yield.yield v => v + k {} | _ => 0
 
 # Only the odd values reach `yield`: 1 + 3 + 5 = 9.
 $ ck_bool : @Int =
@@ -48,4 +48,4 @@ $ ck_break : @Int =
 
 $ test : @Int = ck_bool + ck_option + ck_result + ck_break
 
-$ &assert (test == 0) "WHEN: a check failed"
+$ !assert (test == 0) "WHEN: a check failed"

@@ -6,6 +6,6 @@ $ Store : @Type = @effect put : @ctx { a: @Type } -> a -> {},
 
 $ total : ({} -> <Store> {}) -> @Int = \body =>
 	do body {}
-	ctl k
+	is k
 	| Store.put x => let n : @Int = x in n  #~ error[TYPE_MISMATCH]: expected @Int, found `a` of `Store.put`
 	| u => 0

@@ -65,7 +65,7 @@ $ ck_stream : @Int = if foldl (\a x => a + x) 0 (take 2 odds) == 7 => 0 else 409
 $ Seen : @Type = @effect saw : @Int -> {},
 $ walked : @Int =
     do for [1 ... 100000000000000] (\i => if i > 5 => break {} else Seen.saw i)
-    ctl k | Seen.saw n => n + k {} | r => 0
+    is k | Seen.saw n => n + k {} | r => 0
 $ ck_lazy_range : @Int = if walked == 15 => 0 else 512
 
 # A bare open range is a `List` too.
@@ -75,4 +75,4 @@ $ test : @Int =
     ck_a + ck_a2 + ck_c + ck_d + ck_f + ck_r + ck_build + ck_len + ck_empty + ck_tens + ck_open_pat
         + ck_open_neg + ck_stream + ck_lazy_range + ck_lazy_open
 
-$ &assert (test == 0) "RANGES: a check failed"
+$ !assert (test == 0) "RANGES: a check failed"

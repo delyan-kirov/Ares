@@ -314,7 +314,7 @@ fn scalar_ffi_kind(name: &str) -> Option<std::os::raw::c_int> {
         "@Nat16" => kind::U16,
         "@Nat32" => kind::U32,
         "@Nat64" | "@Nat" => kind::U64,
-        "@Bool" => kind::U8,
+        "Bool" => kind::U8,
         "{}" => kind::VOID,
         _ => return None,
     })

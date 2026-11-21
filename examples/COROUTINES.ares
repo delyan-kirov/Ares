@@ -16,7 +16,7 @@ $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },
 # it, and the captured computation is handed over rather than copied.
 $ spawn : ({} -> <Co> {}) -> Task = \t =>
     do t {}
-    ctl k | Co.yield v => Task.Susp.{ v, k } | _ => Task.Fin.{}
+    is k | Co.yield v => Task.Susp.{ v, k } | _ => Task.Fin.{}
 
 # Round-robin two tasks: step the head task, emit its yield, then swap so the
 # other runs next. Resuming `ka {}` / `kb {}` resumes a continuation captured in
@@ -36,4 +36,4 @@ $ scheduled : @Int = rr (spawn t1) (spawn t2)
 # Force-evaluate results for the combined test runner (pass = no fault).
 $ test : @Int = scheduled; 0
 
-$ &assert (test == 0) "COROUTINES: a check failed"
+$ !assert (test == 0) "COROUTINES: a check failed"

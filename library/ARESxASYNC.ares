@@ -68,7 +68,7 @@ $ Step : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @union
 $ step_main : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> a)
     -> <e> Step m e a = \t =>
     do t {}
-    ctl k
+    is k
     | Async.spawn c   => Step.Spawned.{ c, k }
     | Async.yield u   => Step.Yielded.{ k }
     | Async.chan n    => Step.Made.{ n, k }
@@ -80,7 +80,7 @@ $ step_main : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> a)
 $ step_child : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> {})
     -> <e> Step m e a = \t =>
     do t {}
-    ctl k
+    is k
     | Async.spawn c   => Step.Spawned.{ c, k }
     | Async.yield u   => Step.Yielded.{ k }
     | Async.chan n    => Step.Made.{ n, k }
@@ -261,7 +261,7 @@ $ pollfd : @Int -> @Int -> PollFd = \fd events =>
     let ev : @Int16 = @cast events in
     PollFd.{ .fd = f, .events = ev, .revents = 0 }
 
-$ poll_now : @ctx { e: @Row } -> @Int -> @Int -> <@IO | e> @Bool = \fd events =>
+$ poll_now : @ctx { e: @Row } -> @Int -> @Int -> <@IO | e> Bool = \fd events =>
     c_poll { [pollfd fd events], 1, 0 } > 0
 
 # Sleep until at least one descriptor is ready, then answer which ones are,

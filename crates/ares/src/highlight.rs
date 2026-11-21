@@ -68,14 +68,13 @@ impl Class {
 pub fn class(kind: Kind, text: &str) -> Option<Class> {
     use frontend::Kind::*;
     Some(match kind {
-        Let | In | If | Else | Do | Ctl => Class::Keyword,
+        Let | In | If | Else | Do | Is => Class::Keyword,
         Comment => Class::Comment,
         Str => Class::String,
         Int(_) | Real(_) | Imaginary(_) => Class::Number,
         Op | Eq | FatArrow | Arrow | Lambda | Colon | Dollar | Ellipsis => Class::Operator,
         Word if text.starts_with(|c: char| c.is_ascii_uppercase()) => Class::Type,
         Word => Class::Variable,
-        At if matches!(text, "@true" | "@false") => Class::Number,
         At if frontend::typing::BASE_TYPES.contains(&text) => Class::Type,
         At => Class::Macro,
         _ => return None,

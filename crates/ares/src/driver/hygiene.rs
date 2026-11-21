@@ -526,10 +526,10 @@ impl<'a> Walk<'a> {
                 let Some(handler) = handler else { return };
                 let mark = self.env.len();
                 let after = self.ast.expr_span(body).map_or(0, |s| s.end);
-                let ctl = span.and_then(|s| self.word_in(Some(Span::new(after, s.end)), StrId::intern("ctl")));
-                let k = ctl.and_then(|c| {
-                    let rest = &self.src[c + 3..];
-                    let at = c + 3 + (rest.len() - rest.trim_start().len());
+                let is = span.and_then(|s| self.word_in(Some(Span::new(after, s.end)), StrId::intern("is")));
+                let k = is.and_then(|c| {
+                    let rest = &self.src[c + "is".len()..];
+                    let at = c + "is".len() + (rest.len() - rest.trim_start().len());
                     self.src[at..].starts_with(handler.continuation.as_str()).then_some(at)
                 });
                 self.bind(handler.continuation, k);
@@ -561,7 +561,7 @@ impl<'a> Walk<'a> {
     fn pattern(&mut self, p: Aol<Pattern>) {
         let span = self.ast.pat_span(p);
         match self.ast.pat(p).clone() {
-            Pattern::Wild | Pattern::Int(_) | Pattern::Real(_) | Pattern::Str(_) | Pattern::Bool(_) => {}
+            Pattern::Wild | Pattern::Int(_) | Pattern::Real(_) | Pattern::Str(_) => {}
             Pattern::Var(name) if is_synthetic(name) => self.bind(name, None),
             Pattern::Var(name) => {
                 let at = self.word_in(span, name);

@@ -239,10 +239,10 @@ fn align_comments(out: &str, width: usize) -> String {
 // point where a line break in the source keeps it broken:
 //
 //   `a; b`          after the first `;`
-//   `\ | p => e`    before the first `|` (a handler's `ctl k | ..` too)
+//   `\ | p => e`    before the first `|` (a handler's `is k | ..` too)
 //   `let .. in e`   after `in`
 //   `if .. else`    before the first `else`
-//   `do .. ctl k`   before `ctl`
+//   `do .. is k`   before `is`
 //
 // A form with no break there goes on one line when it fits. Only that one
 // point counts, so a stray break elsewhere does not freeze a layout, and the

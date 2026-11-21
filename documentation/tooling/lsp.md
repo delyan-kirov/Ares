@@ -111,10 +111,10 @@ code actions, at most 8 trials per request.
 ## Two tiers: as you type, and on save
 
 - **As you type** (debounced by `debounce_ms`): parse, resolve, type-check and
-  check exhaustiveness. No compile-time code runs. In a module whose `$ &` or
+  check exhaustiveness. No compile-time code runs. In a module whose `$ !` or
   `@build` may define names, an unbound name is only a hint until saved.
 - **On save**: the whole compile-time pipeline runs as `ares check` would
-  (every `$ &` expansion, `@build`, the asserts), and its faults show in the
+  (every `$ !` expansion, `@build`, the asserts), and its faults show in the
   editor. Spans in generated code are mapped back to the site that generated
   it. With `check = "save"` everything waits for save, as with rust-analyzer's
   check-on-save.
@@ -188,9 +188,9 @@ The rules, in short: a group fits on one line or breaks at every one of its
 line points; a form the author broke at its chosen point stays broken even
 when it would fit: a `;` sequence after its first `;`, arms before their first
 `|` (a handler's clauses too), `let ... in` after `in`, `if` before its first
-`else`, `do ... ctl` before `ctl`; broken arms go one per line, a multi-arm
+`else`, `do ... is` before `is`; broken arms go one per line, a multi-arm
 lambda's one level under the line its `\` ends, a handler's one level under
-`do ... ctl k` when that shares a line and at `ctl`'s level otherwise; a broken `let ... in` ends its
+`do ... is k` when that shares a line and at `is`'s level otherwise; a broken `let ... in` ends its
 line with `in` and the body starts the next line at the `let`'s level, so a chain of lets reads as a sequence (a value too long
 for the line goes one level under `=`, with `in` alone below it); `else if`
 chains stay flat; a list written across lines with a trailing comma stays one entry

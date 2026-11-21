@@ -6,12 +6,12 @@
 **Scope:** compile-time metaprogramming: exposing the compiler pipeline
 (tokens -> AST -> value) as a library, macro expansion, compiler messages, and
 compile-time IO. Builds directly on the effect system
-(documentation/language/effect-system-design.md) and CTFE (`$ &`).
+(documentation/language/effect-system-design.md) and CTFE (`$ !`).
 
-**Spelling (#457, 2026-11-10).** The splice is the prefix operator `&`, which
+**Spelling (#457, 2026-11-10).** The splice is the prefix operator `!`, which
 replaced the intrinsic `@e` in every position: `$ @e <| assert ..` is now
-`$ &assert ..`, the pattern `@e (X)` is `&X`, the row entry `<@e (X)>` is
-`<&X>`. The design notes and build log below predate the change and keep the
+`$ !assert ..`, the pattern `@e (X)` is `!X`, the row entry `<@e (X)>` is
+`<!X>`. The design notes and build log below predate the change and keep the
 old spelling where they record history; section 2 describes the current form.
 Since step 3 of #457 a string literal expected as `@Code` is a quotation
 (section 7), checked where it is spliced, and the per-category parsers
@@ -92,7 +92,7 @@ operations:
 ```
 
 `@Code` is opaque; it carries the fragment's source text and no syntax
-category. A `&` site decides the category (expression, type, row entries,
+category. A `!` site decides the category (expression, type, row entries,
 pattern, fields, variants or items) and checks the text there; `@parse_str`
 checks an expression on the spot, for code that only exists at run time.
 
@@ -141,7 +141,7 @@ surrounding context stays pure, while a meta op in ordinary code is a clean
 "effect `@Meta` is performed but not handled" error (no more runtime
 no-op/fault). A function that performs a meta op declares `<@Meta>` in its
 signature (like `<@IO>`); e.g. CORE's
-`assert : @Bool -> @Str -> <@Meta> @Code`, run by `$ @e <| assert ...`. The
+`assert : Bool -> @Str -> <@Meta> @Code`, run by `$ @e <| assert ...`. The
 ambient is closed (only `@Meta`), so `@e` stays hermetic: a generator that
 performs `@IO` is still rejected. Lexing and parsing
 (`@lex`/`@parse`/`@parse_*`/`@unparse`/`@token_*`) remain PURE. The compiler
@@ -264,7 +264,7 @@ extension together.
 generic type derives a single generic instance with one `@ctx to_string`
 dictionary per parameter: `$ to_string : Pair a b -> @Str  @ctx to_string : a ->
 @Str, to_string : b -> @Str`. Each dictionary renders its parameter, and one
-instance covers every instantiation (`Box @Int`, `Pair @Int @Bool`, nesting
+instance covers every instantiation (`Box @Int`, `Pair @Int Bool`, nesting
 through each element's own derived `to_string`). This is `instance (Show a, Show
 b) => Show (Pair a b)`, and it needed two checker changes:
 
@@ -298,43 +298,43 @@ a token. Both engines build and read it as a plain variant (the native runtime's
 
 ---
 
-## 2. `&` splices code or data
+## 2. `!` splices code or data
 
 **Decision (#457, after #159).** There is no dedicated macro-invocation syntax
-(`foo!(...)`) and there is one compile-time construct: **`&X` runs `X` at build
+(`foo!(...)`) and there is one compile-time construct: **`!X` runs `X` at build
 time and replaces itself with the result.** An `@Code` result is spliced in as
-source (and expanded again while it holds `&` sites); first-order data (a
-number, a `@Bool` or a `@Str`) is inserted as a literal. Any other result, such
-as a function, is a type error at the `&`. `X` runs under a closed `<@Meta>`
+source (and expanded again while it holds `!` sites); first-order data (a
+number, a `Bool` or a `@Str`) is inserted as a literal. Any other result, such
+as a function, is a type error at the `!`. `X` runs under a closed `<@Meta>`
 ambient, so the meta ops (`@abort`, `@emit`, `@fresh`, `@link`, `@link_path`)
 discharge there and any other effect, `@IO` included, is rejected. Compile-time
 IO lives solely in `@build` (sections 6 and 10).
 
 Empty code inserts nothing, and that is the escape hatch for a site run only for
 its effect. `CORE.assert` and `@link`/`@link_path` return empty code, so
-`$ &assert ok msg` and `$ &@link "m"` are statements that vanish once they have
+`$ !assert ok msg` and `$ &@link "m"` are statements that vanish once they have
 run.
 
-**Syntax, not a function.** `&` is a prefix operator at the binding power of
-`-`, `!` and `~~~`, so it scopes over an application: `&f a b` splices `f a b`,
-`&f a ++ b` is `(&(f a)) ++ b`, and a pipe chain is parenthesized, `&(x |> f)`.
+**Syntax, not a function.** `!` is a prefix operator at the binding power of
+`-`, `!` and `~~~`, so it scopes over an application: `!f a b` splices `f a b`,
+`!f a ++ b` is `(!(f a)) ++ b`, and a pipe chain is parenthesized, `!(x |> f)`.
 Its result may be an expression, a type, a pattern, members or items, so it has
 no function type: like `&&` and `|>` the parser rewrites it, into an
 `Expr::Splice` node in expression position and the matching splice node
-elsewhere. There is no `(&)` section, no `x |> &` and no `$ (&)` definition. A
-`&` glued to the operator before it lexes on its own when the run would
-otherwise be unknown, so `<&Logging>` is `<` then `&Logging`, and `!&x` is `!`
-then `&x`.
+elsewhere. There is no `(!)` section, no `x |> !` and no `$ (!)` definition. A
+`!` glued to the operator before it lexes on its own when the run would
+otherwise be unknown, so `<!Logging>` is `<` then `!Logging`, and `!!x` is `!`
+then `!x`.
 
 **Positions.**
 
 ```ares
-$ &assert (fib 10 == 55) "fib 10 should be 55"           # item
-$ fib10 : @Int = &fib 10                                 # expression: inserts `55`
-$ n : &wide {} = 1024                                    # type
-$ Point3 : @Type = @struct &ARES.fields_of "Point", z: @Int  # member
-$ run : {} -> <&logging {}, State @Int> @Int = ...      # row
-x |> \ | &answer => a                                   # pattern: a constant
+$ !assert (fib 10 == 55) "fib 10 should be 55"           # item
+$ fib10 : @Int = !fib 10                                 # expression: inserts `55`
+$ n : !wide {} = 1024                                    # type
+$ Point3 : @Type = @struct !ARES.fields_of "Point", z: @Int  # member
+$ run : {} -> <!logging {}, State @Int> @Int = ...      # row
+x |> \ | !answer => a                                   # pattern: a constant
        | answer  => b                                    # always binds
 ```
 
@@ -342,15 +342,15 @@ x |> \ | &answer => a                                   # pattern: a constant
 use site, importing a constant can never turn a binder into a match (the
 footgun of implicit constant patterns, cf. Rust `const` patterns). The value is
 inserted as a real literal, so exhaustiveness and `UNREACHABLE_ARM` treat
-`&answer` like `42`.
+`!answer` like `42`.
 
 **Rows have no aliases.** An effect row or a record row is written out where it
-is used. A `&X` entry in a row is for entries a generator computes, as
-`<&logging {}, State @Int>` above; the spliced entries join the row as if
+is used. A `!X` entry in a row is for entries a generator computes, as
+`<!logging {}, State @Int>` above; the spliced entries join the row as if
 written there, so a label it repeats occurs twice. An effect label is keyed by
 its bare name in every module, so hygiene has nothing to qualify in a row.
 
-**What `&X` is, precisely.** `X` is a closed compile-time expression, run once,
+**What `!X` is, precisely.** `X` is a closed compile-time expression, run once,
 now, whose result replaces the site in source. A data result has the operand's
 type at once; what `@Code` denotes is known only once it is spliced and
 re-checked, so such a site types as a fresh variable until then.
@@ -358,12 +358,12 @@ re-checked, so such a site types as a fresh variable until then.
 **History.** A short-lived split (#159) had `@e` run a PURE operand and embed its
 value, and a sibling `@run` discharge `<@Meta>`; `@run` went and `@e` inserted
 code only, so a value had to be rendered with a hand-written `lit` helper
-(`@parse_str (to_string n)`). #457 replaced `@e` with `&` and brought data
+(`@parse_str (to_string n)`). #457 replaced `@e` with `!` and brought data
 insertion back for first-order values, where the driver can write the literal
 itself, which retired those helpers.
 
 **Arguments are ordinary expressions; raw tokens are opt-in.** Because
-`&f a b` splices an application, `a` and `b` parse and check as normal Ares
+`!f a b` splices an application, `a` and `b` parse and check as normal Ares
 before `f` runs. Raw-token input is requested explicitly by passing a string
 literal through `@lex` (section 7):
 
@@ -541,21 +541,21 @@ produces text (a file read at `@build` time, a string built from data, through
 remain for working on tokens.
 
 **Holes run in the generator.** A `@Code` hole pastes its source; a number, a
-`@Bool` or a `@Str` hole pastes the literal spelling its value (open question 3
-of #457, settled as implicit, matching how `&` inserts data). A computed name is
+`Bool` or a `@Str` hole pastes the literal spelling its value (open question 3
+of #457, settled as implicit, matching how `!` inserts data). A computed name is
 pasted as code with `?(@code name)`. Splicing is still **textual**, so the
 author owns precedence, exactly as in any string-based code generator:
 
 **Macro arguments (#457 step 6).** A literal expected as CORE's
 `Template` (`pieces: @Vec @Str, holes: @Vec @Code`) keeps its pieces as text and
-quotes its holes instead of evaluating them: `&sql "... ?(name) ..."` hands
+quotes its holes instead of evaluating them: `!sql "... ?(name) ..."` hands
 `sql` the code `name`, which names a run-time parameter of the function the
 literal sits in. The parser gives every interpolated literal a third reading for
 this (`Expr::Interp.quoted`, `.{ .pieces = [..], .holes = [@code "name"] }`),
 which the checker takes when the expected type is CORE's `Template`; a literal
 with no holes goes through `impl_IStrLit_for_Template`. Hole code is `@code`
 text, so it reads as written at the site. For a macro to learn a hole's type,
-`@check` at an expression `&` sees the locals in scope there: the checker
+`@check` at an expression `!` sees the locals in scope there: the checker
 records them per splice (`Checker::splice_locals`), and the check host declares
 each as a global of its type ahead of the fragment. Precedent: C# converting a
 lambda to an `Expression<...>` by target type. `examples/META_TEMPLATE.ares`
@@ -619,7 +619,7 @@ which parses anyway, resolves with that.
 (`@quote_open`). Its text pieces are marked with it (`@code_text`), and a hole
 keeps the marks of the code it pastes (`@code_cat`). Lowering wraps a quotation
 in a function body in `@quote "MODULE"`, which records the scope's module. A
-quotation written in a `&` operand is written where its code lands, so lowering
+quotation written in a `!` operand is written where its code lands, so lowering
 leaves it unrecorded, and `@code` text has no scope: both read as written at the
 site. At the splice the driver parses the code in its category and rewrites it:
 
@@ -637,7 +637,7 @@ site. At the splice the driver parses the code in its category and rewrites it:
 
 **Pattern binders** follow (open question 4): a binder the generator spells is
 invisible to the arm body, so a generator that binds for its caller takes the
-binder as code, `\v => "Opt.Some.{?(v)}"` used as `&some_of "x"`. Spelling it
+binder as code, `\v => "Opt.Some.{?(v)}"` used as `!some_of "x"`. Spelling it
 with `@code` text (`$ it : @Code = @code "it"`) is the deliberate escape: the
 binder then reads as written at the site. An arm body that names a renamed
 binder gets an unbound-name error saying so.
@@ -908,7 +908,7 @@ the `@build` message loop (`@msg`/`@add_code`/`@modules`).
 8. **DONE (#457 step 5, #458):** `@alias` takes a type only, and rows have no
    aliases.
 9. **DONE (#457 step 6):** `Template` macro arguments with quoted holes, and
-   `@check` seeing the locals at an expression `&`.
+   `@check` seeing the locals at an expression `!`.
 
 The load-bearing point: the two hard organs already exist. A compile-time
 evaluator (CEK + `$ @e`) and a chainable diagnostic model. The macro system

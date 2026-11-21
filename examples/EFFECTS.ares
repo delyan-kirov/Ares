@@ -1,7 +1,7 @@
 $ @mod EFFECTS
 
 # Algebraic effects + handlers (typed, M3). Operations are performed by calling
-# them; a handler is `do <body> ctl k | op a => e ... | pat => e ...`, where the
+# them; a handler is `do <body> is k | op a => e ... | pat => e ...`, where the
 # value arms match the body's final value like match arms do; the continuation `k` is resumed by applying it, as often as the handler needs (see
 # AMB.ares for one that resumes twice). A function's type carries the effects it
 # may perform as a row on the arrow: `A -> <E> B`; a bare arrow is pure, and an
@@ -18,14 +18,14 @@ $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 # safeDiv is pure at its boundary.
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
     do if b == 0 => Exn.throw "div0" else a / b
-    ctl k | Exn.throw msg => 0 - 1
+    is k | Exn.throw msg => 0 - 1
 
 # Generator: resume once, summing every yielded value; the value arm is the base
 # case.
 # The argument performs Yield, so its arrow is `{} -> <Yield> {}`.
 $ sumGen : ({} -> <Yield> {}) -> @Int = \gen =>
     do gen {}
-    ctl k | Yield.yield v => v + k {} | _ => 0
+    is k | Yield.yield v => v + k {} | _ => 0
 
 $ gen3 : {} -> <Yield> {} =
     let _ = Yield.yield 10 in let _ = Yield.yield 20 in let _ = Yield.yield 12 in {}
@@ -35,7 +35,7 @@ $ gen3 : {} -> <Yield> {} =
 $ runState : ({} -> <State> @Int) -> @Int -> @Int = \action s0 =>
     let h =
         do action {}
-        ctl k
+        is k
         | get u => \s => (k s) s
         | put n => \s => (k {}) n
         | x     => \s => x
@@ -51,7 +51,7 @@ $ lookup : @Int -> @Int = \key =>
     do (
         if key < 0 => Exn.throw "negative" else if key == 0 => Found.Miss else Found.Hit.{ key * 2 }
     )
-    ctl k
+    is k
     | Exn.throw msg         => 0 - 2
     | .Hit.{ v } if v > 100 => 100
     | .Hit.{ v }            => v
@@ -67,4 +67,4 @@ $ r_lookup : @Int = lookup 21 + lookup 500 + lookup 0 + lookup (0 - 5) # 42 + 10
 # Force-evaluate results for the combined test runner (pass = no fault).
 $ test : @Int = r_exn_ok; r_exn_bad; r_gen; r_state; if r_lookup == 139 => 0 else 1
 
-$ &assert (test == 0) "EFFECTS: a check failed"
+$ !assert (test == 0) "EFFECTS: a check failed"

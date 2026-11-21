@@ -13,8 +13,8 @@ $ Wrap : (t: @Type) -> @Type = @union
     Nothing: {},
     Just: { t },
 
-$ &ARES.derive_show "Wrap"
+$ !ARES.derive_show "Wrap"
 
 $ test : @Int = 0
 
-$ &assert (test == 0) "DERIVE_LIB: a check failed"
+$ !assert (test == 0) "DERIVE_LIB: a check failed"

@@ -237,7 +237,7 @@ $ Gpu : @Type = @effect draw : Mesh -> {}, present : {} -> {}
 
 $ run_gpu : @ctx {e: @Row, a: @Type} -> ({} -> <Gpu | e> a) -> <@IO | e> a = \body =>
 	do body {}
-	ctl k
+	is k
 	| Gpu.draw m => (raylib_draw m; k {})
 	| Gpu.present u => (raylib_present {}; k {})
 	| r => r

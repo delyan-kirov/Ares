@@ -164,7 +164,8 @@ $ dir_of : @Str -> @Str = \path =>
 $ pre_commit : {} -> <@IO, Fail> {} =
     let staged = ARES.lines (output "git diff --cached --name-only --diff-filter=ACMR") in
     let ares =
-        filter (\f => ARES.ends_with ".ares" f && !(ARES.starts_with "tests/diagnostics/" f)) staged
+        filter (\f => ARES.ends_with ".ares" f && not (ARES.starts_with "tests/diagnostics/" f))
+            staged
     in
     let bad = unformatted ares 0 [] in
     (
@@ -213,7 +214,7 @@ $ unformatted : @Vec @Str -> @Int -> @Vec @Str -> <@IO, Fail> @Vec @Str = \fs i 
 
 # The STAGED version is formatted, so a partially staged file commits only its
 # staged hunks. tests/diagnostics/ is exempt: its files pin error positions.
-$ fmt_staged : @Str -> <@IO, Fail> @Bool = \f =>
+$ fmt_staged : @Str -> <@IO, Fail> Bool = \f =>
     let ares = if is_empty (env "ARES_BIN") => "ares" else env "ARES_BIN" in
     let
     # Beside the original, so `ares fmt` finds the same BUILD.ares.
@@ -221,24 +222,24 @@ $ fmt_staged : @Str -> <@IO, Fail> @Bool = \f =>
         dir_of f ++ ".fmt.thrax." ++ get_or 0 f (reverse (ARES.split "/" f)) in
     let staged = (capture ("git show " ++ quote (":" ++ f))).out in
     write_file tmp staged;
-    if !(succeeds (ares ++ " fmt " ++ quote tmp ++ " 2>/dev/null")) =>
+    if not (succeeds (ares ++ " fmt " ++ quote tmp ++ " 2>/dev/null")) =>
         say ("ares fmt refused " ++ f ++ ":");
         eprint (ARES.replace tmp f (capture (ares ++ " fmt --check " ++ quote tmp ++ " 2>&1")).out);
         remove_file tmp;
-        @false
+        false
     else
         let formatted = unwrap_or staged (read_file tmp) in
         if formatted == staged =>
-            remove_file tmp; @true
+            remove_file tmp; true
         else
             let mode = unwrap_or "100644"
                 (ARES.first (ARES.split " " (output ("git ls-files -s -- " ++ quote f)))) in
             let blob = output ("git hash-object -w -- " ++ quote tmp) in
-            (if unwrap_or "" (read_file f) == staged => write_file f formatted else @true);
+            (if unwrap_or "" (read_file f) == staged => write_file f formatted else true);
             sh ("git update-index --cacheinfo " ++ quote (mode ++ "," ++ blob ++ "," ++ f));
             remove_file tmp;
             say ("formatted " ++ f);
-            @true
+            true
 
 # ---- the Zed extension ----
 
@@ -259,14 +260,14 @@ $ grammar_rev : @Str -> <@IO> @Str = \c =>
 
 # Zed's pin moved to the last commit that changed the grammar, written to
 # zed/extension.toml; whether it moved.
-$ write_zed_pin : {} -> <@IO> @Bool =
+$ write_zed_pin : {} -> <@IO> Bool =
     let rev = grammar_rev "HEAD" in
     let text = unwrap_or "" (read_file zed_toml) in
     let old = pinned_rev text in
     if rev == old =>
-        @false
+        false
     else
-        write_file zed_toml (ARES.replace (rev_line old) (rev_line rev) text); @true
+        write_file zed_toml (ARES.replace (rev_line old) (rev_line rev) text); true
 
 $ pin_zed_grammar : {} -> <@IO> {} =
     (
@@ -356,9 +357,9 @@ $ config_home : {} -> <@IO> @Str =
 # Helix has Ares when it has compiled the grammar once (`hx --grammar build`).
 $ helix_grammar : {} -> <@IO> @Str = config_home {} ++ "/helix/runtime/grammars/ares.so"
 
-$ helix_installed : {} -> <@IO> @Bool = is_some (mtime (helix_grammar {}))
+$ helix_installed : {} -> <@IO> Bool = is_some (mtime (helix_grammar {}))
 
-$ on_path : @Str -> <@IO> @Bool = \cmd => succeeds ("command -v " ++ cmd ++ " >/dev/null 2>&1")
+$ on_path : @Str -> <@IO> Bool = \cmd => succeeds ("command -v " ++ cmd ++ " >/dev/null 2>&1")
 
 # Only Ares's grammar, compiled as `hx --grammar build` would: that builds every
 # grammar Helix knows, and one failing elsewhere would stop it.
@@ -388,7 +389,7 @@ $ vscode_srcs : @Vec @Str = [
     "icons/ares.png"
 ]
 
-$ vscode_installed : {} -> <@IO> @Bool =
+$ vscode_installed : {} -> <@IO> Bool =
     succeeds "ls -d \"$HOME\"/.vscode/extensions/ares.ares-* >/dev/null 2>&1"
 
 $ vscode_build : {} -> <@IO, Fail> {} = sh
@@ -401,7 +402,7 @@ $ vscode_build : {} -> <@IO, Fail> {} = sh
             ++ " && code --install-extension ares.vsix --force >/dev/null 2>&1"
     )
 
-$ zed_installed : {} -> <@IO> @Bool =
+$ zed_installed : {} -> <@IO> Bool =
     let data =
         if is_empty (env "XDG_DATA_HOME") => env "HOME" ++ "/.local/share" else env "XDG_DATA_HOME"
     in
@@ -410,12 +411,12 @@ $ zed_installed : {} -> <@IO> @Bool =
 $ zed_build : {} -> <@IO, Fail> {} = sh ("nix run path:" ++ editors ++ "#zed-build -- " ++ editors)
 
 # Whether `target` is missing or older than one of `srcs`.
-$ out_of_date : @Str -> @Vec @Str -> <@IO> @Bool = \target srcs =>
-    mtime target |> \ | Opt.Some.{ t } => newer_than t srcs 0 | _ => @true
+$ out_of_date : @Str -> @Vec @Str -> <@IO> Bool = \target srcs =>
+    mtime target |> \ | Opt.Some.{ t } => newer_than t srcs 0 | _ => true
 
-$ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> @Bool = \t srcs i =>
+$ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> Bool = \t srcs i =>
     if i >= @vec_len srcs =>
-        @false
+        false
     else
         unwrap_or 0 (mtime (@vec_get srcs i)) > t || newer_than t srcs (i + 1)
 
@@ -425,10 +426,10 @@ $ newer_than : @Int -> @Vec @Str -> @Int -> <@IO> @Bool = \t srcs i =>
 # `--no-verify` skips commit-msg, so no marker is left and the commit stays.
 $ marker : {} -> <@IO> @Str = output "git rev-parse --git-path thrax-move"
 
-$ exempt : @Str -> @Bool = \s =>
+$ exempt : @Str -> Bool = \s =>
     any (\p => ARES.starts_with p s) ["Merge ", "Revert ", "fixup!", "squash!", "amend!"]
 
-$ is_new : @Str -> @Bool = \s => s == "#new" || ARES.starts_with "#new " s
+$ is_new : @Str -> Bool = \s => s == "#new" || ARES.starts_with "#new " s
 
 $ need_issue : @Str =
     "a commit on master names its issue\n"
@@ -529,7 +530,7 @@ $ post_commit : {} -> <@IO, Fail> {} =
             remove_file m;
             let branch = ARES.trim text in
             let head = output "git rev-parse HEAD" in
-            if current_branch {} == trunk && !(is_empty head) =>
+            if current_branch {} == trunk && not (is_empty head) =>
                 sh ("git branch " ++ quote branch ++ " " ++ head);
                 sh ("git symbolic-ref HEAD refs/heads/" ++ branch);
                 sh ("git update-ref refs/heads/" ++ trunk ++ " " ++ head ++ "~1 " ++ head);
@@ -606,7 +607,7 @@ $ spawn_open_pr : @Str -> @Str -> <@IO> {} = \branch sha =>
     {}
 
 $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
-    if !(reached branch sha 60) =>
+    if not (reached branch sha 60) =>
         {}
     else
         Forge.pr branch |> \
@@ -642,11 +643,11 @@ $ open_pr : @Str -> @Str -> <Forge, @IO, Fail> {} = \branch sha =>
             | .Closed       => say
                 ("the pull request of `" ++ branch ++ "` is closed, reopen it to review this push")
 
-$ reached : @Str -> @Str -> @Int -> <@IO> @Bool = \branch sha tries =>
+$ reached : @Str -> @Str -> @Int -> <@IO> Bool = \branch sha tries =>
     if ARES.starts_with sha (output ("git ls-remote origin " ++ quote ("refs/heads/" ++ branch))) =>
-        @true
+        true
     else if tries <= 0 =>
-        @false
+        false
     else
         C.system "sleep 1"; reached branch sha (tries - 1)
 

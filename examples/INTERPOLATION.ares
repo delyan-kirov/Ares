@@ -54,7 +54,7 @@ $ impl_IInterpHole_for_Html_Str : @IInterpHole Html @Str =
 $ para : @Str -> Html = \body => "<p>?(body)</p>"
 
 # --- the default ---------------------------------------------------------------
-$ plain : @Str = "n = ?(6 * 7), ok = ?(@true)"
+$ plain : @Str = "n = ?(6 * 7), ok = ?(true)"
 
 # --- checks ----------------------------------------------------------------------
 $ evil : Sql = by_name "x'; DROP TABLE users; --" 30
@@ -71,4 +71,4 @@ $ ck_plain : @Int = if plain == "n = 42, ok = true" => 0 else 16
 
 $ test : @Int = ck_text + ck_params + ck_arg + ck_html + ck_plain
 
-$ &assert (test == 0) "INTERPOLATION: a check failed"
+$ !assert (test == 0) "INTERPOLATION: a check failed"

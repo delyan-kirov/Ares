@@ -74,7 +74,7 @@ $ Emit : @Type = @effect emit : @Int -> {},
 $ total : ({} -> <Emit> {}) -> @Int = \body =>
     let run =
         do body {}
-        ctl k | Emit.emit n => \acc => k {} (acc + n) | u => \acc => acc
+        is k | Emit.emit n => \acc => k {} (acc + n) | u => \acc => acc
     in
     run 0
 
@@ -88,4 +88,4 @@ $ ck_with : @Int =
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int = ck_one + ck_both + ck_map + ck_chunks + ck_reduce + ck_nested + ck_tensor + ck_with
 
-$ &assert (test == 0) "STDLIB_PAR: a check failed"
+$ !assert (test == 0) "STDLIB_PAR: a check failed"

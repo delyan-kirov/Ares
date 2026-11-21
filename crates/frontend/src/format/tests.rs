@@ -122,9 +122,9 @@ fn a_comment_block_keeps_its_blank_line_before_the_item() {
 }
 
 #[test]
-fn a_broken_handler_puts_ctl_on_its_own_line() {
-    let src = "$ @mod M\n$ s = \\g => do g {}\nctl k | Y.y v => v + k {} | _ => 0\n";
-    assert_eq!(fmt(src), "$ @mod M\n$ s = \\g =>\n    do g {}\n    ctl k | Y.y v => v + k {} | _ => 0\n");
+fn a_broken_handler_puts_is_on_its_own_line() {
+    let src = "$ @mod M\n$ s = \\g => do g {}\nis k | Y.y v => v + k {} | _ => 0\n";
+    assert_eq!(fmt(src), "$ @mod M\n$ s = \\g =>\n    do g {}\n    is k | Y.y v => v + k {} | _ => 0\n");
 }
 
 #[test]
@@ -174,10 +174,10 @@ fn a_braced_body_opens_on_its_heads_line() {
 
 #[test]
 fn an_is_inside_a_handler_clause_ends_at_the_next_clause() {
-    let src = "$ @mod M\n$ h = \\g => do g {} ctl k\n| Y.y v => (v |> \\ | 0 => 1 | _ => 2) | X.x u => u |> \\ | 0 => 1 | _ => 2 | Z.z w => 3\n";
+    let src = "$ @mod M\n$ h = \\g => do g {} is k\n| Y.y v => (v |> \\ | 0 => 1 | _ => 2) | X.x u => u |> \\ | 0 => 1 | _ => 2 | Z.z w => 3\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ h = \\g =>\n    do g {} ctl k\n        | Y.y v => (v |> \\ | 0 => 1 | _ => 2)\n        | X.x u => u |> \\ | 0 => 1 | _ => 2\n        | Z.z w => 3\n"
+        "$ @mod M\n$ h = \\g =>\n    do g {} is k\n        | Y.y v => (v |> \\ | 0 => 1 | _ => 2)\n        | X.x u => u |> \\ | 0 => 1 | _ => 2\n        | Z.z w => 3\n"
     );
 }
 
@@ -189,10 +189,10 @@ fn trailing_comments_of_neighbouring_lines_line_up() {
 
 #[test]
 fn a_value_that_cannot_share_the_line_goes_under_its_equals() {
-    let src = "$ @mod M\n$ f = \\g => let h = do g {} ctl k\n| Y.y v => v | X.x u => 1 | _ => 0 in h\n";
+    let src = "$ @mod M\n$ f = \\g => let h = do g {} is k\n| Y.y v => v | X.x u => 1 | _ => 0 in h\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ f = \\g =>\n    let h =\n        do g {} ctl k\n            | Y.y v => v\n            | X.x u => 1\n            | _     => 0\n    in\n    h\n"
+        "$ @mod M\n$ f = \\g =>\n    let h =\n        do g {} is k\n            | Y.y v => v\n            | X.x u => 1\n            | _     => 0\n    in\n    h\n"
     );
 }
 
@@ -279,24 +279,24 @@ fn a_break_at_a_forms_chosen_point_keeps_it_a_block() {
     assert_eq!(fmt(if_flat), if_flat);
     let if_block = "$ @mod M\n$ f = \\x => if x => 1\nelse 2\n";
     assert_eq!(fmt(if_block), "$ @mod M\n$ f = \\x =>\n    if x =>\n        1\n    else\n        2\n");
-    // A handler: a break before `ctl`, and before the first `|` after `ctl k`.
-    let handler = "$ @mod M\n$ h = \\g => do g {} ctl k | X.x u => 1 | Y.y v => 2 | _ => 0\n";
+    // A handler: a break before `is`, and before the first `|` after `is k`.
+    let handler = "$ @mod M\n$ h = \\g => do g {} is k | X.x u => 1 | Y.y v => 2 | _ => 0\n";
     assert_eq!(fmt(handler), handler);
-    let ctl = "$ @mod M\n$ h = \\g => do g {}\nctl k | X.x u => 1 | _ => 0\n";
-    assert_eq!(fmt(ctl), "$ @mod M\n$ h = \\g =>\n    do g {}\n    ctl k | X.x u => 1 | _ => 0\n");
-    let clauses = "$ @mod M\n$ h = \\g => do g {} ctl k\n| X.x u => 1 | _ => 0\n";
-    assert_eq!(fmt(clauses), "$ @mod M\n$ h = \\g =>\n    do g {} ctl k\n        | X.x u => 1\n        | _     => 0\n");
-    let both = "$ @mod M\n$ h = \\g => do g {}\nctl k\n| X.x u => 1 | _ => 0\n";
-    assert_eq!(fmt(both), "$ @mod M\n$ h = \\g =>\n    do g {}\n    ctl k\n    | X.x u => 1\n    | _     => 0\n");
-    // A `do .. ctl k` too long for its line breaks before `ctl`, the clauses then at its level.
-    let long = "$ @mod M\n$ h = \\g => do ffffffffff aaaaaaaaaa bbbbbbbbbb cccccccccc ctl k\n| X.x u => 1 | _ => 0\n";
+    let is = "$ @mod M\n$ h = \\g => do g {}\nis k | X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(is), "$ @mod M\n$ h = \\g =>\n    do g {}\n    is k | X.x u => 1 | _ => 0\n");
+    let clauses = "$ @mod M\n$ h = \\g => do g {} is k\n| X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(clauses), "$ @mod M\n$ h = \\g =>\n    do g {} is k\n        | X.x u => 1\n        | _     => 0\n");
+    let both = "$ @mod M\n$ h = \\g => do g {}\nis k\n| X.x u => 1 | _ => 0\n";
+    assert_eq!(fmt(both), "$ @mod M\n$ h = \\g =>\n    do g {}\n    is k\n    | X.x u => 1\n    | _     => 0\n");
+    // A `do .. is k` too long for its line breaks before `is`, the clauses then at its level.
+    let long = "$ @mod M\n$ h = \\g => do ffffffffff aaaaaaaaaa bbbbbbbbbb cccccccccc is k\n| X.x u => 1 | _ => 0\n";
     assert_eq!(
         narrow(long, 40),
-        "$ @mod M\n$ h = \\g =>\n    do\n        ffffffffff aaaaaaaaaa bbbbbbbbbb\n            cccccccccc\n    ctl k\n    | X.x u => 1\n    | _     => 0\n"
+        "$ @mod M\n$ h = \\g =>\n    do\n        ffffffffff aaaaaaaaaa bbbbbbbbbb\n            cccccccccc\n    is k\n    | X.x u => 1\n    | _     => 0\n"
     );
     assert_eq!(narrow(&narrow(long, 40), 40), narrow(long, 40));
     // Every result is a fixed point.
-    for src in [arms, block, let_block, if_block, ctl, clauses, both] {
+    for src in [arms, block, let_block, if_block, is, clauses, both] {
         assert_eq!(fmt(&fmt(src)), fmt(src));
     }
 }

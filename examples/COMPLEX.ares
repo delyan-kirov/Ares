@@ -71,7 +71,7 @@ $ ck_abs : @Int = if ARES.magnitude a == 5.0 => 0 else 1
 $ ck_norm : @Int = if ARES.norm a == 25.0 => 0 else 1
 $ ck_recip : @Int = if near (ARES.recip b) (Cpx.{ 0.2, 0.4 }) => 0 else 1
 $ ck_arg : @Int = if near_real (ARES.arg 1.0i) (ARES.pi / 2.0) => 0 else 1
-$ ck_real : @Int = if ARES.is_real (Cpx.{ 2.0, 0.0 }) && !(ARES.is_real a) => 0 else 1
+$ ck_real : @Int = if ARES.is_real (Cpx.{ 2.0, 0.0 }) && not (ARES.is_real a) => 0 else 1
 
 $ ck_show : @Int = if to_string a == "3 + 4i" => 0 else 1
 $ ck_show2 : @Int = if to_string b == "1 - 2i" => 0 else 1
@@ -145,11 +145,11 @@ $ test : @Int =
         + ck_sqrt + ck_sqr + ck_powi + ck_pow + ck_powneg + ck_hatc + ck_hatint + ck_trig + ck_tan
         + ck_hyp + ck_tanh + ck_polar + ck_rou + ck_roots + ck_dot
 
-$ &assert (test == 0) "COMPLEX: a check failed"
+$ !assert (test == 0) "COMPLEX: a check failed"
 
 $ @private
 
 # Floating-point results need a tolerance, not `==`.
-$ near_real : Real -> Real -> @Bool = \x y => ARES.abs (x - y) < 0.000000001
+$ near_real : Real -> Real -> Bool = \x y => ARES.abs (x - y) < 0.000000001
 
-$ near : Cpx -> Cpx -> @Bool = \p q => ARES.magnitude (p - q) < 0.000000001
+$ near : Cpx -> Cpx -> Bool = \p q => ARES.magnitude (p - q) < 0.000000001

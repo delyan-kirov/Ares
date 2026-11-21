@@ -38,7 +38,16 @@ $ @IInterpHole : (b: @Type) -> (h: @Type) -> @Type = @struct hole: b -> h -> b,
 # with no wrapper. Only CORE may declare them. A few stay inside the compiler
 # because their types have no surface syntax: `@cast` is checked specially, and the `@tensor_*` primitives are polymorphic over axis variance.
 
-$ not : @Bool -> @Bool = @extern "ares"
+# ---- booleans ----
+# An ordinary union. `if`, a guard, `&&` and `||` branch on it, and the
+# comparison builtins answer with it; the engines hold it as a machine boolean.
+# `true` and `false` name its values; a pattern spells the constructor,
+# `Bool.True` or `.True`.
+$ Bool : @Type = @union False: {}, True: {},
+$ true : Bool = Bool.True
+$ false : Bool = Bool.False
+
+$ not : Bool -> Bool = @extern "ares"
 
 # Sequencing and the pipes. The parser rewrites each into the form it means
 # (`a; b` is a `let` that drops `a`, `x |> f` and `f <| x` are `f x`), so these
@@ -100,13 +109,13 @@ $ @bits_f32 : @Int -> @Float32 = @extern "ares"
 # Comparison, under the `IEq` / `IOrd` instances. `@ieq` serves signed and unsigned
 # alike (equality reads the same bits); the float pair compares at `@Float64`,
 # which is exact for a `@Float32` too; `@seq`/`@slt` compare byte strings.
-$ @ieq : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @ilt : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @ult : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @feq : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @flt : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @seq : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
-$ @slt : @ctx { t: @Type } -> t -> t -> @Bool = @extern "ares"
+$ @ieq : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @ilt : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @ult : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @feq : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @flt : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @seq : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
+$ @slt : @ctx { t: @Type } -> t -> t -> Bool = @extern "ares"
 
 # Byte buffers. `@Str` and `@Array` share one runtime representation, so these
 # take either (the runtime reads the kind off the value). Elements are bytes, as
@@ -126,7 +135,7 @@ $ @array_scan : @ctx { t: @Type } -> t -> @Int -> t -> @Int = @extern "ares"
 
 # `@array_match s at needle`: whether `needle` occurs in `s` at byte `at` (false
 # when it would run past the end). One comparison, no slice.
-$ @array_match : @ctx { t: @Type } -> t -> @Int -> t -> @Bool = @extern "ares"
+$ @array_match : @ctx { t: @Type } -> t -> @Int -> t -> Bool = @extern "ares"
 
 # `@ptr_bytes p n`: the `n` bytes of C memory at `p`, copied into a fresh string
 # (NUL bytes and all, unlike a `char*` result, which ends at its first NUL). The
@@ -171,7 +180,7 @@ $ @tvar_read : @ctx { a: @Type } -> @TVar a -> <@IO> a = @extern "ares"
 $ @stm_read : @ctx { a: @Type } -> @TVar a -> <@IO> a = @extern "ares"
 $ @stm_write : @ctx { a: @Type } -> @TVar a -> a -> <@IO> {} = @extern "ares"
 $ @stm_begin : {} -> <@IO> {} = @extern "ares"
-$ @stm_commit : {} -> <@IO> @Bool = @extern "ares"
+$ @stm_commit : {} -> <@IO> Bool = @extern "ares"
 $ @stm_wait : {} -> <@IO> {} = @extern "ares"
 $ @stm_save : {} -> <@IO> @Int = @extern "ares"
 $ @stm_rollback : @Int -> <@IO> {} = @extern "ares"
@@ -189,7 +198,7 @@ $ @parse : @Vec Token -> @Code = @extern "ares"
 $ @unparse : @Code -> @Str = @extern "ares"
 # An expression fragment.
 $ @parse_str : @Str -> @Code = @extern "ares"
-# Source text as `@Code`, unchecked: the `&` that splices it decides what it
+# Source text as `@Code`, unchecked: the `!` that splices it decides what it
 # must parse as (an expression, items, a type, a row, a pattern, fields or
 # variants) and checks it there. A string literal expected as `@Code` is a
 # quotation and needs no call (see "quotations" below).
@@ -245,11 +254,11 @@ $ Token : @Type = @union
     If: @Str,
     Else: @Str,
     Do: @Str,
-    Ctl: @Str,
+    Is: @Str,
     Comment: @Str,
 
 # The `<@Meta>` operations, usable only where the compiler handles `@Meta`
-# (inside `&`). `@abort` fails the build with its message, and `@emit` prints one
+# (inside `!`). `@abort` fails the build with its message, and `@emit` prints one
 # and continues. `@fresh prefix` mints a unique identifier for hygienic generated
 # binders. `@link` / `@link_path` add a library or a search path to the link line
 # and insert nothing. `@import_path` adds a directory to the module search, and
@@ -277,7 +286,7 @@ $ @type_of : @Str -> <@Meta> @Str = @extern "ares"
 # union with its `{tag, payload}` variants (the payload empty for a bare tag), a
 # global value with its type as source, or nothing. Types are source text, over
 # the declaration's own `params`. A generator matches `Missing` to handle a name
-# nobody declared; a type whose own `&` entries have not been spliced in yet
+# nobody declared; a type whose own `!` entries have not been spliced in yet
 # faults, so the generator runs again once they are.
 $ Decl : @Type = @union
     Struct: { params: @Vec @Str, fields: @Vec { @Str, @Str } },
@@ -286,22 +295,22 @@ $ Decl : @Type = @union
     Missing: {},
 $ @lookup : @Str -> <@Meta> Decl = @extern "ares"
 
-# Every name a bare reference at the running `&` can resolve to (its module's
+# Every name a bare reference at the running `!` can resolve to (its module's
 # own globals, then what it imports), each with its type as source, by name.
 $ @scope : {} -> <@Meta> @Vec { @Str, @Str } = @extern "ares"
 
-# Where the running `&` is: its file, line and column (both from 1).
+# Where the running `!` is: its file, line and column (both from 1).
 $ Site : @Type = @struct file: @Str, line: @Int, column: @Int
 $ @here : {} -> <@Meta> Site = @extern "ares"
 
-# Type-check an expression fragment as if written at the running `&`, seeing
-# that module's imports and, at an expression `&`, the locals in scope there,
+# Type-check an expression fragment as if written at the running `!`, seeing
+# that module's imports and, at an expression `!`, the locals in scope there,
 # and give its type as source. An ill-typed fragment fails
 # the build with the checker's error.
 $ @check : @Code -> <@Meta> @Str = @extern "ares"
 
 # A compile-time diagnostic: the message, then a `note:` line per note and a
-# `help:` line per help, shown at the running `&`. `@fail` is an error that fails
+# `help:` line per help, shown at the running `!`. `@fail` is an error that fails
 # the build (`META_ABORT`); `@warn` a warning, after which the build goes on
 # (`META_WARNING`). `diag msg` is one with no notes or helps.
 $ Diag : @Type = @struct message: @Str, notes: @Vec @Str, helps: @Vec @Str
@@ -565,15 +574,15 @@ $ f64_to_f32 : @Float64 -> @Float32 = @extern "C" "arx_d2f" ""
 # Write one, or let `DERIVE.derive_eq` / `DERIVE.derive_ord` generate it from the
 # declaration. That is the trade for an honest type: `==` means "this type knows
 # how to compare itself", not "the runtime will try something".
-$ IEq : (t: @Type) -> @Type = @struct eq: t -> t -> @Bool,
-$ IOrd : (t: @Type) -> @Type = @struct lt: t -> t -> @Bool,
+$ IEq : (t: @Type) -> @Type = @struct eq: t -> t -> Bool,
+$ IOrd : (t: @Type) -> @Type = @struct lt: t -> t -> Bool,
 
-$ (==) : @ctx { t: @Type } -> @use { d: IEq t } -> t -> t -> @Bool = \a b => d.eq a b
-$ (!=) : @ctx { t: @Type } -> @use { d: IEq t } -> t -> t -> @Bool = \a b => not (d.eq a b)
-$ (<) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> @Bool = \a b => d.lt a b
-$ (>) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> @Bool = \a b => d.lt b a
-$ (<=) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> @Bool = \a b => not (d.lt b a)
-$ (>=) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> @Bool = \a b => not (d.lt a b)
+$ (==) : @ctx { t: @Type } -> @use { d: IEq t } -> t -> t -> Bool = \a b => d.eq a b
+$ (!=) : @ctx { t: @Type } -> @use { d: IEq t } -> t -> t -> Bool = \a b => not (d.eq a b)
+$ (<) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> Bool = \a b => d.lt a b
+$ (>) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> Bool = \a b => d.lt b a
+$ (<=) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> Bool = \a b => not (d.lt b a)
+$ (>=) : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> Bool = \a b => not (d.lt a b)
 
 $ impl_IEq_for_int : IEq @Int = .{ .eq = \a b => @ieq a b }
 $ impl_IOrd_for_int : IOrd @Int = .{ .lt = \a b => @ilt a b }
@@ -614,8 +623,8 @@ $ impl_IOrd_for_float32 : IOrd @Float32 = .{ .lt = \a b => @flt a b }
 $ impl_IEq_for_str : IEq @Str = .{ .eq = \a b => @seq a b }
 $ impl_IOrd_for_str : IOrd @Str = .{ .lt = \a b => @slt a b }
 
-# `@Bool` has equality but no ordering: a two-case test, no intrinsic needed.
-$ impl_IEq_for_bool : IEq @Bool = .{ .eq = \a b => if a => b else not b }
+# `Bool` has equality but no ordering: a two-case test, no intrinsic needed.
+$ impl_IEq_for_bool : IEq Bool = .{ .eq = \a b => if a => b else not b }
 
 # Aggregates compare through their components', so equality composes without any
 # structural fallback: a tuple needs one instance per arity, a sequence one.
@@ -640,16 +649,16 @@ $ impl_IOrd_for_tup3 : @ctx { a: @Type, b: @Type, c: @Type }
     }
 
 $ vec_eq_from : @ctx { t: @Type } -> @use { d: IEq t } -> @Vec t -> @Vec t -> @Int
-    -> @Bool = \x y i =>
+    -> Bool = \x y i =>
     if i >= @vec_len x =>
-        @true
+        true
     else if d.eq (@vec_get x i) (@vec_get y i) =>
         vec_eq_from x y (i + 1)
     else
-        @false
+        false
 
 $ impl_IEq_for_vec : @ctx { t: @Type } -> @use { d: IEq t } -> IEq (@Vec t) =
-    .{ .eq = \x y => if @vec_len x == @vec_len y => vec_eq_from x y 0 else @false }
+    .{ .eq = \x y => if @vec_len x == @vec_len y => vec_eq_from x y 0 else false }
 
 $ impl_IEq_for_array : IEq @Array = .{ .eq = \a b => @seq a b }
 
@@ -657,8 +666,8 @@ $ impl_IEq_for_array : IEq @Array = .{ .eq = \a b => @seq a b }
 $ impl_IEq_for_Opt : @ctx { t: @Type } -> @use { e: IEq t } -> IEq (Opt t) = .{
     .eq = \a b =>
         a |> \
-            | Opt.Some.{ x } => (b |> \ | Opt.Some.{ y } => e.eq x y | _ => @false)
-            | _              => (b |> \ | Opt.Some.{ _ } => @false | _ => @true),
+            | Opt.Some.{ x } => (b |> \ | Opt.Some.{ y } => e.eq x y | _ => false)
+            | _              => (b |> \ | Opt.Some.{ _ } => false | _ => true),
 }
 
 # Function composition as a value: `compose f g` is `\x => f (g x)`, and it is what
@@ -684,7 +693,7 @@ $ to_string : @ctx { t: @Type } -> @use { d: IToString t } -> t -> @Str = \x => 
 $ from_str : @ctx { t: @Type } -> @use { d: IFromStr t } -> @Str -> Opt t = \s => d.from_str s
 
 $ impl_IToString_for_str : IToString @Str = .{ .show = \s => s }
-$ impl_IToString_for_bool : IToString @Bool = .{ .show = \b => if b => "true" else "false" }
+$ impl_IToString_for_bool : IToString Bool = .{ .show = \b => if b => "true" else "false" }
 
 # A negative value prints through `@Nat`, because negating the minimum `@Int`
 # overflows back to itself while its `@Nat` reinterpretation is the magnitude.
@@ -740,12 +749,12 @@ $ int_as : @ctx { t: @Type } -> (@Int -> t) -> @Str -> Opt t = \f s =>
     str_to_int s |> \ | Opt.Some.{ n } => Opt.Some.{ f n } | _ => Opt.None
 
 $ impl_IFromStr_for_str : IFromStr @Str = .{ .from_str = \s => Opt.Some.{ s } }
-$ impl_IFromStr_for_bool : IFromStr @Bool = .{
+$ impl_IFromStr_for_bool : IFromStr Bool = .{
     .from_str = \s =>
         if s == "true" =>
-            Opt.Some.{ @true }
+            Opt.Some.{ true }
         else if s == "false" =>
-            Opt.Some.{ @false }
+            Opt.Some.{ false }
         else
             Opt.None,
 }
@@ -772,22 +781,22 @@ $ impl_IFromStr_for_nat64 : IFromStr @Nat64 =
 # A float is digits with an optional sign, point and exponent: at least one digit,
 # and only the bytes `0-9 + - . e E`. libc `atof` converts the checked text.
 $ str_to_real : @Str -> @Float64 = @extern "C" "atof" "libc"
-$ float_text : @Str -> @Int -> @Bool -> @Bool = \s i digit =>
+$ float_text : @Str -> @Int -> Bool -> Bool = \s i digit =>
     if i >= @array_len s =>
         digit
     else
         let c = @array_get s i in
         if c >= 48 && c <= 57 =>
-            float_text s (i + 1) @true
+            float_text s (i + 1) true
         else if c == 43 || c == 45 || c == 46 || c == 101 || c == 69 =>
             float_text s (i + 1) digit
         else
-            @false
+            false
 $ impl_IFromStr_for_float64 : IFromStr @Float64 =
-    .{ .from_str = \s => if float_text s 0 @false => Opt.Some.{ str_to_real s } else Opt.None }
+    .{ .from_str = \s => if float_text s 0 false => Opt.Some.{ str_to_real s } else Opt.None }
 $ impl_IFromStr_for_float32 : IFromStr @Float32 = .{
     .from_str = \s =>
-        if float_text s 0 @false => Opt.Some.{ f64_to_f32 (str_to_real s) } else Opt.None,
+        if float_text s 0 false => Opt.Some.{ f64_to_f32 (str_to_real s) } else Opt.None,
 }
 
 # ---- complex numbers ----
@@ -1005,11 +1014,11 @@ $ Opt : (t: @Type) -> @Type = @union
 
 # A type whose values count as good or bad joins with an instance mapping each
 # value to a `Result`: the good case and what it carries become `Ok`, the bad case
-# `Err`. A `@Bool` is `Ok {}` or `Err {}`; an `Opt` is `Ok` its payload or
+# `Err`. A `Bool` is `Ok {}` or `Err {}`; an `Opt` is `Ok` its payload or
 # `Err {}`.
 $ IToResult : (c: @Type) -> (t: @Type) -> (e: @Type) -> @Type = @struct to_result: c -> Result t e,
 
-$ impl_IToResult_for_bool : IToResult @Bool {} {} =
+$ impl_IToResult_for_bool : IToResult Bool {} {} =
     .{ .to_result = \c => if c => Result.Ok.{ {} } else Result.Err.{ {} } }
 
 $ impl_IToResult_for_Result : @ctx { t: @Type, e: @Type } -> IToResult (Result t e) t e =
@@ -1029,7 +1038,7 @@ $ when : @ctx { c: @Type, t: @Type, e: @Type, r: @Row } -> @use { d: IToResult c
 # ---- quotations ----
 # A string literal expected as `@Code` is a quotation: its text is source code,
 # checked where it is spliced. Its holes are evaluated in the generator: a
-# `@Code` hole pastes its source as is, and a number, `@Bool` or `@Str` hole
+# `@Code` hole pastes its source as is, and a number, `Bool` or `@Str` hole
 # pastes the literal that spells its value. With `n = 3` and `s = "hi"`, the
 # quotation `"f ?(n) ?(s)"` is the code `f 3 "hi"`. A name is code, so a
 # generator pastes a computed one with `?(@code name)`.
@@ -1048,26 +1057,26 @@ $ impl_IInterpHole_for_code_nat : @IInterpHole @Code @Nat =
     .{ .hole = \c n => @code_text c (to_string n) }
 $ impl_IInterpHole_for_code_float64 : @IInterpHole @Code @Float64 =
     .{ .hole = \c x => @code_text c (to_string x) }
-$ impl_IInterpHole_for_code_bool : @IInterpHole @Code @Bool =
-    .{ .hole = \c b => @code_text c (if b => "@true" else "@false") }
+$ impl_IInterpHole_for_code_bool : @IInterpHole @Code Bool =
+    .{ .hole = \c b => @code_text c (if b => "Bool.True" else "Bool.False") }
 $ impl_IInterpHole_for_code_str : @IInterpHole @Code @Str =
     .{ .hole = \c s => @code_text c (@str_literal s) }
 
 # ---- macro arguments ----
 # A string literal expected as a `Template` is a macro argument: its pieces stay
 # text and its holes are quoted, not evaluated, since they name what is in scope
-# where the literal is written. For `&sql "WHERE id = ?(id)"` the macro gets
+# where the literal is written. For `!sql "WHERE id = ?(id)"` the macro gets
 # `pieces = ["WHERE id = ", ""]` and `holes` holding the code `id`, which it
 # can splice back or type with `@check`.
 $ Template : @Type = @struct pieces: @Vec @Str, holes: @Vec @Code
 $ impl_IStrLit_for_Template : @IStrLit Template =
     .{ .of_str = \s => .{ .pieces = [s], .holes = [] } }
 
-# A compile-time check, run as `$ &assert ok msg`. A false condition aborts
+# A compile-time check, run as `$ !assert ok msg`. A false condition aborts
 # the build with `msg`, so a module states its own invariants and checking it is
 # testing it. It returns empty code, so the directive inserts nothing. `@abort`
 # carries `<@Meta>`, so `assert` does too and cannot run at run time by accident.
-$ assert : @Bool -> @Str -> <@Meta> @Code = \ok msg => if ok => "" else @abort msg
+$ assert : Bool -> @Str -> <@Meta> @Code = \ok msg => if ok => "" else @abort msg
 
 # ---- internal recursion workers ----
 # The accumulator loops the public `to_string` / `from_str` / `vcons` / `range`

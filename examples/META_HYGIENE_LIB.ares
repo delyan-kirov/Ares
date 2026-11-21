@@ -22,4 +22,4 @@ $ with_it : @Code -> @Code -> @Code = \v body => "let ?(it) = ?(v) in ?(body)"
 
 $ test : @Int = 0
 
-$ &assert (test == 0) "META_HYGIENE_LIB: a check failed"
+$ !assert (test == 0) "META_HYGIENE_LIB: a check failed"

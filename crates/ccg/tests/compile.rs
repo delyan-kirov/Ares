@@ -284,19 +284,19 @@ fn scalar_serialization_matches_interpreter() {
         ("$ a : @Str = to_string 1234", "a"),
         ("$ a : @Str = to_string (0 - 42)", "a"),
         ("$ a : @Str = to_string (let n : @Nat = 250 in n)", "a"),
-        ("$ a : @Bool = (from_str (to_string 1234)) == Opt.Some.{ 1234 }", "a"),
+        ("$ a : Bool = (from_str (to_string 1234)) == Opt.Some.{ 1234 }", "a"),
         (
-            "$ a : @Bool = let n : @Int32 = (from_str \"77\" |> \\ | Opt.Some.{ v } => v | _ => 0) in (to_string n) == \"77\"",
+            "$ a : Bool = let n : @Int32 = (from_str \"77\" |> \\ | Opt.Some.{ v } => v | _ => 0) in (to_string n) == \"77\"",
             "a",
         ),
-        ("$ a : @Bool = (from_str \"true\") == Opt.Some.{ 1 == 1 }", "a"),
+        ("$ a : Bool = (from_str \"true\") == Opt.Some.{ 1 == 1 }", "a"),
         // Floats serialize via the C runtime seam (`arx_real_to_str` /
         // `arx_f32_to_str` + libc `atof`); the shortest-decimal rule must render
         // identically on both engines.
         ("$ a : @Str = to_string (let x : @Float64 = 3.5 in x)", "a"),
         ("$ a : @Str = to_string (let x : @Float32 = (from_str \"0.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in x)", "a"),
         (
-            "$ a : @Bool = let x : @Float64 = 2.25 in (from_str (to_string x)) == Opt.Some.{ x }",
+            "$ a : Bool = let x : @Float64 = 2.25 in (from_str (to_string x)) == Opt.Some.{ x }",
             "a",
         ),
     ] {
@@ -393,8 +393,8 @@ fn arithmetic_and_precedence() {
 fn short_circuit_and_or() {
     // `&&`/`||` desugar to a lazy `if`; the C backend matches the interpreter.
     let src = "$ @mod T\n\
-               $ f : @Bool = @false\n\
-               $ t : @Bool = @true\n\
+               $ f : Bool = false\n\
+               $ t : Bool = true\n\
                $ a : @Int = if (t && 3 < 5) => 1 else 0\n\
                $ b : @Int = if (f || 5 < 3) => 1 else 0\n\
                $ test : @Int = a\n";
@@ -410,8 +410,8 @@ fn one_operation_over_two_types_matches_interpreter() {
                $ IKind : (t: @Type) -> @Type = @struct kind: t -> @Int,\n\
                $ kind : @ctx {t: @Type} -> @use {d: IKind t} -> t -> @Int = \\x => d.kind x\n\
                $ kind_int : IKind @Int = .{ .kind = \\x => 1 }\n\
-               $ kind_bool : IKind @Bool = .{ .kind = \\b => 2 }\n\
-               $ test : @Int = (kind 7) + (kind @true) * 10\n";
+               $ kind_bool : IKind Bool = .{ .kind = \\b => 2 }\n\
+               $ test : @Int = (kind 7) + (kind true) * 10\n";
     assert_matches(src, "test");
 }
 
@@ -421,7 +421,7 @@ fn ctx_context_parameter_passing() {
     // instance built from another instance to a nested one; the C backend must do it
     // exactly as the interpreter does.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
@@ -1017,7 +1017,7 @@ fn effects_multi_shot_through_a_stored_continuation() {
                $ Co : @Type = @effect step : @Int -> {},\n\
                $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
                $ spawn : ({} -> <Co> {}) -> Task =\n\
-               \t\\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
+               \t\\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
                $ drive : Task -> @Int =\n\
                \t\\t => t |> \\ | Task.Fin.{} => 0 | Task.Susp.{ v, k } => v + drive (k {}) | _ => 0\n\
                $ test : @Int = spawn (\\_ => let _ = step 1 in (let _ = step 2 in {})) |> \\\n\
@@ -1209,7 +1209,7 @@ fn walking_a_lazy_list_stops_early() {
                \tl |> \\ | List.Cons.{ x, t } => (if x > 5 => {} else (Acc.add x; walk t)) | _ => {}\n\
                $ test : @Int =\n\
                \tdo walk (from 1)\n\
-               \tctl k | Acc.add n => n + k {}\n\
+               \tis k | Acc.add n => n + k {}\n\
                \t      | r => 0\n";
     assert_matches(src, "test");
 }
@@ -1350,7 +1350,7 @@ const PAR_RESUME_SRC: &str = "$ @mod M\n\
     $ Yield : @Type = @effect yield : @Int -> {},\n\
     $ Gen : @Type = @union Done: {}, More: {@Int, {} -> Gen},\n\
     $ gen : ({} -> <Yield> {}) -> Gen = \\t =>\n\
-    \tdo t {} ctl k | Yield.yield v => Gen.More.{ v, k } | _ => Gen.Done.{}\n\
+    \tdo t {} is k | Yield.yield v => Gen.More.{ v, k } | _ => Gen.Done.{}\n\
     $ count : @Int -> @Int -> <Yield> {} = \\i n => if i > n => {} else (Yield.yield i; count (i + 1) n)\n\
     $ sum : Gen -> @Int -> @Int = \\g acc => g |> \\ | Gen.More.{ v, k } => sum (k {}) (acc + v) | _ => acc\n\
     $ twice : Gen -> @Int = \\g => g |> \\ | Gen.More.{ v, k } => sum (k {}) 0 + sum (k {}) 0 | _ => 0\n\
@@ -1466,15 +1466,15 @@ fn direct_functions_match_interpreter() {
                $ Acc : @Type = @effect add : @Int -> {},\n\
                $ fib : @Int -> @Int = \\n => if n < 2 => n else fib (n - 1) + fib (n - 2)\n\
                $ go : @Int -> @Int -> @Int = \\i acc => if i == 0 => acc else go (i - 1) (acc + i % 7)\n\
-               $ even : @Int -> @Bool = \\n => if n == 0 => @true else odd (n - 1)\n\
-               $ odd : @Int -> @Bool = \\n => if n == 0 => @false else even (n - 1)\n\
+               $ even : @Int -> Bool = \\n => if n == 0 => true else odd (n - 1)\n\
+               $ odd : @Int -> Bool = \\n => if n == 0 => false else even (n - 1)\n\
                $ sumto : @Int -> @Int = \\n => if n == 0 => 0 else n + sumto (n - 1)\n\
                $ len : List @Int -> @Int -> @Int = \\l n => l |> \\ | [] => n | x :: xs => len xs (n + x / 2)\n\
                $ upto : @Int -> List @Int = \\n => if n == 0 => [] else n :: upto (n - 1)\n\
                $ tell : @Int -> <Acc> @Int = \\n => if n == 0 => 0 else Acc.add n; tell (n - 1)\n\
                $ test : @Int =\n\
                \tlet e = if even 50001 => 1 else 0 in\n\
-               \tlet t = do tell 100 ctl k | Acc.add n => n + k {} | r => r in\n\
+               \tlet t = do tell 100 is k | Acc.add n => n + k {} | r => r in\n\
                \tfib 15 + go 20000 0 + e + sumto 50000 + len (upto 2000) 0 + t\n";
     assert_matches(src, "test");
     let code = ccg::emit(&lower(src), "test", ccg::Entry::Show, utilities::Target::host());

@@ -116,15 +116,15 @@ pub fn desugar_program(
                     ctx_globals.push(*name);
                 }
             }
-            // `$ &<expr>`: back it with a synthetic global, forced at compile
+            // `$ !<expr>`: back it with a synthetic global, forced at compile
             // time by the driver. The name is bare here (index-tagged so several
-            // `&`s in one module never collide); `lower_modules` prefixes the
+            // `!`s in one module never collide); `lower_modules` prefixes the
             // module, and the driver qualifies the same way to force it.
             Item::Run(expr, span) => {
                 let name = StrId::intern(&format!("@splice#{}", ct_runs.len()));
                 let term = if lw.resolved.deferred_sites.contains(expr) {
                     lw.deferred.push(name);
-                    lw.fault("this `&` waits for a generated declaration")
+                    lw.fault("this `!` waits for a generated declaration")
                 } else {
                     lw.watched(name, |lw| lw.operand(*expr))
                 };
@@ -158,27 +158,27 @@ pub fn desugar_program(
             _ => {}
         }
     }
-    // Expression-position `&X` synthetic globals accumulated while lowering the
+    // Expression-position `!X` synthetic globals accumulated while lowering the
     // bodies above; append them and record (name, source-span) for the driver to
     // fold/splice.
     let ct_evals: Vec<(StrId, Span)> =
         lw.meta_evals.iter().map(|(n, _, s)| (*n, *s)).collect();
     globals.extend(lw.meta_evals.drain(..).map(|(n, body, _)| (n, body)));
-    // Type-position `&X` synthetic globals, same treatment as `ct_evals` but the
+    // Type-position `!X` synthetic globals, same treatment as `ct_evals` but the
     // driver splices the result as type source rather than a value literal.
     let ct_types: Vec<(StrId, Span)> =
         lw.meta_type_evals.iter().map(|(n, _, s)| (*n, *s)).collect();
     globals.extend(lw.meta_type_evals.drain(..).map(|(n, body, _)| (n, body)));
-    // Pattern-position `&X` synthetic globals, spliced as pattern source.
+    // Pattern-position `!X` synthetic globals, spliced as pattern source.
     let ct_patterns: Vec<(StrId, Span)> =
         lw.meta_pat_evals.iter().map(|(n, _, s)| (*n, *s)).collect();
     globals.extend(lw.meta_pat_evals.drain(..).map(|(n, body, _)| (n, body)));
-    // Effect-row `<&X>` synthetic globals, spliced as row entries.
+    // Effect-row `<!X>` synthetic globals, spliced as row entries.
     let ct_rows: Vec<(StrId, Span)> =
         lw.meta_row_evals.iter().map(|(n, _, s)| (*n, *s)).collect();
     globals.extend(lw.meta_row_evals.drain(..).map(|(n, body, _)| (n, body)));
     // `$ @build : {} -> <@Meta, @IO> @Code`: back the call `@build {}` with a
-    // synthetic global so the driver can force it exactly as it forces an `$ &`.
+    // synthetic global so the driver can force it exactly as it forces an `$ !`.
     // The reference is module-qualified because several modules may each define
     // their own `@build`, and a bare global lookup resolves root-first.
     let ct_build = if globals.iter().any(|(n, _)| *n == crate::BUILD) {
@@ -227,22 +227,22 @@ struct Desugarer<'a> {
     names: FreshNames,
     /// The Core being built.
     terms: Terms,
-    /// Synthetic globals for expression-position `&X`: each `&X` becomes a
+    /// Synthetic globals for expression-position `!X`: each `!X` becomes a
     /// global `@splice_expr#n = X` that the driver forces at compile time, with the
-    /// source span of the whole `&X` so the driver can substitute the result's
+    /// source span of the whole `!X` so the driver can substitute the result's
     /// source there and re-compile. Drained by [`desugar_program`] into
     /// `Program.globals` / `Program.ct_evals`.
     meta_evals: Vec<(StrId, Aol<Term>, Span)>,
-    /// Synthetic globals for type-position `&X` (`Foo : &X = ...`), each a
+    /// Synthetic globals for type-position `!X` (`Foo : !X = ...`), each a
     /// global `@splice_type#n = X` forced at compile time; the driver splices the
-    /// resulting `@Code`'s type source at the `&X` span and re-compiles. Drained
+    /// resulting `@Code`'s type source at the `!X` span and re-compiles. Drained
     /// by [`desugar_program`] into `Program.globals` / `Program.ct_types`.
     meta_type_evals: Vec<(StrId, Aol<Term>, Span)>,
-    /// Synthetic globals for pattern-position `&X`, each `@splice_pat#n = X`; the
+    /// Synthetic globals for pattern-position `!X`, each `@splice_pat#n = X`; the
     /// driver splices the resulting `@Code`'s pattern source at the span. Drained
     /// by [`desugar_program`] into `Program.globals` / `Program.ct_patterns`.
     meta_pat_evals: Vec<(StrId, Aol<Term>, Span)>,
-    /// Synthetic globals for effect-row `<&X>`, each `@splice_row#n = X`; the
+    /// Synthetic globals for effect-row `<!X>`, each `@splice_row#n = X`; the
     /// driver splices the resulting `@Code`'s entries at the span. Drained by
     /// [`desugar_program`] into `Program.globals` / `Program.ct_rows`.
     meta_row_evals: Vec<(StrId, Aol<Term>, Span)>,
@@ -250,7 +250,7 @@ struct Desugarer<'a> {
     reached_deferred: bool,
     /// The globals that did, drained into `Program.deferred`.
     deferred: Vec<StrId>,
-    /// How many `&` operands enclose what is being lowered. A quotation in one
+    /// How many `!` operands enclose what is being lowered. A quotation in one
     /// is written where its code lands, so it is left unmarked.
     in_splice: u32,
 }
@@ -261,12 +261,12 @@ struct Desugarer<'a> {
 // name, a missing instance) unresolved, because a generator that has not run may
 // still supply it. Lowering then emits the site without what it lacks: a call
 // with no instance argument, a reference to a global that does not exist. Code
-// like that runs wrong in whatever way the gap produces, so a `&` that ran it
+// like that runs wrong in whatever way the gap produces, so a `!` that ran it
 // would fault with a message unrelated to the cause ("no field `c`"), or worse,
 // succeed and splice code computed from a wrong value.
 //
 // So every global whose body holds a deferred site is recorded in
-// `Program.deferred`, and the driver does not run a `&` whose global reaches
+// `Program.deferred`, and the driver does not run a `!` whose global reaches
 // one through the globals it references. The site waits like a faulting one: a
 // later round, after some generator supplied what was missing, runs it against
 // the resolved code. When a round makes no progress, the strict check reports
@@ -355,7 +355,7 @@ impl<'a> Desugarer<'a> {
         (term, reached)
     }
 
-    /// Lower the operand of a `&`.
+    /// Lower the operand of a `!`.
     fn operand(&mut self, e: Aol<Expr>) -> Aol<Term> {
         self.in_splice += 1;
         let term = self.expr(e);
@@ -363,7 +363,7 @@ impl<'a> Desugarer<'a> {
         term
     }
 
-    /// A quotation's code, marked as written in this module unless a `&` operand
+    /// A quotation's code, marked as written in this module unless a `!` operand
     /// encloses it. See Note [Quotation scopes] in `interpreter::machine::data`.
     fn quotation(&mut self, e: Aol<Expr>, code: Aol<Term>) -> Aol<Term> {
         if self.in_splice > 0 || !self.resolved.quotations.contains(&e) {
@@ -609,7 +609,7 @@ impl<'a> Desugarer<'a> {
                 let code = self.expr(chosen);
                 self.quotation(e, code)
             }
-            // `&X` in expression position: run X at compile time and embed its
+            // `!X` in expression position: run X at compile time and embed its
             // result here (see `lower_meta_e`).
             Expr::Splice(arg) => {
                 let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
@@ -1094,7 +1094,7 @@ impl<'a> Desugarer<'a> {
         Some(self.field(base, field))
     }
 
-    /// Lower an expression-position `&arg`: `arg` becomes a synthetic global the
+    /// Lower an expression-position `!arg`: `arg` becomes a synthetic global the
     /// driver forces at compile time and splices the result in for, and this
     /// site references that global.
     fn lower_meta_e(&mut self, arg: Aol<Expr>, span: Span) -> Aol<Term> {
@@ -1111,10 +1111,10 @@ impl<'a> Desugarer<'a> {
         matches!(self.node(f), Expr::Var { module: None, name } if self.text(*name) == "@cast")
     }
 
-    /// Walk a signature type, turning each type-position `&X` into a synthetic
+    /// Walk a signature type, turning each type-position `!X` into a synthetic
     /// global (`@splice_type#n = X`) forced at compile time; the node's span is recorded
     /// so the driver splices the resulting type source there. Recurses through
-    /// every type sub-position an annotation can nest a `&` in.
+    /// every type sub-position an annotation can nest a `!` in.
     fn collect_meta_types(&mut self, ty: Aol<Ty>) {
         match self.tnode(ty) {
             Ty::Term(_) => {}
@@ -1158,8 +1158,8 @@ impl<'a> Desugarer<'a> {
         }
     }
 
-    /// The type arguments of an effect row's entries (`<Chan (&X)>`).
-    /// A declaration's `&X` entries, each a synthetic global whose code the
+    /// The type arguments of an effect row's entries (`<Chan (!X)>`).
+    /// A declaration's `!X` entries, each a synthetic global whose code the
     /// driver splices bare in place of the entry, as for a row entry. `what` is
     /// `fields` or `variants`, which the name carries for the driver.
     fn collect_entry_splices(&mut self, what: &str, splices: &[EntrySplice]) {
@@ -1468,6 +1468,9 @@ impl<'a> Desugarer<'a> {
             Some((u, ns)) => (u, ns.to_vec()),
             None => (ty.unwrap_or(none), Vec::new()),
         };
+        if let Some(b) = bool_tag(union, tag) {
+            return self.add(Term::Bool(b));
+        }
 
         let arity = names.len().max(fields.len());
         let mut slots: Vec<Option<Aol<Term>>> = (0..arity).map(|_| None).collect();
@@ -1606,9 +1609,9 @@ impl<'a> Desugarer<'a> {
     fn pat(&mut self, p: Aol<Pattern>) -> Pat {
         match self.pnode(p) {
             Pattern::Wild => Pat::Wild,
-            // `&X`: `X` becomes a synthetic global the driver forces, splicing
+            // `!X`: `X` becomes a synthetic global the driver forces, splicing
             // the pattern source it returns here. Until then the match cannot be
-            // run, so the enclosing global counts as deferred and no `&` runs it.
+            // run, so the enclosing global counts as deferred and no `!` runs it.
             Pattern::MetaE(e) => {
                 let e = *e;
                 let span = self.ast.pat_span(p).unwrap_or_else(|| Span::at(0));
@@ -1625,7 +1628,6 @@ impl<'a> Desugarer<'a> {
             Pattern::Int(n) => self.pat_hook_eq(p, Term::Int(*n)).unwrap_or(Pat::Int(*n)),
             Pattern::Real(r) => self.pat_hook_eq(p, Term::Real(*r)).unwrap_or(Pat::Real(*r)),
             Pattern::Str(s) => self.pat_hook_eq(p, Term::Str(*s)).unwrap_or(Pat::Str(*s)),
-            Pattern::Bool(b) => Pat::Bool(*b),
             Pattern::Range { lo, hi } => Pat::Range {
                 lo: self.range_bound(*lo),
                 hi: hi.map(|h| self.range_bound(h)),
@@ -1676,10 +1678,11 @@ impl<'a> Desugarer<'a> {
                 ty, tag, fields, ..
             } => {
                 let (tag, ty) = (*tag, *ty);
-                let names = self
-                    .resolved
-                    .declarations
-                    .variant(self.module, &self.imports, ty, tag)
+                let found = self.resolved.declarations.variant(self.module, &self.imports, ty, tag);
+                if let Some(b) = found.and_then(|(u, _)| bool_tag(u, tag)) {
+                    return Pat::Bool(b);
+                }
+                let names = found
                     .map(|(_, ns)| ns.to_vec())
                     .or_else(|| {
                         ty.and_then(|t| self.resolved.declarations.fields_of(self.module, &self.imports, t))
@@ -1746,6 +1749,19 @@ impl<'a> Desugarer<'a> {
             }
         }
         slots
+    }
+}
+
+/// The machine boolean a constructor of CORE's `Bool` stands for. The engines
+/// hold `Bool` as a scalar, so `Bool.True` lowers to the literal, not a variant.
+fn bool_tag(union: StrId, tag: StrId) -> Option<bool> {
+    if union.as_str() != crate::typing::types::BOOL {
+        return None;
+    }
+    match tag.as_str() {
+        "True" => Some(true),
+        "False" => Some(false),
+        _ => None,
     }
 }
 

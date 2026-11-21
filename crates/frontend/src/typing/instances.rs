@@ -90,7 +90,7 @@ impl<'a> Checker<'a> {
             _ => vec![zonked],
         };
         for (i, part) in parts.into_iter().enumerate() {
-            // An unspliced `&` stands as a fresh variable until expansion.
+            // An unspliced `!` stands as a fresh variable until expansion.
             if fields.get(i).is_some_and(|f| f.ctx || matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
                 continue;
             }

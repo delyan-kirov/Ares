@@ -24,7 +24,7 @@ $ ck_zero : @Int = if (next (ARES.seed 0)).0 == 48271 => 0 else 1
 $ draws : @Vec @Int = draw_n (ARES.seed 42) 50
 $ draw_n : Rng -> @Int -> @Vec @Int = \g n =>
     if n <= 0 => [] else let d = next_below 10 g in d.0 :: draw_n d.1 (n - 1)
-$ ck_below : @Int = if all (\x => if x >= 0 => x < 10 else @false) draws => 0 else 1
+$ ck_below : @Int = if all (\x => if x >= 0 => x < 10 else false) draws => 0 else 1
 $ ck_spread : @Int = if (maximum 0 draws) > (minimum 9 draws) => 0 else 1
 
 $ ck_range : @Int =
@@ -33,4 +33,4 @@ $ ck_range : @Int =
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int = ck_first + ck_second + ck_neg + ck_zero + ck_below + ck_spread + ck_range
 
-$ &assert (test == 0) "STDLIB_RANDOM: a check failed"
+$ !assert (test == 0) "STDLIB_RANDOM: a check failed"

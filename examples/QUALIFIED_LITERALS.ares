@@ -13,4 +13,4 @@ $ cube : L.Box = L.Box.{ 1, 1, 1 }
 $ volume : L.Box -> @Int = \b => b |> \ | L.Box.{ .w = w, .h = h, .depth = d } => w * h * d
 
 $ test : @Int = (volume box - 24) + (volume cube - 1)
-$ &assert (test == 0) "QUALIFIED_LITERALS: a check failed"
+$ !assert (test == 0) "QUALIFIED_LITERALS: a check failed"

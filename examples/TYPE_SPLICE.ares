@@ -1,8 +1,8 @@
 $ @mod TYPE_SPLICE
 
 # \file TYPE_SPLICE.ares
-# \info Copying members between declarations with a `&` entry. A `@struct` or
-#       `@union` entry `&X` runs `X` at build time, and the fields or variants
+# \info Copying members between declarations with a `!` entry. A `@struct` or
+#       `@union` entry `!X` runs `X` at build time, and the fields or variants
 #       its `@Code` spells take the entry's place. DERIVE's `fields_of "Point"` and `variants_of "Base"`
 #       build them from a declared type, so a type can repeat another's members
 #       ahead of (or among) its own. It is a copy, no relationship: `Point3` is
@@ -16,21 +16,21 @@ $ @import ARESxVEC
 $ @import TYPE_SPLICE_LIB
 
 $ Point : @Type = @struct x: @Int, y: @Int
-$ Point3 : @Type = @struct &ARES.fields_of "Point", z: @Int     # x, y, then z
-$ Located : @Type = @struct &ARES.fields_of "Point3", tag: @Int # x, y, z, tag
+$ Point3 : @Type = @struct !ARES.fields_of "Point", z: @Int     # x, y, then z
+$ Located : @Type = @struct !ARES.fields_of "Point3", tag: @Int # x, y, z, tag
 
 $ Base : @Type = @union Red: {}, Green: {}
-$ Color : @Type = @union &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
+$ Color : @Type = @union !ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 
 # A generic struct, copied over the new type's own parameter.
 $ Pair : (a: @Type) -> @Type = @struct fst: a, snd: a
-$ Labeled : (b: @Type) -> @Type = @struct label: @Str, &ARES.fields_of "Pair b"
+$ Labeled : (b: @Type) -> @Type = @struct label: @Str, !ARES.fields_of "Pair b"
 
 # Any generator can build the entries: here, one field per name. `@code`
 # turns computed text into code; the struct checks it spells fields.
 $ counters : @Vec @Str -> @Code = \names =>
     @code <| ARES.join_nonempty ", " <| fmap (\n => n ++ ": @Int") names
-$ Stats : @Type = @struct &counters ["hits", "misses"]
+$ Stats : @Type = @struct !counters ["hits", "misses"]
 
 $ rank : Color -> @Int = \c =>
     c |> \
@@ -56,4 +56,4 @@ $ ck_import : @Int = if box.w * box.h * box.depth == 24 => 0 else 16
 
 $ test : @Int = ck_struct + ck_union + ck_generic + ck_gen + ck_import
 
-$ &assert (test == 0) "TYPE_SPLICE: a check failed"
+$ !assert (test == 0) "TYPE_SPLICE: a check failed"

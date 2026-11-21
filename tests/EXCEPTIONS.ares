@@ -36,7 +36,7 @@ $ exceptions : @Vec Exception = [
 ]
 
 # Whether the corpus skips `module` on `os`.
-$ skipped : @Str -> @Str -> @Bool = \os module =>
+$ skipped : @Str -> @Str -> Bool = \os module =>
     any (\e => e.os == os && e.module == module) exceptions
 
 # The exceptions that apply on `os`.

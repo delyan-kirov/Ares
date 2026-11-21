@@ -84,7 +84,7 @@ $ impl_IFold_for_Map : @ctx { k: @Type, v: @Type, a: @Type }
     -> IFold (Map k v) a (a -> k -> v -> a) =
     .{ .fold = \f acc m => tfold f acc m.root }
 $ impl_IFilter_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k }
-    -> IFilter (Map k v) (k -> v -> @Bool) =
+    -> IFilter (Map k v) (k -> v -> Bool) =
     .{
         .filter = \p m => tfold (\acc k v => if p k v => insert k v acc else acc) empty_map m.root,
     }
@@ -100,7 +100,7 @@ $ @private
 
 $ empty_map : @ctx { k: @Type, v: @Type } -> Map k v = Map.{ .count = 0, .root = Tree.Leaf }
 
-$ map_has : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> Map k v -> k -> @Bool = \m k =>
+$ map_has : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> Map k v -> k -> Bool = \m k =>
     is_some (tget k m.root)
 
 $ Tree : (k: @Type) -> (v: @Type) -> @Type = @union

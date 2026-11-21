@@ -18,7 +18,7 @@ $ @import SH
 
 $ Issue : @Type = @struct
     title: @Str,
-    open: @Bool,
+    open: Bool,
 
 # `Unreachable` is the host not answering (offline, CLI missing or logged
 # out), as opposed to the issue not existing.
@@ -52,7 +52,12 @@ $ with_forge : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> 
     let named = output "git config --get thrax.forge" in
     let remote = output "git remote get-url origin 2>/dev/null" in
     let host =
-        if !(is_empty named) => named else if ARES.contains "github.com" remote => "github" else ""
+        if not (is_empty named) =>
+            named
+        else if ARES.contains "github.com" remote =>
+            "github"
+        else
+            ""
     in
     host |> \
         | "github"  => github body
@@ -62,7 +67,7 @@ $ with_forge : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> 
 
 $ github : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     do body {}
-    ctl k
+    is k
     | Forge.issue n            => k (gh_issue n)
     | Forge.create_issue title => k (gh_create_issue title)
     | Forge.pr branch          => k (gh_pr branch)
@@ -72,7 +77,7 @@ $ github : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = 
 # No host: issues go unchecked and nothing can be opened.
 $ offline : @ctx { t: @Type } -> ({} -> <Forge, @IO, Fail> t) -> <@IO, Fail> t = \body =>
     do body {}
-    ctl k
+    is k
     | Forge.issue n            => k Lookup.Unreachable
     | Forge.create_issue title => Fail.fail "no forge to open an issue on (thrax.forge is offline)"
     | Forge.pr branch          => k Pr.Absent

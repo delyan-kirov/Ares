@@ -37,7 +37,6 @@ pub enum Ctor {
         index: usize,
         siblings: Rc<[(StrId, usize)]>,
     },
-    Bool(bool),
     /// The end of a sequence (`[]`, the view's `Empty`).
     SeqEmpty,
     /// One step of a sequence (`h :: t`, the view's `More`): the element, then the
@@ -95,7 +94,7 @@ impl Ctor {
     fn arity(&self) -> usize {
         match self {
             Ctor::Variant { index, siblings, .. } => siblings[*index].1,
-            Ctor::Bool(_) | Ctor::SeqEmpty | Ctor::Lit(_) | Ctor::Int { .. } => 0,
+            Ctor::SeqEmpty | Ctor::Lit(_) | Ctor::Int { .. } => 0,
             Ctor::SeqMore => 2,
             Ctor::Product { fields, .. } => fields.len(),
         }
@@ -106,7 +105,6 @@ impl Ctor {
             (Ctor::Variant { union: u, index: i, .. }, Ctor::Variant { union: v, index: j, .. }) => {
                 u == v && i == j
             }
-            (Ctor::Bool(a), Ctor::Bool(b)) => a == b,
             (Ctor::SeqEmpty, Ctor::SeqEmpty) | (Ctor::SeqMore, Ctor::SeqMore) => true,
             (Ctor::Lit(a), Ctor::Lit(b)) => a == b,
             (Ctor::Int { lo: a, hi: b, .. }, Ctor::Int { lo: c, hi: d, .. }) => a == c && b == d,
@@ -120,7 +118,7 @@ impl Ctor {
     fn same_family(&self, other: &Ctor) -> bool {
         match (self, other) {
             (Ctor::Variant { union: u, .. }, Ctor::Variant { union: v, .. }) => u == v,
-            (Ctor::Bool(_), Ctor::Bool(_)) | (Ctor::Lit(_), Ctor::Lit(_)) => true,
+            (Ctor::Lit(_), Ctor::Lit(_)) => true,
             (Ctor::Int { .. }, Ctor::Int { .. }) => true,
             (Ctor::SeqEmpty | Ctor::SeqMore, Ctor::SeqEmpty | Ctor::SeqMore) => true,
             (Ctor::Product { .. }, Ctor::Product { .. }) => true,
@@ -139,7 +137,6 @@ impl Ctor {
                     siblings: siblings.clone(),
                 })
                 .collect(),
-            Ctor::Bool(_) => vec![Ctor::Bool(true), Ctor::Bool(false)],
             Ctor::SeqEmpty | Ctor::SeqMore => vec![Ctor::SeqEmpty, Ctor::SeqMore],
             Ctor::Product { .. } => vec![self.clone()],
             Ctor::Lit(_) | Ctor::Int { .. } => return None,
@@ -416,7 +413,6 @@ pub fn show(p: &DPat) -> String {
                     format!("{union}.{tag}.{{ {} }}", args.join(", "))
                 }
             }
-            Ctor::Bool(b) => b.to_string(),
             Ctor::Lit(k) => k.clone(),
             // A gap reaching down to a 64-bit type's minimum is named by its top
             // value alone: any uncovered value is a witness, and that bound is noise.

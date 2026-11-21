@@ -34,7 +34,7 @@ $ reverse_onto : @ctx { t: @Type } -> List t -> List t -> List t = \acc l =>
 $ concat_map : @ctx { a: @Type, b: @Type } -> (a -> List b) -> List a -> List b = \f l =>
     l |> \ | List.Cons.{ h, t } => list_append (f h) (concat_map f t) | _ => List.Nil
 
-$ lookup : @ctx { k: @Type, v: @Type } -> (k -> @Bool) -> List { k, v } -> Opt v = \p l =>
+$ lookup : @ctx { k: @Type, v: @Type } -> (k -> Bool) -> List { k, v } -> Opt v = \p l =>
     l |> \ | List.Cons.{ h, t } => if p h.0 => Opt.Some.{ h.1 } else lookup p t | _ => Opt.None
 
 $ to_vec : @ctx { t: @Type } -> List t -> @Vec t = \l => to_vec_onto (@vec_new {}) l
@@ -50,7 +50,7 @@ $ impl_IFormap_for_List : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (List
     .{ .mapping = formap_list }
 $ impl_ILen_for_List : @ctx { t: @Type } -> ILen (List t) = .{ .len = \l => length_onto 0 l }
 $ impl_IEmpty_for_List : @ctx { t: @Type } -> IEmpty (List t) =
-    .{ .is_empty = \l => l |> \ | List.Nil => @true | _ => @false }
+    .{ .is_empty = \l => l |> \ | List.Nil => true | _ => false }
 $ impl_INth_for_List : @ctx { t: @Type } -> INth (List t) t = .{ .nth = list_nth }
 $ impl_ILast_for_List : @ctx { t: @Type } -> ILast (List t) t = .{ .last = list_last }
 $ impl_IReverse_for_List : @ctx { t: @Type } -> IReverse (List t) =
@@ -63,7 +63,7 @@ $ impl_IConcat_for_vec_of_List : @ctx { t: @Type } -> IConcat (@Vec (List t)) (L
     .{ .concat = \ls => list_concat (from_vec ls) }
 $ impl_IFmap_for_List : @ctx { a: @Type, b: @Type } -> IFmap (List a) a (List b) b =
     .{ .fmap = list_map }
-$ impl_IFilter_for_List : @ctx { t: @Type } -> IFilter (List t) (t -> @Bool) =
+$ impl_IFilter_for_List : @ctx { t: @Type } -> IFilter (List t) (t -> Bool) =
     .{ .filter = list_filter }
 $ impl_IFilterMap_for_List : @ctx { a: @Type, b: @Type } -> IFilterMap (List a) a (List b) b =
     .{ .filter_map = list_filter_map }
@@ -123,7 +123,7 @@ $ list_concat : @ctx { t: @Type } -> List (List t) -> List t = \ls =>
 $ list_map : @ctx { a: @Type, b: @Type } -> (a -> b) -> List a -> List b = \f l =>
     l |> \ | List.Cons.{ h, t } => List.Cons.{ f h, list_map f t } | _ => List.Nil
 
-$ list_filter : @ctx { t: @Type } -> (t -> @Bool) -> List t -> List t = \p l =>
+$ list_filter : @ctx { t: @Type } -> (t -> Bool) -> List t -> List t = \p l =>
     l |> \
         | List.Cons.{ h, t } => if p h => List.Cons.{ h, list_filter p t } else list_filter p t
         | _                  => List.Nil
@@ -152,21 +152,21 @@ $ list_take : @ctx { t: @Type } -> @Int -> List t -> List t = \n l =>
 $ list_drop : @ctx { t: @Type } -> @Int -> List t -> List t = \n l =>
     if n <= 0 => l else l |> \ | List.Cons.{ h, t } => list_drop (n - 1) t | _ => List.Nil
 
-$ list_take_while : @ctx { t: @Type } -> (t -> @Bool) -> List t -> List t = \p l =>
+$ list_take_while : @ctx { t: @Type } -> (t -> Bool) -> List t -> List t = \p l =>
     l |> \
         | List.Cons.{ h, t } => if p h => List.Cons.{ h, list_take_while p t } else List.Nil
         | _                  => List.Nil
 
-$ list_drop_while : @ctx { t: @Type } -> (t -> @Bool) -> List t -> List t = \p l =>
+$ list_drop_while : @ctx { t: @Type } -> (t -> Bool) -> List t -> List t = \p l =>
     l |> \ | List.Cons.{ h, t } => if p h => list_drop_while p t else l | _ => List.Nil
 
-$ list_any : @ctx { t: @Type } -> (t -> @Bool) -> List t -> @Bool = \p l =>
-    l |> \ | List.Cons.{ h, t } => p h || list_any p t | _ => @false
+$ list_any : @ctx { t: @Type } -> (t -> Bool) -> List t -> Bool = \p l =>
+    l |> \ | List.Cons.{ h, t } => p h || list_any p t | _ => false
 
-$ list_all : @ctx { t: @Type } -> (t -> @Bool) -> List t -> @Bool = \p l =>
-    l |> \ | List.Cons.{ h, t } => p h && list_all p t | _ => @true
+$ list_all : @ctx { t: @Type } -> (t -> Bool) -> List t -> Bool = \p l =>
+    l |> \ | List.Cons.{ h, t } => p h && list_all p t | _ => true
 
-$ list_find : @ctx { t: @Type } -> (t -> @Bool) -> List t -> Opt t = \p l =>
+$ list_find : @ctx { t: @Type } -> (t -> Bool) -> List t -> Opt t = \p l =>
     l |> \ | List.Cons.{ h, t } => if p h => Opt.Some.{ h } else list_find p t | _ => Opt.None
 
 $ list_zip : @ctx { a: @Type, b: @Type } -> List a -> List b -> List { a, b } = \xs ys =>

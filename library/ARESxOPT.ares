@@ -4,15 +4,13 @@ $ @mod ARES
 # \info Functions over CORE's `Opt`: a value that may be absent. `Some`
 #       carries the value, `None` is the absence. An `Opt` is a container of at
 #       most one element, so it answers ARESxALGO's interfaces: `fmap`, `for`,
-#       `formap`, `filter`, the folds, `len`, `any`, ... Predicates return @Bool.
+#       `formap`, `filter`, the folds, `len`, `any`, ... Predicates return Bool.
 
 $ @import ARESxALGO
 
-$ is_some : @ctx { t: @Type } -> Opt t -> @Bool = \o =>
-    o |> \ | Opt.Some.{ _ } => @true | _ => @false
+$ is_some : @ctx { t: @Type } -> Opt t -> Bool = \o => o |> \ | Opt.Some.{ _ } => true | _ => false
 
-$ is_none : @ctx { t: @Type } -> Opt t -> @Bool = \o =>
-    o |> \ | Opt.Some.{ _ } => @false | _ => @true
+$ is_none : @ctx { t: @Type } -> Opt t -> Bool = \o => o |> \ | Opt.Some.{ _ } => false | _ => true
 
 # `unwrap_or o d`: the value inside, or `d` when absent.
 $ impl_IUnwrapOr_for_Opt : @ctx { t: @Type } -> IUnwrapOr (Opt t) t =
@@ -37,7 +35,7 @@ $ impl_IFormap_for_Opt : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (Opt a
                     (loop_step x f |> \ | LoopStep.Keep.{ y } => Opt.Some.{ y } | _ => Opt.None)
                 | _              => Opt.None,
     }
-$ impl_IFilter_for_Opt : @ctx { t: @Type } -> IFilter (Opt t) (t -> @Bool) =
+$ impl_IFilter_for_Opt : @ctx { t: @Type } -> IFilter (Opt t) (t -> Bool) =
     .{ .filter = \p o => o |> \ | Opt.Some.{ x } => (if p x => o else Opt.None) | _ => Opt.None }
 $ impl_IFilterMap_for_Opt : @ctx { a: @Type, b: @Type } -> IFilterMap (Opt a) a (Opt b) b =
     .{ .filter_map = \f o => o |> \ | Opt.Some.{ x } => f x | _ => Opt.None }
@@ -49,9 +47,9 @@ $ impl_ILen_for_Opt : @ctx { t: @Type } -> ILen (Opt t) =
     .{ .len = \o => o |> \ | Opt.Some.{ _ } => 1 | _ => 0 }
 $ impl_IEmpty_for_Opt : @ctx { t: @Type } -> IEmpty (Opt t) = .{ .is_empty = is_none }
 $ impl_IAny_for_Opt : @ctx { t: @Type } -> IAny (Opt t) t =
-    .{ .any = \p o => o |> \ | Opt.Some.{ x } => p x | _ => @false }
+    .{ .any = \p o => o |> \ | Opt.Some.{ x } => p x | _ => false }
 $ impl_IAll_for_Opt : @ctx { t: @Type } -> IAll (Opt t) t =
-    .{ .all = \p o => o |> \ | Opt.Some.{ x } => p x | _ => @true }
+    .{ .all = \p o => o |> \ | Opt.Some.{ x } => p x | _ => true }
 $ impl_IFind_for_Opt : @ctx { t: @Type } -> IFind (Opt t) t =
     .{ .find = \p o => o |> \ | Opt.Some.{ x } => (if p x => o else Opt.None) | _ => Opt.None }
 $ impl_IToList_for_Opt : @ctx { t: @Type } -> IToList (Opt t) (List t) =

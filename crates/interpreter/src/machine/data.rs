@@ -808,7 +808,7 @@ pub(crate) fn run_builtin<'p>(name: Prim, a: &[PVal<'p>]) -> Result<Value<'p>> {
             Ok(Value::Vector(Rc::new(v)))
         }
         // Metaprogramming: tokenize a string into CORE `Token` variants. A lex
-        // error is a `Diagnostic`, which propagates as a fault (fails a `&`).
+        // error is a `Diagnostic`, which propagates as a fault (fails a `!`).
         Prim::Lex => {
             let bytes = as_bytes(&a[0])?;
             let src = std::str::from_utf8(&bytes)
@@ -838,7 +838,7 @@ pub(crate) fn run_builtin<'p>(name: Prim, a: &[PVal<'p>]) -> Result<Value<'p>> {
             Ok(code_value(src))
         }
         // Parse a string as an expression fragment into opaque `@Code`. A syntax
-        // error is a `Diagnostic`, which propagates as a fault (fails a `&`).
+        // error is a `Diagnostic`, which propagates as a fault (fails a `!`).
         // The fragment is carried as its source text, which `@eval` and splicing
         // re-enter the driver's pipeline with.
         Prim::ParseStr => {
@@ -973,7 +973,7 @@ pub(crate) fn run_builtin<'p>(name: Prim, a: &[PVal<'p>]) -> Result<Value<'p>> {
         }
         // Compile-time reflection over a declared type, resolved by the driver's
         // type host (see `crate::machine::set_type_host`), reachable only inside
-        // `$ &`. A derive-style macro reads the shape and generates code for it.
+        // `$ !`. A derive-style macro reads the shape and generates code for it.
         // `@type_kind` reports `"struct"` / `"union"`; `@type_fields` the struct's
         // field names; `@type_variants` the union's `(tag, arity)` pairs. `@type_of`
         // is a global value's type.
@@ -1053,7 +1053,7 @@ pub(crate) fn run_builtin<'p>(name: Prim, a: &[PVal<'p>]) -> Result<Value<'p>> {
                 .collect();
             Ok(Value::Vector(Rc::new(items)))
         }
-        // The `&` site running now, as a CORE `Site`.
+        // The `!` site running now, as a CORE `Site`.
         Prim::Here => {
             let (file, line, column) = crate::machine::meta_site()?;
             Ok(Value::Struct {
@@ -1132,9 +1132,9 @@ pub enum Fragment {
     Type,
     Row,
     Pattern,
-    /// A struct's fields, for a `&` entry in a `@struct` declaration.
+    /// A struct's fields, for a `!` entry in a `@struct` declaration.
     Fields,
-    /// A union's variants, for a `&` entry in a `@union` declaration.
+    /// A union's variants, for a `!` entry in a `@union` declaration.
     Variants,
 }
 
@@ -1203,7 +1203,7 @@ pub fn str_literal(bytes: &[u8]) -> String {
 // pieces are marked with it (`@code_text`), and its holes keep the marks they
 // carry (`@code_cat`). Lowering wraps a quotation a module's function writes in
 // `@quote "MODULE"`, which records the scope's module in `SCOPES`. A quotation
-// in a `&` operand is written where its code lands, so lowering leaves its
+// in a `!` operand is written where its code lands, so lowering leaves its
 // scope unrecorded, and an unrecorded scope is no scope: its text reads as if
 // written at the site, as `@code` text does.
 //
@@ -1343,7 +1343,7 @@ fn token_kind_name(kind: frontend::Kind) -> &'static str {
         If => "If",
         Else => "Else",
         Do => "Do",
-        Ctl => "Ctl",
+        Is => "Is",
         Comment => "Comment",
         Eof => "Eof",
     }
