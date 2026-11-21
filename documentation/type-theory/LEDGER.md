@@ -216,6 +216,8 @@ those edges complete.
 | Quot-Intro | PT22 | Section 4.1, π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Elim | PT22, PLT25 | PT22 Section 4.1, Q-elim; the respect premise in PLT25 Section 7.6's direction | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Beta | PT22 | Section 4.1, Q-elim on π(u) | published | PT22 Quotients, Lean Consistency | - | yes |
+| Frontend-Data-Level | PLT25 | Section 4.1, the fields of an inductive definition in its universe; the frontend checker's mirror of Data-Form and Data-Ctor, for structs and unions | published | PLT25 Consistency | - | yes |
+| Frontend-Effect-Level | - | an effect's universe is the largest of its parameters' and its operations' types', and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
 
 How the deviations differ from their sources:
 
@@ -235,6 +237,17 @@ How the deviations differ from their sources:
   are that witness too.
 - **Positivity-Restricted.** A restriction of the schema, not an extension:
   no nested occurrences such as `List (D params)`.
+
+The two Frontend rows are the frontend checker's universe rules, which the
+kernel checks again for what it reads (Note [Declaration levels] in
+`crates/frontend/src/typing/unify/levels.rs`). Frontend-Data-Level mirrors
+the kernel's check of each constructor field against its type's universe,
+with two choices the kernel does not make: a bare `@Type` result is the least
+universe that holds every member, and a member's own `@ctx` type variable is a
+field in `@Type u + 1`. Frontend-Effect-Level has no source: no effect system
+in the survey (`survey/9-effects.md`) gives effects universes. It reads an
+effect as the signature of its free monad, so an operation generic in a type
+makes the effect large.
 
 Positivity-Branching admits a recursive field `(a: A) -> D params ys`, whose
 induction hypothesis is `(a: A) -> P ys (f a)`. PLT25's model covers it, but

@@ -1,6 +1,6 @@
 $ @mod UNIVERSE_INCONSISTENT
 
-# A universe holds the types below it (#538): `@Type 1` is a type at level 2,
-# so it is in `@Type 2` and every universe above, never in `@Type 1`.
+# A universe holds the types one level below it (#538): `@Type 1` is a type at level 2,
+# so it is in `@Type 2` and in no other universe (they are not cumulative).
 $ ok : @Type 2 = @Type 1
 $ bad : @Type 1 = @Type 1  #~ error[TYPE_MISMATCH]: universe level mismatch

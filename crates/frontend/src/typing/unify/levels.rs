@@ -14,7 +14,7 @@
 //! Entry points: [`Unifier::fresh_universe`], [`Unifier::level_leq`]; plain
 //! [`Unifier::unify`] comes here when both normal forms are levels.
 
-use utilities::{Code, Diagnostic, Result, Span};
+use utilities::{Code, Diagnostic, Result, Span, StrId};
 
 use std::collections::{HashMap, HashSet};
 
@@ -192,6 +192,82 @@ pub struct LevelLe {
     pub span: Option<Span>,
 }
 
+// Note [Declaration levels]
+//
+// A declared struct, union or effect lives in one universe, which depends on
+// its parameters' levels: `List t` is at the level of `t`. Its `DeclLevel`
+// gives that universe in closed form, `max(c, p1 + k1, ...)` over the
+// parameters `pi`, so `level_of` reads it for every application without
+// unfolding the declaration, and an import copies it as data.
+//
+// A bare `@Type` result is the least universe that holds every member: a
+// struct's fields, a constructor's payload, an operation's type. A member's
+// own `@ctx {a: @Type u}` variables count at `u + 1`, as the kernel's Pi and
+// constructor fields do: a constructor that stores a type is a large type,
+// and so is an effect with an operation generic in its result. A stated
+// `@Type c` result is the universe, and every member must fit in it: a member
+// at level `pi + k` bounds the parameter, `pi <= c - k`, which each use of
+// the declaration checks. Universes are not cumulative, so
+// `Box : (t: @Type) -> @Type 2` puts `Box @Int` in `@Type 2` and no other.
+// See Note [Level constraints].
+
+/// What a declared type's parameter ranges over, for its level.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ParamLevel {
+    /// `(t: @Type n)`: a type at exactly level `n`.
+    Stated(u32),
+    /// `(t: @Type)`: a type at any level, up to `at_most` when the
+    /// declaration's stated universe bounds it.
+    Free { at_most: Option<u32> },
+    /// A size, row or index, which has no level of its own.
+    Other,
+}
+
+/// A declared type's universe in closed form. See Note [Declaration levels].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DeclLevel {
+    pub params: Vec<ParamLevel>,
+    /// The universe's level, `max(konst, level(arg i) + k, ...)` for each
+    /// `(i, k)` of `terms`.
+    pub konst: u32,
+    pub terms: Vec<(usize, u32)>,
+}
+
+impl Unifier {
+    /// The level of `name` applied to `args`, by its declaration's closed
+    /// form. A parameter left unapplied adds nothing.
+    fn decl_level_of(&mut self, name: StrId, args: &[Type]) -> Option<Type> {
+        let d = self.decl_levels.get(&name)?.clone();
+        let konst = self.types.add(TypeNode::Level(d.konst));
+        let mut level = konst;
+        for (i, k) in d.terms {
+            let Some(&arg) = args.get(i) else { continue };
+            let own = self.level_of(arg);
+            let term = if k == 0 { own } else { self.types.add(TypeNode::LevelAdd(own, k)) };
+            level = self.types.add(TypeNode::LevelMax(level, term));
+        }
+        Some(level)
+    }
+
+    /// The levels of the effects a row names: each label's universe at its
+    /// arguments. A row variable, or a label whose arguments are unknown,
+    /// adds nothing; a row has no level of its own.
+    fn row_levels(&mut self, row: Type, out: &mut Vec<Type>) {
+        let mut cur = row;
+        while let TypeNode::RowExtend(label, args, rest) = self.head(cur) {
+            if let TypeNode::Tuple(items) = self.head(args) {
+                let items = self.types.items(items).to_vec();
+                if let Some(l) = self.decl_level_of(label, &items) {
+                    out.push(l);
+                }
+            } else if let Some(l) = self.decl_level_of(label, &[]) {
+                out.push(l);
+            }
+            cur = rest;
+        }
+    }
+}
+
 impl Unifier {
     /// The level a type variable stands at, if it was bound with one.
     pub fn var_level(&self, id: VarId) -> Option<Type> {
@@ -218,10 +294,11 @@ impl Unifier {
         self.level_le.len()
     }
 
-    /// The level of the universe `ty` lives in: 1 for a data type, `l + 1`
-    /// for `@Type l`, the largest of the parts for a function, tuple or
-    /// record, and a variable's own level (a fresh one, from now on its own,
-    /// when it has none).
+    /// The level of the universe `ty` lives in: `l + 1` for `@Type l`, a
+    /// declared type's own, the largest of the parts for a function (with
+    /// its effects), tuple or record, 1 for any other data type, and a
+    /// variable's own level (a fresh one, from now on its own, when it has
+    /// none). See Note [Declaration levels].
     pub fn level_of(&mut self, ty: Type) -> Type {
         let one = self.types.add(TypeNode::Level(1));
         let ty = self.resolve(ty);
@@ -238,18 +315,28 @@ impl Unifier {
                 self.set_var_level(ty, l);
                 return l;
             }
+            TypeNode::Con(name) => return self.decl_level_of(name, &[]).unwrap_or(one),
             TypeNode::App(..) => {
-                let mut parts = Vec::new();
+                let mut args = Vec::new();
                 let mut cur = ty;
                 while let TypeNode::App(head, arg) = self.types.node(self.resolve(cur)) {
-                    if !self.is_size(arg) {
-                        parts.push(arg);
-                    }
+                    args.push(arg);
                     cur = head;
                 }
-                parts
+                args.reverse();
+                if let TypeNode::Con(name) = self.head(cur) {
+                    if let Some(l) = self.decl_level_of(name, &args) {
+                        return l;
+                    }
+                }
+                args.into_iter().filter(|a| !self.is_size(*a)).collect()
             }
-            TypeNode::Arrow(from, to, _) => vec![from, to],
+            // Rule [Frontend-Effect-Level]
+            TypeNode::Arrow(from, to, eff) => {
+                let mut levels = vec![self.level_of(from), self.level_of(to)];
+                self.row_levels(eff, &mut levels);
+                return levels.into_iter().fold(one, |acc, l| self.types.add(TypeNode::LevelMax(acc, l)));
+            }
             TypeNode::Tuple(items) => self.types.items(items).to_vec(),
             TypeNode::Record(row) => {
                 let mut parts = Vec::new();
@@ -331,6 +418,21 @@ impl Unifier {
             return Err((c, self.show(c.lhs), self.show(c.rhs)));
         }
         Ok(())
+    }
+
+    /// The constraints since `mark` that bound one variable from above,
+    /// `v + k <= c`, as `(v, k, c)`.
+    pub fn upper_bounds(&self, mark: usize) -> Vec<(VarId, u32, u32)> {
+        self.level_le[mark..]
+            .iter()
+            .filter_map(|c| {
+                let (l, r) = (self.normalize_level(c.lhs), self.normalize_level(c.rhs));
+                match (l.konst, l.vars.as_slice(), r.ground()) {
+                    (0, &[(v, k)], Some(c)) => Some((v, k, c)),
+                    _ => None,
+                }
+            })
+            .collect()
     }
 
     fn drop_provable(&mut self, mark: usize) {

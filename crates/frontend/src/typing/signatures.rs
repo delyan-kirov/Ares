@@ -8,6 +8,7 @@
 //! Entry point: [`Checker::ty_of_ast`].
 
 use super::*;
+use super::unify::levels::ParamLevel;
 
 // ## Binding type variables
 
@@ -826,6 +827,45 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A written application of a declared type puts each argument at the
+    /// level its parameter takes. See Note [Declaration levels].
+    fn check_decl_args(&mut self, ty: Aol<Ty>, applied: Type) {
+        let mut written = Vec::new();
+        let mut cur = ty;
+        while let Ty::App(h, a) = self.tnode(cur) {
+            written.push(*a);
+            cur = *h;
+        }
+        written.reverse();
+        let Ty::Con { name, .. } = self.tnode(cur) else { return };
+        let Some(decl) = self.unifier.decl_levels.get(name).cloned() else { return };
+        let mut args = Vec::new();
+        let mut t = applied;
+        while let TypeNode::App(h, a) = self.unifier.types.node(t) {
+            args.push(a);
+            t = h;
+        }
+        args.reverse();
+        for ((param, &arg), &at) in decl.params.iter().zip(&args).zip(&written) {
+            let span = self.ast.ty_span(at).unwrap_or(Span::at(0));
+            match *param {
+                ParamLevel::Stated(n) => {
+                    let own = self.unifier.level_of(arg);
+                    let level = self.unifier.types.add(TypeNode::Level(n));
+                    if let Err(d) = self.unifier.unify(level, own, "in a type argument") {
+                        self.universe_errors.push(d.fill_span(span));
+                    }
+                }
+                ParamLevel::Free { at_most: Some(m) } => {
+                    let own = self.unifier.level_of(arg);
+                    let level = self.unifier.types.add(TypeNode::Level(m));
+                    self.unifier.constrain_level(own, level, Some(span));
+                }
+                ParamLevel::Free { at_most: None } | ParamLevel::Other => {}
+            }
+        }
+    }
+
     /// `(x: A) -> B` whose result names `x`: a dependent function type, which
     /// needs the elaborator of #406. Until then `x` in `B` is a type variable.
     fn dependent_arrow(&mut self, arrow: Aol<Ty>, binder: StrId, to: Aol<Ty>) {
@@ -928,7 +968,9 @@ impl<'a> Checker<'a> {
             }
             Ty::App(..) => {
                 self.check_type_arity(ty, true);
-                self.spine_of_ast(ty, tvars)
+                let applied = self.spine_of_ast(ty, tvars);
+                self.check_decl_args(ty, applied);
+                applied
             }
             // `!X` in type position: infer `X` (so its calls/overloads resolve
             // for lowering) and require it to build `@Code`; the spliced-in type is

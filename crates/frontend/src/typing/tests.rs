@@ -1494,6 +1494,45 @@ fn a_universe_has_a_level() {
     assert_eq!(type_of(any, "f"), "@Type -> @Int");
 }
 
+// Test [Frontend-Data-Level]
+#[test]
+fn a_declared_type_lives_in_the_universe_of_its_members() {
+    let applies = |src: &str| assert_eq!(errors(&format!("$ @mod T\n{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("$ @mod T\n{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ Big : @Type 2 = @struct t: @Type 1,\n$ b : @Type 2 = Big\n");
+    blocked("$ Small : @Type 1 = @struct t: @Type 1,\n", "too large for the universe `@Type 1`");
+    // A bare `@Type` is the least universe holding every member, so a
+    // parameter's level carries through.
+    applies("$ L : (t: @Type) -> @Type = @union N: {}, C: {t, L t},\n$ k : @Type 2 = L (@Type 1)\n");
+    blocked("$ L : (t: @Type) -> @Type = @union N: {}, C: {t, L t},\n$ k : @Type 1 = L (@Type 1)\n", "universe");
+    // A constructor that stores a type is large.
+    blocked("$ P : @Type = @union P: @ctx {a: @Type} -> {a} -> P,\n$ k : @Type 1 = P\n", "universe");
+    // A stated universe bounds a parameter, at a written use and a construction.
+    let boxed = "$ Box : (t: @Type) -> @Type 1 = @struct x: t,\n";
+    applies(&format!("{boxed}$ k : @Type 1 = Box @Int\n"));
+    blocked(&format!("{boxed}$ k : @Type 1 = Box (@Type 1)\n"), "universe");
+    blocked(&format!("{boxed}$ x : @Int = Box.{{ .x = @Int }} |> \\_ => 0\n"), "universe");
+}
+
+// Test [Frontend-Effect-Level]
+#[test]
+fn an_effectful_arrow_lives_with_its_effects() {
+    let count = "$ @mod T\n$ count : (t: @Type 1) -> @Int = 0\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{count}{src}")), "", "{src}");
+    let blocked = |src: &str| {
+        let e = errors(&format!("{count}{src}"));
+        assert!(e.contains("universe"), "{src}: got {e:?}");
+    };
+    applies("$ Ask : @Type = @effect ask : {} -> @Int,\n$ c : @Int = count ({} -> <Ask> @Int)\n");
+    // An operation generic in a type ranges over a universe, so its effect is large.
+    blocked("$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ c : @Int = count ({} -> <Exn> @Int)\n");
+    // An effect's arguments count.
+    blocked("$ St : (s: @Type) -> @Type = @effect get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
+}
+
 #[test]
 fn constructor_and_operation_variables_are_bound_in_their_ctx() {
     let m = "$ @mod T\n";

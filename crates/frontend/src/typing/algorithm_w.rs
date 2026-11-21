@@ -2049,7 +2049,7 @@ impl<'a> Checker<'a> {
                 Some((name, info)) => {
                     self.struct_lit_names.insert(site, name);
                     struct_name = name;
-                    let (args, subst) = self.instantiate_params(&info.params, &info.kinds);
+                    let (args, subst) = self.instantiate_params(name, &info.params, &info.kinds);
                     (info, applied(&self.unifier.types, name, &args), subst)
                 }
                 // No fresh() escape hatch: a struct literal whose type cannot be
