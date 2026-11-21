@@ -1,0 +1,4 @@
+$ @mod COUNT
+
+$ count : (t: @Type 1) -> @Int = 0
+$ again : (s: @Type) -> @Int = count s

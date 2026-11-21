@@ -1,0 +1,9 @@
+$ @mod MAIN
+
+# An imported definition brings the universe of its parameters, and the level
+# bounds its body put on them, along with its type.
+$ @import COUNT
+
+$ fine : @Int = again @Int
+$ big : @Int = count (@Type 1)  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ through : @Int = again (@Type 1)  #~ error[TYPE_MISMATCH]: universe level mismatch

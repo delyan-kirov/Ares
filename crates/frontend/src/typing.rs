@@ -171,6 +171,12 @@ pub struct Checker<'a> {
     /// Type aliases: `name -> (declared params, body)`. An applied alias is
     /// expanded by substituting its arguments for the parameters in the body.
     aliases: HashMap<StrId, (Vec<StrId>, Aol<Ty>)>,
+    /// For each alias, the level of each parameter its signature puts in a
+    /// numbered universe, `1` of `(t: @Type 1)`: an argument must fit it.
+    alias_param_levels: HashMap<StrId, Vec<Option<u32>>>,
+    /// Type arguments in the wrong universe, met while expanding an alias:
+    /// reported by the declaration being checked, or at the end of the module.
+    universe_errors: Vec<Diagnostic>,
     /// Globals of type `@Nat`, by name, with their bodies: a lowercase name in
     /// a size means one of these before a size variable, and unfolds to its
     /// value (#535).
@@ -619,6 +625,8 @@ impl<'a> Checker<'a> {
             lazy_slots: HashMap::new(),
             crepr_layouts: HashMap::new(),
             aliases: HashMap::new(),
+            alias_param_levels: HashMap::new(),
+            universe_errors: Vec::new(),
             nat_consts: HashMap::new(),
             effect_ops: HashMap::new(),
             imported_effect_ops: HashMap::new(),
@@ -832,6 +840,7 @@ impl<'a> Checker<'a> {
         self.unknown_type = saved_unknown;
         self.register_effects(program)?;
         self.check_decl_kinds(program)?;
+        self.check_alias_levels(program)?;
 
         let defs: Vec<Def> = self
             .ast
@@ -974,11 +983,16 @@ impl<'a> Checker<'a> {
         let mut types: HashMap<StrId, Type> = HashMap::new();
         for component in utilities::tarjan::strongly_connected_components(&graph) {
             let level = self.unifier.level();
+            let level_mark = self.unifier.level_mark();
             // An unknown type name met along the way is the likelier root cause
             // of whatever went wrong after it (`foo : MyTyp = .{..}` fails to
             // build a struct because `MyTyp` does not exist), so it wins.
             let checked = self.check_component(&component, &defs, &mut types);
             self.report_holes();
+            if checked.is_err() {
+                // A component that failed has no levels left to settle.
+                self.unifier.forget_levels(level_mark);
+            }
             match checked {
                 Ok(()) => self.require_signatures(&component, &defs, &types),
                 // A type still waiting on its generated entries may be what this
@@ -1000,6 +1014,7 @@ impl<'a> Checker<'a> {
         }
         self.size_pending.clear();
         self.finish_sizes();
+        self.finish_levels();
 
         let out: Vec<(StrId, Type)> =
             defs.iter().map(|d| (d.name, types[&d.name])).collect();
@@ -1090,6 +1105,7 @@ impl<'a> Checker<'a> {
     ) -> Result<()> {
         // See Note [Rémy levels].
         self.unifier.enter_level();
+        let level_mark = self.unifier.level_mark();
         let mut declared = Vec::with_capacity(component.len());
         for &i in component {
             let v = self.unifier.fresh();
@@ -1134,6 +1150,15 @@ impl<'a> Checker<'a> {
             self.check_sig_vars_rigid(vars)?;
             self.check_sig_wildcards(vars)?;
         }
+        let mut keep = HashSet::new();
+        for decl in &declared {
+            self.unifier.vars_with_levels(*decl, &mut keep);
+        }
+        if let Err((c, lhs, rhs)) = self.unifier.settle_levels(level_mark, &keep) {
+            let first = &defs[component[0]];
+            let at = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
+            return Err(universe_error(c.span.unwrap_or(at), &lhs, &rhs));
+        }
         self.unifier.leave_level();
         let mono = self.pending_vars();
         for (&i, decl) in component.iter().zip(&declared) {
@@ -1142,6 +1167,17 @@ impl<'a> Checker<'a> {
             types.insert(defs[i].name, self.unifier.zonk(*decl));
         }
         Ok(())
+    }
+
+    /// Settle the level constraints no definition took, those of types
+    /// elaborated outside any (a global's signature at registration).
+    fn finish_levels(&mut self) {
+        let mut found = std::mem::take(&mut self.universe_errors);
+        found.dedup_by(|a, b| a.to_string() == b.to_string());
+        self.errors.extend(found);
+        if let Err((c, lhs, rhs)) = self.unifier.settle_levels(0, &HashSet::new()) {
+            self.errors.push(universe_error(c.span.unwrap_or(Span::at(0)), &lhs, &rhs));
+        }
     }
 
     /// Report each member of a checked component that has no signature. A global's
@@ -1966,4 +2002,14 @@ fn mentions_error_type(d: &Diagnostic) -> bool {
     d.frames().iter().any(|f| f.msg.contains(e))
         || d.labels().iter().any(|l| l.msg.contains(e))
         || d.notes().iter().any(|n| n.contains(e))
+}
+
+/// A level constraint that cannot hold: a type too large for the universe
+/// it stands in.
+fn universe_error(span: Span, lhs: &str, rhs: &str) -> Diagnostic {
+    diag!(
+        Code::TypeMismatch, span, 0,
+        "universe inconsistency: a type at level {lhs} stands where level {rhs} is expected";
+        note: "`@Type n` is a type at level `n + 1`, and a universe holds only the types below it"
+    )
 }

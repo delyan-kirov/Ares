@@ -128,6 +128,16 @@ impl<'a> Checker<'a> {
                 Ok(self.ty_reporting(t, &mut tvars, None))
             }
             Expr::Var { module: None, name } if name.as_str() == "_" => Ok(self.unifier.fresh()),
+            Expr::Var { module: None, name } if name.as_str() == ty::UNIVERSE => Ok(self.unifier.fresh_universe()),
+            Expr::App(f, x) if matches!(self.node(f), Expr::Var { module: None, name } if name.as_str() == ty::UNIVERSE) => {
+                match *self.node(x) {
+                    Expr::Int(n) if (0..=u32::MAX as i64).contains(&n) => {
+                        let level = self.unifier.types.add(TypeNode::Level(n as u32));
+                        Ok(self.unifier.types.universe(level))
+                    }
+                    _ => Err(dependent_only(span, "a level other than a number")),
+                }
+            }
             Expr::Var { module: None, name } if self.scoped_tvars.contains_key(&name) => Ok(self.scoped_tvars[&name]),
             Expr::Var { name, .. } if self.is_known_type(name) => Ok(self.unifier.types.con(name)),
             Expr::App(f, x) => {

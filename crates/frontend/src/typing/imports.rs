@@ -173,7 +173,7 @@ impl<'a> Checker<'a> {
             if other.private_names.contains(name) {
                 continue;
             }
-            let qualified = self.import_scheme(*scheme);
+            let qualified = self.import_scheme(&other.unifier, *scheme);
             self.qualified
                 .entry(module)
                 .or_default()
@@ -257,7 +257,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let mut map = HashMap::new();
-            let bundle = self.import_ty(inst.bundle, &mut map);
+            let bundle = self.import_ty(&other.unifier, inst.bundle, &mut map);
             self.unifier.note_tensor_sizes(bundle);
             let Some(head) = self.ctx_head(self.unifier.zonk(self.bundle_parts(bundle).0)) else {
                 continue;
@@ -297,6 +297,9 @@ impl<'a> Checker<'a> {
             if let Some(a) = other.aliases.get(&name) {
                 self.aliases.insert(name, a.clone());
             }
+            if let Some(l) = other.alias_param_levels.get(&name) {
+                self.alias_param_levels.insert(name, l.clone());
+            }
         }
         // Everything the exporter's declarations can mention, so they elaborate
         // here too (#311). What this module cannot name stays hidden.
@@ -327,6 +330,9 @@ impl<'a> Checker<'a> {
             if let Some(a) = other.aliases.get(&name) {
                 self.aliases.insert(name, a.clone());
             }
+            if let Some(l) = other.alias_param_levels.get(&name) {
+                self.alias_param_levels.insert(name, l.clone());
+            }
         }
         let mut roots: Vec<Aol<Ty>> = Vec::new();
         for s in other.structs.values() {
@@ -356,7 +362,7 @@ impl<'a> Checker<'a> {
                 self.effect_kinds.insert(effect, kinds.clone());
             }
             for (&op, &scheme) in &other.effect_ops[&effect] {
-                let qualified = self.import_scheme(scheme);
+                let qualified = self.import_scheme(&other.unifier, scheme);
                 self.qualified
                     .entry(effect)
                     .or_default()
@@ -372,7 +378,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if bare {
-                let unqualified = self.import_scheme(*scheme);
+                let unqualified = self.import_scheme(&other.unifier, *scheme);
                 self.imported
                     .entry(*name)
                     .or_default()
@@ -381,7 +387,7 @@ impl<'a> Checker<'a> {
                 self.alias_values.entry(*name).or_default().extend(aliases);
             }
             for &scope in &scopes {
-                let qualified = self.import_scheme(*scheme);
+                let qualified = self.import_scheme(&other.unifier, *scheme);
                 self.qualified
                     .entry(scope)
                     .or_default()
@@ -414,21 +420,25 @@ impl<'a> Checker<'a> {
         }
     }
 
-    pub(super) fn import_scheme(&mut self, ty: Type) -> Type {
+    pub(super) fn import_scheme(&mut self, src: &Unifier, ty: Type) -> Type {
         let mut map = HashMap::new();
-        let imported = self.import_ty(ty, &mut map);
+        let imported = self.import_ty(src, ty, &mut map);
+        for (lhs, rhs, span) in src.scheme_constraints_over(&map) {
+            let (lhs, rhs) = (self.import_ty(src, src.zonk(lhs), &mut map), self.import_ty(src, src.zonk(rhs), &mut map));
+            self.unifier.add_scheme_constraint(lhs, rhs, span);
+        }
         // `import_ty` makes fresh plain generics, losing the `Nat` kind; re-mark the
         // tensor-size variables so an imported `@Tensor n a -> ...` still kind-checks.
         self.unifier.note_tensor_sizes(imported);
         imported
     }
 
-    pub(super) fn import_ty(&mut self, ty: Type, map: &mut HashMap<VarId, Type>) -> Type {
+    pub(super) fn import_ty(&mut self, src: &Unifier, ty: Type, map: &mut HashMap<VarId, Type>) -> Type {
         match self.unifier.types.node_raw(ty) {
             TypeNode::Alias(name, args, body) => {
                 let args = self.unifier.types.items(args);
-                let args = args.into_iter().map(|a| self.import_ty(a, map)).collect();
-                let body = self.import_ty(body, map);
+                let args = args.into_iter().map(|a| self.import_ty(src, a, map)).collect();
+                let body = self.import_ty(src, body, map);
                 self.unifier.types.alias(name, args, body)
             }
             TypeNode::Var(id) => match map.get(&id) {
@@ -436,49 +446,61 @@ impl<'a> Checker<'a> {
                 None => {
                     let fresh = self.unifier.fresh_generic();
                     map.insert(id, fresh);
+                    if let Some(l) = src.var_level(id) {
+                        let l = self.import_ty(src, src.zonk(l), map);
+                        self.unifier.set_var_level(fresh, l);
+                    }
                     fresh
                 }
             },
             TypeNode::NatAdd(a, b) => {
-                let (x, y) = (self.import_ty(a, map), self.import_ty(b, map));
+                let (x, y) = (self.import_ty(src, a, map), self.import_ty(src, b, map));
                 self.unifier.types.add(TypeNode::NatAdd(x, y))
             }
             TypeNode::NatMul(a, b) => {
-                let (x, y) = (self.import_ty(a, map), self.import_ty(b, map));
+                let (x, y) = (self.import_ty(src, a, map), self.import_ty(src, b, map));
                 self.unifier.types.add(TypeNode::NatMul(x, y))
             }
+            TypeNode::LevelMax(a, b) => {
+                let (x, y) = (self.import_ty(src, a, map), self.import_ty(src, b, map));
+                self.unifier.types.add(TypeNode::LevelMax(x, y))
+            }
+            TypeNode::LevelAdd(l, n) => {
+                let l = self.import_ty(src, l, map);
+                self.unifier.types.add(TypeNode::LevelAdd(l, n))
+            }
             TypeNode::App(head, arg) => {
-                let (h, a) = (self.import_ty(head, map), self.import_ty(arg, map));
+                let (h, a) = (self.import_ty(src, head, map), self.import_ty(src, arg, map));
                 self.unifier.types.app(h, a)
             }
             TypeNode::Arrow(from, to, eff) => {
                 let (f, t, e) = (
-                    self.import_ty(from, map),
-                    self.import_ty(to, map),
-                    self.import_ty(eff, map),
+                    self.import_ty(src, from, map),
+                    self.import_ty(src, to, map),
+                    self.import_ty(src, eff, map),
                 );
                 self.unifier.types.arrow_eff(f, t, e)
             }
             TypeNode::RowExtend(label, args, rest) => {
-                let a = self.import_ty(args, map);
-                let r = self.import_ty(rest, map);
+                let a = self.import_ty(src, args, map);
+                let r = self.import_ty(src, rest, map);
                 self.unifier.types.add(TypeNode::RowExtend(label, a, r))
             }
             TypeNode::Tuple(items) => {
                 let items = self.unifier.types.items(items).to_vec();
-                let mapped: Vec<Type> = items.into_iter().map(|t| self.import_ty(t, map)).collect();
+                let mapped: Vec<Type> = items.into_iter().map(|t| self.import_ty(src, t, map)).collect();
                 self.unifier.types.tuple(mapped)
             }
             TypeNode::Record(row) => {
-                let r = self.import_ty(row, map);
+                let r = self.import_ty(src, row, map);
                 self.unifier.types.record(r)
             }
             TypeNode::RowField(label, fty, rest) => {
-                let (f, r) = (self.import_ty(fty, map), self.import_ty(rest, map));
+                let (f, r) = (self.import_ty(src, fty, map), self.import_ty(src, rest, map));
                 self.unifier.types.add(TypeNode::RowField(label, f, r))
             }
             // Con, Nat and RowEmpty are already shared nodes.
-            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::RowEmpty => ty,
+            TypeNode::Con(_) | TypeNode::Nat(_) | TypeNode::Level(_) | TypeNode::RowEmpty => ty,
         }
     }
 }

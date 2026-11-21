@@ -507,6 +507,8 @@ impl<'a> Checker<'a> {
                     let name = *name;
                     let params = self.resolve_type_params("alias", name, params, collected)?;
                     self.claim_type_name(name);
+                    let levels = self.sig_param_levels(*sig);
+                    self.alias_param_levels.insert(name, levels);
                     self.aliases.insert(name, (params, *ty));
                     self.own_type_names.push(name);
                 }
@@ -518,6 +520,78 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
+    /// The constant level of each parameter of a type-level function's
+    /// signature: `Some(n)` for `@Type n`, `None` for anything else.
+    fn sig_param_levels(&self, sig: Aol<Ty>) -> Vec<Option<u32>> {
+        let mut out = Vec::new();
+        let mut cur = sig;
+        while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+            out.push(match self.ast.ty(*from) {
+                Ty::App(head, n) if matches!(self.ast.ty(*head), Ty::Con { module: None, name } if name.as_str() == "@Type") => {
+                    match self.ast.ty(*n) {
+                        Ty::Nat(n) => u32::try_from(*n).ok(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            });
+            cur = *to;
+        }
+        out
+    }
+
+    /// Check each type-level function's body lives in the universe its
+    /// signature states: `$ T : @Type 1 = @Type 1` does not. Its parameters
+    /// stand at the levels the signature gives them.
+    pub(super) fn check_alias_levels(&mut self, program: &Program) -> Result<()> {
+        let items = self.ast.slice(program.items);
+        let spans = self.ast.slice(program.spans);
+        for (item, at) in items.iter().zip(spans) {
+            let Item::Alias { params, ty, sig, .. } = item else { continue };
+            let (params, ty, sig) = (self.ast.slice(*params).to_vec(), *ty, *sig);
+            self.unifier.enter_level();
+            let mark = self.unifier.level_mark();
+            let saved = self.unknown_type.take();
+            let mut tvars = HashMap::new();
+            let mut cur = sig;
+            let mut i = 0;
+            while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
+                let (from, to) = (*from, *to);
+                if let Some(p) = params.get(i) {
+                    let v = match self.kind_of_ast(from) {
+                        Some(ParamKind::Nat) => self.unifier.fresh_nat(),
+                        _ => self.leveled_var(from),
+                    };
+                    tvars.insert(*p, v);
+                }
+                i += 1;
+                cur = to;
+            }
+            let result = self.ty_of_ast(cur, &mut HashMap::new());
+            let body = self.ty_of_ast(ty, &mut tvars);
+            self.unknown_type = saved;
+            let span = self.ast.ty_span(ty).or(at.name).unwrap_or(at.full);
+            let equated = match self.unifier.types.universe_level(self.unifier.resolve(result)) {
+                Some(r) => {
+                    let own = self.unifier.level_of(body);
+                    self.unifier.unify(r, own, "in the body of a type")
+                }
+                None => Ok(()),
+            };
+            let settled = self.unifier.settle_levels(mark, &HashSet::new());
+            self.unifier.forget_levels(mark);
+            self.unifier.leave_level();
+            if let Some(d) = self.universe_errors.drain(..).next() {
+                return Err(d);
+            }
+            equated.map_err(|d| d.fill_span(span))?;
+            if let Err((c, lhs, rhs)) = settled {
+                return Err(universe_error(c.span.unwrap_or(span), &lhs, &rhs));
+            }
+        }
+        Ok(())
+    }
+
     /// A type-level function's parameters are types or sizes, and it returns
     /// a type of data: `@Type -> @Nat -> @Type`. Anything else is a family
     /// indexed by values, or a universe level, which only the kernel checks.
@@ -525,13 +599,13 @@ impl<'a> Checker<'a> {
         let is_con = |t: Aol<Ty>, want: &str| matches!(self.ast.ty(t), Ty::Con { module: None, name } if name.as_str() == want);
         let mut cur = sig;
         while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
-            if !is_con(*from, "@Type") && !is_con(*from, "@Nat") {
+            if self.kind_of_ast(*from) != Some(ParamKind::Type) && !is_con(*from, "@Nat") {
                 return Err(dependent_only(self.ast.ty_span(*from), "a type indexed by a value other than a size"));
             }
             cur = *to;
         }
-        if !is_con(cur, "@Type") {
-            return Err(dependent_only(self.ast.ty_span(cur), "a universe level"));
+        if self.kind_of_ast(cur) != Some(ParamKind::Type) {
+            return Err(dependent_only(self.ast.ty_span(cur), "a type-level function returning something other than a type"));
         }
         Ok(())
     }

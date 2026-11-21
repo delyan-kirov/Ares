@@ -44,6 +44,14 @@ pub enum TypeNode {
     NatAdd(Type, Type),
     /// A type-level size product `a * b`, modular (Z/2^64).
     NatMul(Type, Type),
+    /// A universe level (#538), the `n` of `@Type n`: a constant. A level is
+    /// its own kind, apart from sizes: it has `@max` and no `*`, and a level
+    /// variable stands for a level of 1 or more. See Note [Universe levels].
+    Level(u32),
+    /// A level raised by a constant, `l + n`.
+    LevelAdd(Type, u32),
+    /// The larger of two levels, `@max a b`.
+    LevelMax(Type, Type),
     /// Type application `Head Arg`, e.g. `@Vec @Int` is `App(Con("@Vec"), @Int)`.
     App(Type, Type),
     /// A function type `From -[eff]-> To`. `eff` is the arrow's latent effect row:
@@ -258,6 +266,20 @@ impl Types {
         self.add(TypeNode::App(head, arg))
     }
 
+    /// The universe `@Type level`.
+    pub fn universe(&self, level: Type) -> Type {
+        self.app(self.con(UNIVERSE), level)
+    }
+
+    /// The level of a universe `@Type l`, if `ty` is one (read raw: `ty` is
+    /// already resolved).
+    pub fn universe_level(&self, ty: Type) -> Option<Type> {
+        match self.node(ty) {
+            TypeNode::App(head, level) if matches!(self.node(head), TypeNode::Con(c) if self.name(c) == UNIVERSE) => Some(level),
+            _ => None,
+        }
+    }
+
     /// A pure arrow (empty latent effect). The default for built-ins and for a
     /// written arrow with no `<...>` annotation.
     pub fn arrow(&self, from: Type, to: Type) -> Type {
@@ -381,6 +403,26 @@ pub fn display(types: &Types, ty: Type, namer: &mut dyn FnMut(VarId) -> String) 
                 out.push_str(" * ");
                 go(types, b, namer, out, 3);
             }),
+            TypeNode::Level(n) => out.push_str(&n.to_string()),
+            TypeNode::LevelAdd(l, n) => paren(out, prec > 2, |out| {
+                go(types, l, namer, out, 2);
+                out.push_str(&format!(" + {n}"));
+            }),
+            TypeNode::LevelMax(a, b) => paren(out, prec > 1, |out| {
+                out.push_str("@max ");
+                go(types, a, namer, out, 4);
+                out.push(' ');
+                go(types, b, namer, out, 4);
+            }),
+            // A universe whose level is a variable shows as the bare `@Type`
+            // it was written as: a level variable is generalised per
+            // definition, so naming it adds nothing a reader can use.
+            TypeNode::App(head, arg)
+                if matches!(types.node_raw(head), TypeNode::Con(c) if types.name(c) == UNIVERSE)
+                    && matches!(types.node_raw(arg), TypeNode::Var(_)) =>
+            {
+                out.push_str(UNIVERSE)
+            }
             TypeNode::App(head, arg) => {
                 if let Some((size, elem)) = tensor_spine_raw(types, ty) {
                     paren(out, prec > 1, |out| {
