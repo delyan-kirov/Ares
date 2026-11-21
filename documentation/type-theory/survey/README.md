@@ -3,7 +3,7 @@
 **Status:** step 4 of issue #472. Every decision below is **proposed**; none is
 taken until the owner accepts it.
 **Date:** 2026-11-11.
-**Scope:** eight design questions for the kernel of #406, each compared across
+**Scope:** nine design questions for the kernel of #406, each compared across
 the observational systems and the mainstream proof assistants, ending in a
 decision record.
 
@@ -33,6 +33,7 @@ cites a source that could not be checked against its text here.
 | 6 | [Conversion](6-conversion.md) | NbE with glued globals, Cast-refl-L/R | #469, #464 |
 | 7 | [Inductive types](7-inductive-types.md) | CIC^obs scheme, equality of types stuck, nested by translation | #467, #477 |
 | 8 | [Termination](8-termination.md) | recursors only in the kernel | |
+| 9 | [Effects](9-effects.md) | types depend on values and total terms only; `@Di` is an effect | #544, #546 |
 
 ## Candidates
 
