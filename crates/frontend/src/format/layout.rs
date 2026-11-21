@@ -1081,7 +1081,7 @@ impl Layout<'_, '_> {
         let mut pos = eq + 1;
         // `= @struct [@extern "abi"]` stays with the head; the members are the
         // body.
-        let decl_kw = |t: &Tok| matches!(t.kind, Kind::At) && matches!(t.text, "@struct" | "@union" | "@effect");
+        let decl_kw = |t: &Tok| matches!(t.kind, Kind::At) && matches!(t.text, "@struct" | "@union");
         if self.peek_tok(ts, pos).is_some_and(|t| decl_kw(&t)) {
             let extern_next = self.peek_tok(ts, pos + 1).is_some_and(|t| matches!(t.kind, Kind::At) && t.text == "@extern");
             let n = if extern_next { 3 } else { 1 };

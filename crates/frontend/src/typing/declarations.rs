@@ -68,10 +68,11 @@ impl<'a> Checker<'a> {
 
 impl<'a> Checker<'a> {
     /// What each binder of a type declaration's signature ranges over; the
-    /// signature ends in `@Type`.
+    /// signature ends in `@Type`, or in `@Effect` for an effect (which the
+    /// parser checked).
     /// A parameter of any other type, `(b: Bool)`, makes the type depend on
     /// a value, which needs the kernel.
-    pub(super) fn decl_kinds(&self, sig: Aol<Ty>) -> Result<Vec<ParamKind>> {
+    pub(super) fn decl_kinds(&self, sig: Aol<Ty>, effect: bool) -> Result<Vec<ParamKind>> {
         let mut kinds = Vec::new();
         let mut cur = sig;
         while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
@@ -86,7 +87,7 @@ impl<'a> Checker<'a> {
             Ty::App(head, _) => universe(self.ast.ty(*head)),
             t => universe(t),
         };
-        if !ends_in_universe {
+        if !ends_in_universe && !effect {
             return Err(diag!(
                 Code::TypeMismatch, self.ty_span_or_none(cur), 0,
                 "a type declaration's signature ends in `@Type`";
@@ -393,7 +394,7 @@ impl<'a> Checker<'a> {
                     abi,
                     c_union,
                 } => {
-                    let kinds = self.decl_kinds(*sig)?;
+                    let kinds = self.decl_kinds(*sig, false)?;
                     let (params, splices, fields) = (
                         self.ast.slice(*params),
                         self.ast.slice(*splices),
@@ -453,7 +454,7 @@ impl<'a> Checker<'a> {
                     splices,
                     variants,
                 } => {
-                    let kinds = self.decl_kinds(*sig)?;
+                    let kinds = self.decl_kinds(*sig, false)?;
                     let binders = self.decl_binder_names(*sig);
                     let uniform = params.len();
                     let (params, splices, variants) = (
@@ -1165,7 +1166,7 @@ impl<'a> Checker<'a> {
             if let Item::Effect { name, sig, params, .. } = item {
                 let n = self.ast.slice(*params).len();
                 self.effect_arity.insert(*name, n);
-                let kinds = self.decl_kinds(*sig)?;
+                let kinds = self.decl_kinds(*sig, true)?;
                 self.effect_kinds.insert(*name, kinds);
             }
         }

@@ -135,7 +135,7 @@ A library module provides an `Async` effect and a scheduler handler written in
 Ares over the existing continuations.
 
 ```ares
-$ Async : @Type = @effect spawn : ({} -> <Async> {}) -> {}, yield : {} -> {},
+$ Async : @Effect = spawn : ({} -> <Async> {}) -> {}, yield : {} -> {},
 $ run_async : @ctx {a: @Type} -> ({} -> <Async> a) -> a = ...   # round-robin over stored continuations
 ```
 
@@ -233,7 +233,7 @@ The extensible route is an ordinary effect whose handler discharges into
 `@IO`:
 
 ```ares
-$ Gpu : @Type = @effect draw : Mesh -> {}, present : {} -> {}
+$ Gpu : @Effect = draw : Mesh -> {}, present : {} -> {}
 
 $ run_gpu : @ctx {e: @Row, a: @Type} -> ({} -> <Gpu | e> a) -> <@IO | e> a = \body =>
 	do body {}

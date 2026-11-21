@@ -9,10 +9,10 @@ $ @mod EFFECTS
 
 $ @import ARESxALGO
 
-$ Exn : @Type = @effect
+$ Exn : @Effect =
     throw : @ctx { a: @Type } -> @Str -> a, # never resumes -> polymorphic result
-$ Yield : @Type = @effect yield : @Int -> {},
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ Yield : @Effect = yield : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
 
 # Exception: the clause ignores k (resume 0 times). Exn is handled here, so
 # safeDiv is pure at its boundary.

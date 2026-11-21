@@ -767,7 +767,7 @@ The M2 (untyped) surface. The current implemented surface is in the language
 reference (documentation/language/language-reference.md section 8). Chosen to reuse Ares's existing grammar and spend as few keywords as possible;
 the result is **closest to Flix**.
 
-- **Declaration.** `$ Eff : @Type = @effect op : A -> B, ...` an `@effect` annotation
+- **Declaration.** `$ Eff : @Effect = op : A -> B, ...` an `@effect` annotation
   parallel to `@struct` / `@union`. Effect = TypeName, operations = lowercase
   vars. Each op is `arg-type -> resume-type`; every op takes exactly one argument
   and names one result. The new **unit** type/value `{}` (empty record, added to

@@ -6,5 +6,5 @@ $ @mod OWN_VAR_UNBOUND
 $ Vec : (a: @Type) -> @Nat -> @Type =
     @union Nil: {} -> Vec a 0, Cons: {a, Vec a n} -> Vec a (n + 1)  #~ error[TYPE_UNBOUND]: `n` is not bound
 
-$ Exn : @Type = @effect throw : @Str -> a,  #~ error[TYPE_UNBOUND]: `a` is not bound
+$ Exn : @Effect = throw : @Str -> a,  #~ error[TYPE_UNBOUND]: `a` is not bound
 

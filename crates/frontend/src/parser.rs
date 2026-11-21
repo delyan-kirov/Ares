@@ -810,14 +810,19 @@ impl<'a> Parser<'a> {
         }
         // A capitalized name with a signature defines a type: types are
         // expressions (#406), so `$ Frac : @Type 1 = {Integer, Pos}`. A body
-        // starting `@struct`, `@union` or `@effect` declares one, its
-        // signature stating the parameters: `$ Vec : (a: @Type) -> @Nat ->
-        // @Type = @union Nil: {} -> Vec a 0, ...`.
+        // starting `@struct` or `@union` declares one, its signature stating
+        // the parameters: `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil:
+        // {} -> Vec a 0, ...`. A signature ending in `@Effect` declares an
+        // effect, its body the operations: `$ Fail : @Effect = fail : ...`.
         let (sig, ctx) = self.parse_signature()?;
-        if self.at_type_decl()? {
+        let effect = self.ends_in_effect(sig);
+        if effect || self.at_type_decl()? {
             self.require_type_capital(self.text(name_tok), &name_tok)?;
         }
-        if is_upper(self.text(name_tok)) && self.ctx_written.is_none() {
+        if !effect {
+            self.reject_field_list()?;
+        }
+        if is_upper(self.text(name_tok)) && (self.ctx_written.is_none() || effect) {
             expect!(self, Kind::Eq, "expected '=' after the type signature");
             if let Some(item) = self.parse_type_decl(name, sig)? {
                 return Ok(item);
@@ -842,30 +847,61 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Whether `= @struct`, `= @union` or `= @effect` comes next.
+    /// Whether `= @struct` or `= @union` comes next.
     fn at_type_decl(&mut self) -> Result<bool> {
         if !matches!(self.peek_kind()?, Kind::Eq) {
             return Ok(false);
         }
         let t = self.peek_at(1)?;
-        Ok(matches!(t.kind, Kind::At) && matches!(self.intrinsic_name(t), "struct" | "union" | "effect"))
+        Ok(matches!(t.kind, Kind::At) && matches!(self.intrinsic_name(t), "struct" | "union"))
+    }
+
+    /// Whether a signature ends in `@Effect` after its arrows: the global
+    /// declares an effect.
+    fn ends_in_effect(&self, sig: Aol<Ty>) -> bool {
+        let mut cod = sig;
+        while let Ty::Arrow { to, .. } = self.ast.ty(cod) {
+            cod = *to;
+        }
+        matches!(self.ast.ty(cod), Ty::Con { module: None, name } if name.as_str() == "@Effect")
+    }
+
+    /// A body `= name : Type, ...` is a list of operations, which only an
+    /// effect has: expression ascription is written in parentheses.
+    fn reject_field_list(&mut self) -> Result<()> {
+        if !matches!(self.peek_kind()?, Kind::Eq) {
+            return Ok(());
+        }
+        let (word, colon) = (self.peek_at(1)?, self.peek_at(2)?);
+        if !matches!(word.kind, Kind::Word) || !matches!(colon.kind, Kind::Colon) {
+            return Ok(());
+        }
+        Err(Diagnostic::error(
+            Code::UnexpectedToken,
+            word.span,
+            word.line,
+            "a list of `name : Type` operations declares an effect".to_string(),
+        )
+        .with_note("an effect's signature ends in `@Effect`")
+        .with_help("declare it as `$ Name : @Effect = op : Type, ...`"))
     }
 
     /// The body of a type declaration after `=`: `@struct [@extern "abi"]
-    /// fields`, `@union [@extern "abi"] variants` or `@effect ops`, or `None`
-    /// for any other body. `sig` states the parameters, each a named binder:
+    /// fields` or `@union [@extern "abi"] variants`, or an effect's
+    /// operations when `sig` ends in `@Effect`, or `None` for any other body.
+    /// `sig` states the parameters, each a named binder:
     /// `(a: @Type) -> (n: @Nat) -> @Type`. A union may
     /// go on with indices, binders its constructors' stated results do not pass
     /// through as themselves (the kernel's rule, #536).
     fn parse_type_decl(&mut self, name: StrId, sig: Aol<Ty>) -> Result<Option<Item>> {
-        if !matches!(self.peek_kind()?, Kind::At) {
-            return Ok(None);
-        }
         let at_tok = self.peek()?;
-        let kw = self.intrinsic_name(at_tok);
-        if !matches!(kw, "struct" | "union" | "effect") {
+        let kw = if self.ends_in_effect(sig) {
+            "effect"
+        } else if matches!(at_tok.kind, Kind::At) && matches!(self.intrinsic_name(at_tok), "struct" | "union") {
+            self.intrinsic_name(at_tok)
+        } else {
             return Ok(None);
-        }
+        };
         if let Some(f) = self.ast.ctx_params.get(sig).map(|fs| self.ast.slice(*fs)[0]) {
             return Err(Diagnostic::error(
                 Code::UnexpectedToken,
@@ -878,7 +914,9 @@ impl<'a> Parser<'a> {
         if self.ast.use_params.get(sig).is_some() {
             return Err(self.unexpected(&at_tok, "a type declaration takes no `@use` parameter"));
         }
-        self.bump()?; // the keyword
+        if kw != "effect" {
+            self.bump()?; // the keyword
+        }
         let abi = if kw != "effect" && self.at_intrinsic("extern")? {
             self.bump()?; // '@extern'
             Some(self.expect_string("expected an ABI string after '@extern'")?)
@@ -905,7 +943,7 @@ impl<'a> Parser<'a> {
                 Item::Union { name, sig, params, splices, variants }
             }
             _ => {
-                let ops = self.parse_effect_ops()?;
+                let ops = self.parse_effect_body()?;
                 let params = self.ast.make_slice(named(binders.len()));
                 Item::Effect { name, sig, params, ops }
             }
@@ -1478,7 +1516,21 @@ impl<'a> Parser<'a> {
     }
 
 
-    /// An `@effect`'s operations, `name : Type` like struct fields. A name must
+    /// An effect's body: its operations, or `{}` for none.
+    fn parse_effect_body(&mut self) -> Result<Slice<FieldDecl>> {
+        if matches!(self.peek_kind()?, Kind::LBrace) && matches!(self.peek_at(1)?.kind, Kind::RBrace) {
+            self.bump()?;
+            self.bump()?;
+            return Ok(self.ast.make_slice(Vec::new()));
+        }
+        if !matches!(self.peek_kind()?, Kind::Word) {
+            let t = self.peek()?;
+            return Err(self.unexpected(&t, "expected an effect's operations, `name : Type, ...`, or `{}` for none"));
+        }
+        self.parse_effect_ops()
+    }
+
+    /// An effect's operations, `name : Type` like struct fields. A name must
     /// start lowercase: a handler arm `| Name x` would otherwise read as a value
     /// pattern rather than an operation clause.
     fn parse_effect_ops(&mut self) -> Result<Slice<FieldDecl>> {

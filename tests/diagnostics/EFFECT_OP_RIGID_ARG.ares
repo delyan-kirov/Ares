@@ -2,7 +2,7 @@ $ @mod EFFECT_OP_RIGID_ARG
 
 # `put` takes a type each use chooses, so its handler sees the value as opaque:
 # it may pass it along, but not treat it as any one type.
-$ Store : @Type = @effect put : @ctx { a: @Type } -> a -> {},
+$ Store : @Effect = put : @ctx { a: @Type } -> a -> {},
 
 $ total : ({} -> <Store> {}) -> @Int = \body =>
 	do body {}

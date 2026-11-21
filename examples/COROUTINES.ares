@@ -5,7 +5,7 @@ $ @mod COROUTINES
 # stored resumption). A scheduler resumes it later, from a different context --
 # the defining test of coroutines (vs a plain generator that resumes in place).
 
-$ Co : @Type = @effect yield : @Int -> {},
+$ Co : @Effect = yield : @Int -> {},
 $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },
 
 # Run a task one step: it either finishes (`Fin`) or yields a value and suspends,

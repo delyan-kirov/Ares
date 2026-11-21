@@ -61,7 +61,7 @@
 %token UNDERSCORE   /* _ */
 %token HOLE         /* ??? a typed hole: any type, always a compile error naming it */
 
-%token AT_MOD AT_STRUCT AT_UNION AT_EFFECT AT_MAIN AT_BUILD
+%token AT_MOD AT_STRUCT AT_UNION AT_MAIN AT_BUILD
 %token AT_USE AT_IFACE  /* AT_USE: `@use` */
 %token AT_CTX       /* `@ctx`: parameters solved by unification,
                        `@ctx {t: @Type, n: @Nat} ->`, and arguments that give
@@ -119,6 +119,12 @@ global
    * and for a union its indices, which each constructor states in its
    * result, `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil: {} -> Vec a 0, ...`. */
   | DOLLAR UIDENT COLON expr EQ type_decl
+  /* An effect: the signature ends in `@Effect`, the kind of row labels
+   * (#574), and the body lists the operations,
+   * `$ St : (s: @Type) -> @Effect = get: {} -> s, put: s -> {}`. One with no
+   * operations is `= {}`, which the expr alternative reads; parser.rs tells
+   * the two apart by the signature. */
+  | DOLLAR UIDENT COLON expr EQ effect_body
   | DOLLAR AT_IMPORT import
   | DOLLAR AT_PRIVATE
   | DOLLAR AT_MAIN COLON expr EQ expr  /* the entry: `@Vec @Str -> <@IO> @Int` */
@@ -164,7 +170,6 @@ type_decl
   | AT_UNION union_body
   | AT_UNION  /* no variants: uninhabited */
   | AT_UNION AT_EXTERN STR struct_body  /* C layout */
-  | AT_EFFECT effect_body
   ;
 
 struct_body   : field_decls opt_comma ;

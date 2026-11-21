@@ -321,7 +321,7 @@ call may perform: `A -> <E> B`. A bare arrow is pure (empty row). `<| e>` is an
 open row (a row variable), which is what makes a function effect-polymorphic.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
 $ pure : @Int -> @Int = \x => x                       # pure (empty row)
 $ act  : {} -> <State> @Int = get {}                  # may perform State
 $ poly : @ctx {a: @Type, e: @Row, b: @Type} -> (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
@@ -1269,14 +1269,14 @@ $ sum_to : @Int -> @Int -> @Int = \n acc =>
 # 8. Algebraic effects and handlers
 
 ## 8.1 Declaring an effect `@effect`
-`$ Name : @Type = @effect op : Arg -> Resume, ...`. Each operation takes one argument
+`$ Name : @Effect = op : Arg -> Resume, ...`. Each operation takes one argument
 and names its resume type. An operation whose handler never resumes (an
 exception) names a type variable of its own as its result, `@ctx {a: @Type}`.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
-$ Exn   : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
-$ Yield : @Type = @effect yield : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
+$ Exn   : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+$ Yield : @Effect = yield : @Int -> {},
 ```
 
 An effect may take parameters, stated in its signature like a struct's.
@@ -1288,8 +1288,8 @@ function, and a bare mention of the effect inside its own declaration stands for
 its parameters. Arguments left out of a row (`<State>`) are inferred.
 
 ```ares
-$ State : (s: @Type) -> @Type = @effect get : {} -> s, put : s -> {},
-$ Async : (m: @Type) -> (e: @Row) -> @Type = @effect spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
+$ State : (s: @Type) -> @Effect = get : {} -> s, put : s -> {},
+$ Async : (m: @Type) -> (e: @Row) -> @Effect = spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
 $ count : {} -> <State @Int> @Int = let n = get {} in put (n + 1); n
 ```
 
@@ -1301,7 +1301,7 @@ store it), but it cannot make one up or inspect it. A clause that needs a
 concrete type takes it from an effect parameter instead.
 
 ```ares
-$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
 $ safe : @Int = do 1 + Exn.throw "no" is k | Exn.throw m => 0     # aborts: fine
 # `| Exn.throw m => k 0` is an error: `k` wants `a` of `Exn.throw`, not @Int
 ```
@@ -1311,7 +1311,7 @@ Just call it; there is no `perform` keyword. A use injects the effect into the
 ambient row.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
 $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x
 ```
 
@@ -1326,7 +1326,7 @@ operation name is qualified in a clause head.
 
 Exception (ignores `k`, so it resumes zero times):
 ```ares
-$ Exn : @Type = @effect throw : @Str -> @Int,
+$ Exn : @Effect = throw : @Str -> @Int,
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
 	do if b == 0 => Exn.throw "div0" else a / b
 	is k | Exn.throw msg => -1

@@ -102,7 +102,7 @@ $ ck_words : @Int = if unwrap_or "" (run_async words) == "hey! ho!" => 0 else 1
 
 # Tasks perform `Tally` besides `Async`: the handler around the group serves
 # it, so every task's `bump` lands in one count.
-$ Tally : @Type = @effect bump : @Int -> {},
+$ Tally : @Effect = bump : @Int -> {},
 
 $ worker : Chan @Int -> @Int -> <Async, Tally> {} = \done n =>
     Tally.bump n; Async.yield {}; Tally.bump n; Async.send { done, n }
