@@ -32,7 +32,7 @@ use std::rc::Rc;
 
 use utilities::{Code, Diagnostic, Result, Span, StrId};
 
-use crate::typing::types::{display, Level, Type, TypeNode, Types, VarId};
+use crate::typing::types::{display, Level, LevelView, Type, TypeNode, Types, VarId};
 
 /// The state of one unification variable.
 #[derive(Clone, Debug)]
@@ -933,6 +933,9 @@ impl Unifier {
     /// binds them; the rest take the letters those names leave free.
     pub fn show_all_named(&self, tys: &[Type], mut names: HashMap<VarId, String>) -> Vec<String> {
         let taken: HashSet<String> = names.values().cloned().collect();
+        let named: HashSet<VarId> = names.keys().copied().collect();
+        let of = |id: VarId| self.var_level(id).map(|l| self.zonk(l));
+        let levels = LevelView { of: &of, named: &named };
         let mut next = 0u32;
         let mut namer = |id: VarId| {
             names
@@ -951,7 +954,7 @@ impl Unifier {
         tys.iter()
             .map(|t| {
                 let zonked = self.zonk(*t);
-                display(&self.types, zonked, &mut namer)
+                display(&self.types, zonked, &mut namer, &levels)
             })
             .collect()
     }

@@ -1533,6 +1533,32 @@ fn a_signature_binds_its_levels() {
     blocked("$ f : @ctx {u: @l, v: @l if u < v && v < u} -> (t: @Type u) -> @Int = 0\n", "cannot all hold");
 }
 
+/// The levels a signature states show in its printed type: a constant level,
+/// the `@ctx` level fields with their `if`, and the levels named there. An
+/// unnamed level stays the bare `@Type` it was written as.
+#[test]
+fn a_signature_shows_its_levels() {
+    let src = "$ @mod T
+$ count : (t: @Type 1) -> @Int = 0
+$ any : (t: @Type) -> @Int = 0
+$ up : @ctx {u: @l} -> (t: @Type (u + 1)) -> t -> t = \\x => x
+$ two : @ctx {u: @l, v: @l if v < u && u == @max u v} -> (t: @Type u) -> (s: @Type (@max u v)) -> @Int = 0
+";
+    let shown = with_checker(src, |checker, prog| {
+        checker.check_program(prog).unwrap_or_else(|e| panic!("{}", e.render(src, "test.ares")));
+        checker.own_values().iter().map(|(n, t)| format!("{n} : {}", checker.show_decl(*n, *t))).collect::<Vec<_>>()
+    });
+    assert_eq!(
+        shown,
+        [
+            "count : (t: @Type 1) -> @Int",
+            "any : (t: @Type) -> @Int",
+            "up : @ctx {u: @l} -> (t: @Type (u + 1)) -> t -> t",
+            "two : @ctx {u: @l, v: @l if v < u && u == @max u v} -> (t: @Type u) -> (s: @Type (@max u v)) -> @Int",
+        ]
+    );
+}
+
 // Test [Frontend-Data-Level]
 #[test]
 fn a_declared_type_lives_in_the_universe_of_its_members() {

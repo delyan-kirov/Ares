@@ -1610,17 +1610,23 @@ impl<'a> Checker<'a> {
         out
     }
 
-    /// `@ctx {t: @Type, ...}` as `name`'s signature writes it, if it has one.
+    /// `@ctx {u: @l, t: @Type u, ... if ...}` as `name`'s signature writes
+    /// it, its levels first, if it has one.
     fn show_ctx_binder(&self, name: StrId) -> Option<String> {
-        let sig = self.ctx_sigs.get(&name)?;
-        let fields = self.ast.ctx_params.get(*sig)?;
-        let shown: Vec<String> = self
-            .ast
-            .slice(*fields)
-            .iter()
+        let sig = *self.ctx_sigs.get(&name)?;
+        let fields = [self.ast.level_params.get(sig), self.ast.ctx_params.get(sig)];
+        let shown: Vec<String> = fields
+            .into_iter()
+            .flatten()
+            .flat_map(|fs| self.ast.slice(*fs).iter())
             .map(|f| format!("{}: {}", f.name, self.ast.ty_source(f.ty).unwrap_or_default()))
             .collect();
-        Some(format!("@ctx {{{}}}", shown.join(", ")))
+        if shown.is_empty() {
+            return None;
+        }
+        let cond = self.ast.level_constraints.get(sig).and_then(|e| self.ast.level_constraint_source(*e, 0));
+        let cond = cond.map_or(String::new(), |c| format!(" if {c}"));
+        Some(format!("@ctx {{{}{cond}}}", shown.join(", ")))
     }
 
     /// `@use {d: IOrd a, s: ISub a} -> a -> a`: the context `ctx` split into the

@@ -248,6 +248,39 @@ impl Ast {
         })
     }
 
+    /// The `if` on a signature's levels rendered back to source: comparisons
+    /// of levels joined by `&&`. `prec` is what the context binds: 0 a
+    /// conjunction, 1 a comparison, 2 a sum, 3 an atom.
+    pub fn level_constraint_source(&self, e: Aol<Expr>, prec: u8) -> Option<String> {
+        let wrap = |s: String, at: u8| if prec > at { format!("({s})") } else { s };
+        Some(match self.expr(e) {
+            Expr::If { cond, then, alt } if matches!(self.expr(*alt), Expr::Bool(false)) => wrap(
+                format!(
+                    "{} && {}",
+                    self.level_constraint_source(*cond, 1)?,
+                    self.level_constraint_source(*then, 0)?
+                ),
+                0,
+            ),
+            Expr::BinOp { op, lhs, rhs } if op.as_str() == "+" => wrap(
+                format!("{} + {}", self.level_constraint_source(*lhs, 2)?, self.level_constraint_source(*rhs, 3)?),
+                2,
+            ),
+            Expr::BinOp { op, lhs, rhs } => wrap(
+                format!("{} {op} {}", self.level_constraint_source(*lhs, 2)?, self.level_constraint_source(*rhs, 2)?),
+                1,
+            ),
+            Expr::App(f, b) => wrap(
+                format!("{} {}", self.level_constraint_source(*f, 2)?, self.level_constraint_source(*b, 3)?),
+                2,
+            ),
+            Expr::Int(n) => n.to_string(),
+            Expr::Var { module: None, name } => name.to_string(),
+            Expr::Type(t) => self.ty_src(*t, if prec > 2 { 2 } else { 0 })?,
+            _ => return None,
+        })
+    }
+
     /// A tensor size: `*` binds tighter than `+`. `prec` is what the context
     /// binds: 0 a sum, 1 a product, 2 an atom (a tensor's size argument).
     fn size_src(&self, ty: Aol<Ty>, prec: u8) -> Option<String> {
