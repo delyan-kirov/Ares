@@ -481,9 +481,11 @@ impl Unifier {
             (Whnf::Node(TypeNode::Var(i)), Whnf::Size(_)) => return self.bind(i, b),
             (Whnf::Size(_), Whnf::Node(_)) => return Err(self.kind_mismatch(self.found_first)),
             (Whnf::Node(_), Whnf::Size(_)) => return Err(self.kind_mismatch(!self.found_first)),
-            (Whnf::Level, Whnf::Level) => return self.unify_level(a, b, where_),
-            (Whnf::Level, Whnf::Node(TypeNode::Var(j))) => return self.bind(j, a),
-            (Whnf::Node(TypeNode::Var(i)), Whnf::Level) => return self.bind(i, b),
+            // A variable against a level is a level atom, so `u = u + 0` and
+            // `u = @max u v` are level equations, not occurs failures.
+            (Whnf::Level, Whnf::Level) | (Whnf::Level, Whnf::Node(TypeNode::Var(_))) | (Whnf::Node(TypeNode::Var(_)), Whnf::Level) => {
+                return self.unify_level(a, b, where_)
+            }
             (Whnf::Level, _) | (_, Whnf::Level) => return Err(self.mismatch(written_a, written_b, where_)),
             (Whnf::Node(na), Whnf::Node(nb)) => (na, nb),
         };

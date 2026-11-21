@@ -210,17 +210,33 @@ impl<'a> Checker<'a> {
         name: StrId,
         sig: Option<Aol<Ty>>,
         uses: bool,
+        bare: bool,
         given: &[UseOverride],
     ) -> Result<Type> {
         let Some(sig) = sig else {
             return Err(self.ctx_without_fields(site, given));
         };
-        let fields: Vec<UseField> = match self.ast.ctx_params.get(sig) {
+        let mut fields: Vec<UseField> = match self.ast.level_params.get(sig) {
             Some(fs) => self.ast.slice(*fs).to_vec(),
             None => Vec::new(),
         };
+        if let Some(fs) = self.ast.ctx_params.get(sig) {
+            fields.extend(self.ast.slice(*fs).iter().copied());
+        }
         let mut tvars = self.sig_tvars(sig);
         let full = self.ty_of_ast(sig, &mut tvars);
+        // The signature elaborated afresh has none of the level constraints
+        // the definition's body adds; its scheme does. See Note [Level parameters].
+        if bare && self.ast.level_params.get(sig).is_some() {
+            if let Some(scheme) = self.lookup(name) {
+                let inst = self.unifier.instantiate(scheme);
+                let exposed = match (uses, self.unifier.types.node(full)) {
+                    (true, TypeNode::Arrow(_, to, _)) => to,
+                    _ => full,
+                };
+                self.unifier.unify(inst, exposed, &format!("against the signature of `{name}`"))?;
+            }
+        }
         let mut seen: Vec<StrId> = Vec::new();
         for u in given {
             for init in self.ast.slice(u.inits).to_vec() {
@@ -247,6 +263,14 @@ impl<'a> Checker<'a> {
                         note: "an explicit `@ctx` argument precedes the explicit argument that follows its parameter"
                     ));
                 }
+                if self.ast.level_params.get(sig).is_some_and(|ls| self.ast.slice(*ls).iter().any(|l| l.name == f)) {
+                    let scoped = self.scoped_tvars.clone();
+                    let level = self.level_of_expr(value, &scoped)?;
+                    self.unifier
+                        .unify(tvars[&f], level, &format!("in the level `{f}` of `{name}`"))
+                        .map_err(|d| d.fill_span(span))?;
+                    continue;
+                }
                 let Expr::Type(t) = *self.node(value) else { continue };
                 let mut scoped = self.scoped_tvars.clone();
                 let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
@@ -272,6 +296,38 @@ impl<'a> Checker<'a> {
                 Ok(exposed)
             }
             _ => Ok(full),
+        }
+    }
+
+    /// The level an explicit `@ctx {.u = l}` argument gives: a number, a
+    /// level `scoped` binds, `l + n` or `@max a b`.
+    pub(super) fn level_of_expr(&mut self, e: Aol<Expr>, scoped: &HashMap<StrId, Type>) -> Result<Type> {
+        let span = self.ast.expr_span(e).unwrap_or(Span::at(0));
+        let bad = || diag!(Code::TypeMismatch, span, 0, "a level is a number, a level name, `l + n` or `@max a b`");
+        match *self.node(e) {
+            Expr::Int(n) => match u32::try_from(n) {
+                Ok(n) => Ok(self.unifier.types.add(TypeNode::Level(n))),
+                Err(_) => Err(bad()),
+            },
+            Expr::Var { module: None, name } => match scoped.get(&name) {
+                Some(&l) if self.level_names.contains(&l) => Ok(l),
+                _ => Err(self.unbound_level(name, span, scoped)),
+            },
+            Expr::BinOp { op, lhs, rhs } if op.as_str() == "+" => {
+                let Expr::Int(k) = *self.node(rhs) else { return Err(bad()) };
+                let k = u32::try_from(k).map_err(|_| bad())?;
+                let l = self.level_of_expr(lhs, scoped)?;
+                Ok(self.unifier.types.add(TypeNode::LevelAdd(l, k)))
+            }
+            Expr::App(f, b) => match *self.node(f) {
+                Expr::App(m, a) if matches!(self.node(m), Expr::Var { module: None, name } if name.as_str() == "@max") => {
+                    let (a, b) = (self.level_of_expr(a, scoped)?, self.level_of_expr(b, scoped)?);
+                    Ok(self.unifier.types.add(TypeNode::LevelMax(a, b)))
+                }
+                _ => Err(bad()),
+            },
+            Expr::Type(t) => Ok(self.level_of_ty(t, scoped)),
+            _ => Err(bad()),
         }
     }
 

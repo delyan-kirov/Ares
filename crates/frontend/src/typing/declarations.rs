@@ -553,7 +553,7 @@ impl<'a> Checker<'a> {
             self.unifier.enter_level();
             let mark = self.unifier.level_mark();
             let saved = self.unknown_type.take();
-            let mut tvars = HashMap::new();
+            let mut tvars = self.level_tvars(sig);
             let mut cur = sig;
             let mut i = 0;
             while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
@@ -561,14 +561,14 @@ impl<'a> Checker<'a> {
                 if let Some(p) = params.get(i) {
                     let v = match self.kind_of_ast(from) {
                         Some(ParamKind::Nat) => self.unifier.fresh_nat(),
-                        _ => self.leveled_var(from),
+                        _ => self.leveled_var(from, &tvars),
                     };
                     tvars.insert(*p, v);
                 }
                 i += 1;
                 cur = to;
             }
-            let result = self.ty_of_ast(cur, &mut HashMap::new());
+            let result = self.ty_of_ast(cur, &mut tvars.clone());
             let body = self.ty_of_ast(ty, &mut tvars);
             self.unknown_type = saved;
             let span = self.ast.ty_span(ty).or(at.name).unwrap_or(at.full);
@@ -661,7 +661,7 @@ impl<'a> Checker<'a> {
         self.unifier.enter_level();
         let mark = self.unifier.level_mark();
         let saved = self.unknown_type.take();
-        let mut tvars = HashMap::new();
+        let mut tvars = self.level_tvars(d.sig);
         let mut param_levels: Vec<Option<Type>> = Vec::new();
         let mut cur = d.sig;
         while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
@@ -669,7 +669,7 @@ impl<'a> Checker<'a> {
             let Some(&p) = d.params.get(param_levels.len()) else { break };
             let (v, level) = match self.kind_of_ast(from) {
                 Some(ParamKind::Type) => {
-                    let v = self.leveled_var(from);
+                    let v = self.leveled_var(from, &tvars);
                     (v, Some(self.unifier.level_of(v)))
                 }
                 Some(ParamKind::Nat) => (self.unifier.fresh_nat(), None),
@@ -680,6 +680,14 @@ impl<'a> Checker<'a> {
             cur = to;
         }
         let stated = self.stated_universe(cur);
+        // A universe at a level parameter, `@Type u`: exact, like a number.
+        let named = match (stated, self.ast.ty(cur)) {
+            (None, Ty::App(..)) => {
+                let u = self.ty_of_ast(cur, &mut tvars.clone());
+                self.unifier.types.universe_level(self.unifier.resolve(u))
+            }
+            _ => None,
+        };
         let saved_self = d.effect.then(|| {
             let args: Vec<Type> = d.params.iter().filter_map(|p| tvars.get(p).copied()).collect();
             let args = if args.is_empty() { self.unifier.types.row_empty() } else { self.unifier.types.tuple(args) };
@@ -693,7 +701,7 @@ impl<'a> Checker<'a> {
                 let t = match self.kind_of_ast(f.ty) {
                     Some(ParamKind::Nat) => self.unifier.fresh_nat(),
                     Some(ParamKind::Type) => {
-                        let t = self.leveled_var(f.ty);
+                        let t = self.leveled_var(f.ty, &tvars);
                         let own = self.unifier.level_of(t);
                         members.push((self.unifier.types.add(TypeNode::LevelAdd(own, 1)), span));
                         t
@@ -731,10 +739,13 @@ impl<'a> Checker<'a> {
             let nf = self.unifier.normalize_level(*l);
             match (nf.ground(), nf.vars.as_slice()) {
                 (Some(n), _) => params.push(ParamLevel::Stated(n)),
-                (None, &[(u, 0)]) if nf.konst == 0 && !free.contains_key(&u) => {
-                    free.insert(u, i);
-                    params.push(ParamLevel::Free { at_most: None });
-                }
+                (None, &[(u, 0)]) if nf.konst == 0 => match free.get(&u) {
+                    Some(&j) => params.push(ParamLevel::Like(j)),
+                    None => {
+                        free.insert(u, i);
+                        params.push(ParamLevel::Free { at_most: None });
+                    }
+                },
                 _ => params.push(ParamLevel::Free { at_most: None }),
             }
         }
@@ -749,6 +760,7 @@ impl<'a> Checker<'a> {
         let mut konst = 1;
         let mut terms: Vec<(usize, u32)> = Vec::new();
         let mut too_large = None;
+        let mut named_too_large = None;
         for (l, span) in members {
             let nf = self.unifier.normalize_level(l);
             let (mut own, mut low) = (nf.konst, nf.konst);
@@ -766,6 +778,12 @@ impl<'a> Checker<'a> {
             if stated.is_some_and(|c| low > c) && too_large.is_none() {
                 too_large = Some((span, low));
             }
+            if let Some(r) = named {
+                let r = self.unifier.normalize_level(r);
+                if !self.unifier.level_leq(&self.unifier.normalize_level(l), &r) && named_too_large.is_none() {
+                    named_too_large = Some((span, self.unifier.show(l), self.unifier.show(self.unifier.level_of_nf(&r))));
+                }
+            }
         }
         self.unifier.leave_level();
         if let Err((c, lhs, rhs)) = settled {
@@ -779,6 +797,25 @@ impl<'a> Checker<'a> {
                 note: "a type's members live in its universe or below, and `@Type n` is a type at level `n + 1`";
                 help: "state a larger universe, or a bare `@Type` for the least one that holds every member"
             ));
+        }
+        if let Some((span, l, r)) = named_too_large {
+            return Err(universe_error(span, &l, &r).with_note("a type's members live in its universe or below"));
+        }
+        if let Some(r) = named {
+            let r = self.unifier.normalize_level(r);
+            let mut terms = Vec::new();
+            for (v, k) in r.vars {
+                let Some(&i) = free.get(&v) else {
+                    return Err(diag!(
+                        Code::TypeMismatch, self.ty_span_or_none(cur), 0,
+                        "the universe of `{}` is at a level no type parameter's universe fixes", d.name;
+                        note: "a declared type's universe follows its parameters, as in `(a: @Type u) -> @Type u`"
+                    ));
+                };
+                terms.push((i, k));
+            }
+            terms.sort_unstable();
+            return Ok(DeclLevel { params, konst: r.konst, terms });
         }
         terms.sort_unstable();
         Ok(match stated {
@@ -880,6 +917,13 @@ impl<'a> Checker<'a> {
         let items = self.ast.slice(program.items);
         let spans = self.ast.slice(program.spans);
         for (item, at) in items.iter().zip(spans) {
+            let decl_sig = match item {
+                Item::Struct { sig, .. } | Item::Union { sig, .. } | Item::Effect { sig, .. } | Item::Alias { sig, .. } => Some(*sig),
+                _ => None,
+            };
+            if let Some(cond) = decl_sig.and_then(|s| self.ast.level_constraints.get(s)) {
+                return Err(dependent_only(self.ast.expr_span(*cond), "an `if` on the levels of a type"));
+            }
             let Item::Def { name, sig, .. } = item else { continue };
             let span = at.name.unwrap_or(at.full);
             if sig.is_some_and(|s| self.returns_type(s)) {
@@ -895,10 +939,6 @@ impl<'a> Checker<'a> {
                     "a value's name is lowercase by convention; a capitalized name reads as a type";
                     help: "rename `{name}` to `{}`", lower_first(name.as_str())
                 ));
-            }
-            if let Some(levels) = sig.and_then(|s| self.ast.level_params.get(s)) {
-                let span = self.ast.slice(*levels).first().map_or(span, |l| l.span);
-                return Err(dependent_only(Some(span), "a level parameter"));
             }
         }
         Ok(())
@@ -1477,6 +1517,12 @@ impl<'a> Checker<'a> {
                     self.unifier.constrain_level(level, bound, None);
                     self.unifier.set_var_level(v, level);
                 }
+                Some(ParamLevel::Like(j)) => {
+                    if let Some(&first) = args.get(*j) {
+                        let level = self.unifier.level_of(first);
+                        self.unifier.set_var_level(v, level);
+                    }
+                }
                 _ => {}
             }
             subst.insert(*p, v);
@@ -1562,6 +1608,8 @@ pub(super) fn collect_tyvars(ast: &Ast, ty: Aol<Ty>, out: &mut Vec<StrId>) {
                 out.push(name);
             }
         }
+        // The level of `@Type u` names a level, never a type variable.
+        Ty::App(a, _) if matches!(ast.ty(*a), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {}
         Ty::App(a, b) => {
             collect_tyvars(ast, *a, out);
             collect_tyvars(ast, *b, out);

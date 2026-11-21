@@ -245,8 +245,13 @@ use_param  : AT_USE LBRACE use_fields opt_comma RBRACE ;
  * across the signature; never inside a parameter's type, an annotation, a
  * local `let`'s type or a field type, which parser.rs enforces. A constructor
  * or an effect operation opens with one binding its own variables (#558). A use leaves
- * the fields to unification or gives some by name, `f @ctx {.t = @Int}`. */
-ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE ;
+ * the fields to unification or gives some by name, `f @ctx {.t = @Int}`.
+ * The first `@ctx` may end in `if cond`, the constraints between its levels
+ * (#567): `@ctx {u: @l, v: @l if v <= u}`. parser.rs reads the `@l` before
+ * the `if` as the whole field type, so the `if` never becomes its argument. */
+ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE
+           | AT_CTX LBRACE use_fields KW_IF expr RBRACE
+           ;
 use_fields : LIDENT COLON expr | use_fields COMMA LIDENT COLON expr ;
 
 rec_field_list
