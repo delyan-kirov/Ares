@@ -1,6 +1,0 @@
-$ @mod TYPE_FUNCTION_LEVEL
-
-# A numbered universe checks (#538), and a level parameter comes next: until
-# then only the kernel binds one.
-$ Two : @Type 1 -> @Type 1 = \t => {t, t}
-$ same : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x  #~ error[UNSUPPORTED]: a level parameter needs dependent types

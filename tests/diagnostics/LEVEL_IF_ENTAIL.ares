@@ -1,0 +1,7 @@
+$ @mod LEVEL_IF_ENTAIL
+
+# With an `if`, a signature's levels are exact (#567): the body needs
+# `v <= u` to pass `Pair a b` where `a` goes, which `u <= v` does not give.
+$ Pair : (a: @Type) -> (b: @Type) -> @Type = {a, b}
+$ need : @ctx {w: @l} -> (t: @Type w) -> (p: @Type w) -> @Int = 0
+$ f : @ctx {u: @l, v: @l if u <= v} -> (a: @Type u) -> (b: @Type v) -> @Int = need (Pair a b) a  #~ error[TYPE_MISMATCH]: which its `if` does not entail

@@ -88,6 +88,9 @@ pub struct Unifier {
     /// instantiation, and their index by variable.
     scheme_le: Vec<levels::LevelLe>,
     scheme_le_by_var: HashMap<VarId, Vec<usize>>,
+    /// The universe of each declared struct, union and effect as a function
+    /// of its parameters' levels. See Note [Declaration levels].
+    pub decl_levels: HashMap<StrId, levels::DeclLevel>,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -149,6 +152,7 @@ impl Unifier {
             level_le: Vec::new(),
             scheme_le: Vec::new(),
             scheme_le_by_var: HashMap::new(),
+            decl_levels: HashMap::new(),
         }
     }
 
@@ -477,9 +481,11 @@ impl Unifier {
             (Whnf::Node(TypeNode::Var(i)), Whnf::Size(_)) => return self.bind(i, b),
             (Whnf::Size(_), Whnf::Node(_)) => return Err(self.kind_mismatch(self.found_first)),
             (Whnf::Node(_), Whnf::Size(_)) => return Err(self.kind_mismatch(!self.found_first)),
-            (Whnf::Level, Whnf::Level) => return self.unify_level(a, b, where_),
-            (Whnf::Level, Whnf::Node(TypeNode::Var(j))) => return self.bind(j, a),
-            (Whnf::Node(TypeNode::Var(i)), Whnf::Level) => return self.bind(i, b),
+            // A variable against a level is a level atom, so `u = u + 0` and
+            // `u = @max u v` are level equations, not occurs failures.
+            (Whnf::Level, Whnf::Level) | (Whnf::Level, Whnf::Node(TypeNode::Var(_))) | (Whnf::Node(TypeNode::Var(_)), Whnf::Level) => {
+                return self.unify_level(a, b, where_)
+            }
             (Whnf::Level, _) | (_, Whnf::Level) => return Err(self.mismatch(written_a, written_b, where_)),
             (Whnf::Node(na), Whnf::Node(nb)) => (na, nb),
         };

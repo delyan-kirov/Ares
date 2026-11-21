@@ -167,6 +167,7 @@ impl<'a> Checker<'a> {
     /// namespace, which is reachable as `C.foo` everywhere but must not pollute
     /// bare names (a program's own `sqrt` is not libm's).
     pub fn import_qualified(&mut self, other: &Checker<'a>) {
+        self.import_decl_levels(other);
         let module = other.module_name;
         self.module_scopes.insert(module);
         for (name, scheme) in &other.own_values {
@@ -181,6 +182,14 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The universes of the types and effects `other` declares or sees, which
+    /// its exports can mention. See Note [Declaration levels].
+    fn import_decl_levels(&mut self, other: &Checker<'a>) {
+        for (name, level) in &other.unifier.decl_levels {
+            self.unifier.decl_levels.entry(*name).or_insert_with(|| level.clone());
+        }
+    }
+
     pub fn import_from(&mut self, other: &Checker<'a>) {
         self.import_as(other, true, &[]);
     }
@@ -190,6 +199,7 @@ impl<'a> Checker<'a> {
     /// for them, and an aliased-only import (`bare` false) brings no name in bare.
     pub fn import_as(&mut self, other: &Checker<'a>, bare: bool, aliases: &[StrId]) {
         assert!(bare || !aliases.is_empty(), "an import is bare or aliased");
+        self.import_decl_levels(other);
         let module = other.module_name;
         self.unit_modules.insert(other.unit_name(), module);
         for name in other.own_values.iter().map(|(n, _)| n).chain(&other.own_type_names) {

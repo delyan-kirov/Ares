@@ -1,0 +1,7 @@
+$ @mod UNIVERSE_BOUND
+
+# A stated universe bounds a parameter (#566): `Box t` is in `@Type 1`, so
+# `t` holds data, never a universe.
+$ Box : (t: @Type) -> @Type 1 = @struct x: t,
+$ ok : @Type 1 = Box @Int
+$ k : @Type 1 = Box (@Type 1)  #~ error[TYPE_MISMATCH]: universe inconsistency
