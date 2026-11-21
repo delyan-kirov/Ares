@@ -10,8 +10,8 @@ $ @mod CT_RUN
 
 # A build directive: link/preload libm (the suite already uses libm via MATH,
 # so this is exercised end to end in both engines without adding a dependency).
-$ &@link "m"
+$ !@link "m"
 
 $ test : @Int = 0
 
-$ &assert (test == 0) "CT_RUN: a check failed"
+$ !assert (test == 0) "CT_RUN: a check failed"

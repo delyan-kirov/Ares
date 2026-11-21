@@ -2,4 +2,4 @@ $ @mod TYPE_FUNCTION_VALUE_INDEX
 
 # A type-level function takes types and sizes (#535); a type indexed by any
 # other value is a family only the kernel checks so far.
-$ Flag : @Bool -> @Type = \b => @Int  #~ error[UNSUPPORTED]: a type indexed by a value other than a size
+$ Flag : Bool -> @Type = \b => @Int  #~ error[UNSUPPORTED]: a type indexed by a value other than a size

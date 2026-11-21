@@ -37,7 +37,7 @@ Why this and not unconditional in-place:
 - **It composes with effects for free.** When a continuation captures an array,
   the captured environment retains it -> refcount > 1 -> the uniqueness check
   fails -> the op copies. The same reference counting that manages memory makes
-  mutation safe across `ctl`/resume boundaries, and it is what makes multi-shot
+  mutation safe across `is`/resume boundaries, and it is what makes multi-shot
   resumption safe too: a resumed copy shares the array, so the refcount rises and
   the next mutation copies.
 - **We already have the substrate.** RC is in place; opportunistic mutation is

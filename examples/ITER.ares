@@ -12,7 +12,7 @@ $ @import ARESxLIST
 $ Yield : @Type = @effect yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
     do a {}
-    ctl k | Yield.yield v => v + k {} | _ => 0
+    is k | Yield.yield v => v + k {} | _ => 0
 
 # `for` over a @Vec, for effects: yield 1,2,3, then `break` at 4  ->  1+2+3 = 6.
 $ ck_for : @Int =
@@ -43,4 +43,4 @@ $ ck_list : @Int =
 # Aggregate check for the combined test runner: 0 = all pass.
 $ test : @Int = ck_for + ck_stream + ck_formap + ck_break + ck_list
 
-$ &assert (test == 0) "ITER: a check failed"
+$ !assert (test == 0) "ITER: a check failed"

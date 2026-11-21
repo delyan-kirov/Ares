@@ -2,13 +2,13 @@ $ @mod TYPE_SPLICE_LIB
 
 # \file TYPE_SPLICE_LIB.ares
 # \info A module exporting a type with generated members (see `TYPE_SPLICE`): an
-#       importer may use its fields while the `&` entry has yet to run.
+#       importer may use its fields while the `!` entry has yet to run.
 
 $ @import ARESxDERIVE
 
 $ Size : @Type = @struct w: @Int, h: @Int
-$ Box : @Type = @struct &ARES.fields_of "Size", depth: @Int
+$ Box : @Type = @struct !ARES.fields_of "Size", depth: @Int
 
 $ test : @Int = 0
 
-$ &assert (test == 0) "TYPE_SPLICE_LIB: a check failed"
+$ !assert (test == 0) "TYPE_SPLICE_LIB: a check failed"

@@ -1,17 +1,17 @@
 $ @mod META_TYPE
 
 # \file META_TYPE.ares
-# \info Type-position `&`. `Foo : &X = ...` runs X at build time; X must build an
+# \info Type-position `!`. `Foo : !X = ...` runs X at build time; X must build an
 #       `@Code` denoting a TYPE, whose source is spliced into the annotation
-#       before the final compile, as `&` does in expression (`let a = &X`) and
-#       item (`$ &X`) position. The generator picks the type from compile-time
+#       before the final compile, as `!` does in expression (`let a = !X`) and
+#       item (`$ !X`) position. The generator picks the type from compile-time
 #       data, so one source can specialize a binding's type by a build-time
 #       choice. A type splice works at every type position: declaration members
 #       (struct fields, union payloads, alias bodies, effect operations),
 #       effect-row entries and their arguments, `@use` fields, and the
 #       annotations inside a body (`let x : T`, `\(x : T)`, `(e : T)`). The code
 #       is a quotation, a string literal expected as `@Code`; the splice site
-#       checks it parses as a type (or as row entries in `<&X>`).
+#       checks it parses as a type (or as row entries in `<!X>`).
 
 # A compile-time generator: choose a type by name.
 $ @import ARESxALGO
@@ -22,37 +22,37 @@ $ number_type : @Str -> @Code = \which => if which == "wide" => "@Int64" else "@
 $ elem_type : {} -> @Code = "@Int"
 
 # The annotation is filled in by running the generator: `n : @Int64`.
-$ n : &number_type "wide" = 1000 + 24
+$ n : !number_type "wide" = 1000 + 24
 
-# `&` nests inside a larger type: `xs : @Vec @Int`.
-$ xs : @Vec (&elem_type {}) = [3, 4, 5]
+# `!` nests inside a larger type: `xs : @Vec @Int`.
+$ xs : @Vec (!elem_type {}) = [3, 4, 5]
 
 # --- declaration members ------------------------------------------------------
-$ Point : @Type = @struct x: &elem_type {}, y: &number_type "narrow"
-$ Shape : @Type = @union Dot: {}, Square: &elem_type {}
-$ Count : @Type = &elem_type {}
-$ Cell : @Type = @effect read : {} -> &elem_type {}
+$ Point : @Type = @struct x: !elem_type {}, y: !number_type "narrow"
+$ Shape : @Type = @union Dot: {}, Square: !elem_type {}
+$ Count : @Type = !elem_type {}
+$ Cell : @Type = @effect read : {} -> !elem_type {}
 
 $ pt : Point = { .x = 3, .y = 4 }
 $ side : Shape -> Count = \ | Shape.Square.{ s } => s | Shape.Dot => 0
 
 # --- annotations inside a body and effect-row arguments -------------------------
 $ annotated : @Int =
-    let a : &elem_type {} = 5 in let sq = \(b : &elem_type {}) => b * b in sq (a : &elem_type {})
+    let a : !elem_type {} = 5 in let sq = \(b : !elem_type {}) => b * b in sq (a : !elem_type {})
 
 $ State : (s: @Type) -> @Type = @effect get : {} -> s
-$ peek : {} -> <State (&elem_type {})> @Int = State.get {}
+$ peek : {} -> <State (!elem_type {})> @Int = State.get {}
 $ peeked : @Int =
     do peek {}
-    ctl k | State.get u => k 7 | v => v
+    is k | State.get u => k 7 | v => v
 
-# A whole row entry, or several, can come from a generator too: `<&X>`.
+# A whole row entry, or several, can come from a generator too: `<!X>`.
 $ Log : @Type = @effect log : @Int -> {}
 $ row : {} -> @Code = "Log, State @Int"
-$ logged : {} -> <&row {}> @Int = Log.log 1; State.get {}
+$ logged : {} -> <!row {}> @Int = Log.log 1; State.get {}
 $ logged_value : @Int =
     do logged {}
-    ctl k
+    is k
     | State.get u => k 9
     | Log.log _   => k {}
     | v           => v
@@ -66,4 +66,4 @@ $ ck_row : @Int = if peeked == 7 && logged_value == 9 => 0 else 32
 
 $ test : @Int = ck_scalar + ck_nested + ck_struct + ck_union + ck_body + ck_row
 
-$ &assert (test == 0) "META_TYPE: a check failed"
+$ !assert (test == 0) "META_TYPE: a check failed"

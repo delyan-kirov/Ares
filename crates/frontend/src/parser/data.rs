@@ -196,7 +196,7 @@ impl Ast {
     }
 
     /// A declared type rendered back to source that parses as the same type, or
-    /// None while it still holds a `&` splice. Reflection reports field and
+    /// None while it still holds a `!` splice. Reflection reports field and
     /// payload types this way, for a generator to copy them into a declaration.
     pub fn ty_source(&self, ty: Aol<Ty>) -> Option<String> {
         self.ty_src(ty, 0)
@@ -322,7 +322,7 @@ pub enum Item {
     },
     /// `$ Name : sig = @struct [@extern "abi"] field, ...`. `sig` states the
     /// parameters, `(a: @Type) -> (n: @Nat) -> @Type`, and `params` are their
-    /// names, in order. `splices` are the `&X` entries whose
+    /// names, in order. `splices` are the `!X` entries whose
     /// generated fields the expand loop splices in before the final compile. `abi` is set when
     /// the struct is a C-layout foreign type (`@struct @extern "C"`): its runtime
     /// representation is a flat, unboxed C struct, so it can cross the `@extern`
@@ -343,7 +343,7 @@ pub enum Item {
     /// binders of `sig` that every constructor's stated result passes through
     /// as themselves; the binders after them are indices, which a constructor
     /// states after its payload, `Cons: @ctx {n: @Nat} -> {a, Vec a n} -> Vec a (n + 1)`.
-    /// `splices` are `&X` entries generating variants, as for structs.
+    /// `splices` are `!X` entries generating variants, as for structs.
     Union {
         name: StrId,
         sig: Aol<Ty>,
@@ -383,7 +383,7 @@ pub enum Item {
     /// module-private (not exported). Symbols are public by default; there is no
     /// `@public` counterpart, so a module's public interface sits above the marker.
     Private,
-    /// `$ &expr`: run the `@Code`-valued expression at compile time and insert
+    /// `$ !expr`: run the `@Code`-valued expression at compile time and insert
     /// the code it returns in place of the directive (see the driver). Also an
     /// expression/type intrinsic; this is the item form. The `Span` is the whole
     /// directive, which the driver replaces.
@@ -397,7 +397,7 @@ pub struct FieldDecl {
     pub ty: Aol<Ty>,
 }
 
-/// One `&X` entry of a struct or union declaration: `X` builds the `@Code` of
+/// One `!X` entry of a struct or union declaration: `X` builds the `@Code` of
 /// a list of fields or variants, which the driver checks and splices in place
 /// of the entry. `span` covers the whole entry.
 #[derive(Clone, Copy, Debug)]
@@ -460,7 +460,7 @@ pub enum Ty {
     Sized { size: Aol<Ty>, elem: Aol<Ty> },
     /// Type application `Head Arg` (left-associative at use sites).
     App(Aol<Ty>, Aol<Ty>),
-    /// A compile-time type splice `&X`: `X` is a compile-time expression that
+    /// A compile-time type splice `!X`: `X` is a compile-time expression that
     /// produces an `@Code` denoting a type, spliced into this annotation. Erased
     /// before the final (strict) compile: the driver's expand loop runs `X`,
     /// substitutes the resulting type source at this node's span, and re-parses.
@@ -511,8 +511,8 @@ pub struct EffectRow {
 
 /// One comma-separated entry of an effect row: an effect label with its type
 /// arguments (`<Chan @Int e>`). `args` are type atoms, empty for a bare label. `meta`
-/// holds `X` for a compile-time splice `<&X>`, whose code supplies the
-/// entries; its `name` is `&` and it has no `args`.
+/// holds `X` for a compile-time splice `<!X>`, whose code supplies the
+/// entries; its `name` is `!` and it has no `args`.
 #[derive(Clone, Copy, Debug)]
 pub struct RowEntry {
     pub name: StrId,
@@ -532,7 +532,6 @@ pub enum Pattern {
     Int(i64),
     Real(f64),
     Str(StrId),
-    Bool(bool),
     /// An inclusive numeric range `lo ... hi`: matches when `lo <= x <= hi`. Both
     /// bounds are numeric literal patterns (`Int`/`Real`). An open range `lo ...`
     /// omits the upper bound and matches when `lo <= x`. Refutable; binds nothing.
@@ -573,7 +572,7 @@ pub enum Pattern {
         tag: StrId,
         fields: Slice<FieldPat>,
     },
-    /// `&X`: a pattern a generator produces. `X` builds the `@Code`, and the
+    /// `!X`: a pattern a generator produces. `X` builds the `@Code`, and the
     /// driver splices its source here before the final compile.
     MetaE(Aol<Expr>),
 }
@@ -642,7 +641,7 @@ pub enum Expr {
         target: Aol<Expr>,
         quoted: Aol<Expr>,
     },
-    /// The build-time splice `&e`: `e` runs at compile time and its result
+    /// The build-time splice `!e`: `e` runs at compile time and its result
     /// replaces the site, spliced in when it is `@Code` and inserted as a literal
     /// when it is first-order data.
     Splice(Aol<Expr>),
@@ -727,7 +726,7 @@ pub enum Expr {
         params: Slice<LamParam>,
         body: Aol<Expr>,
     },
-    /// `do body [ctl k clauses ...]`.
+    /// `do body [is k clauses ...]`.
     Handle {
         body: Aol<Expr>,
         handler: Option<Box<Handler>>,
@@ -812,7 +811,7 @@ pub struct Arm {
     pub body: Aol<Expr>,
 }
 
-/// A `ctl k ...` handler attached to a `do` block.
+/// A `is k ...` handler attached to a `do` block.
 #[derive(Clone, Debug)]
 pub struct Handler {
     pub continuation: StrId,

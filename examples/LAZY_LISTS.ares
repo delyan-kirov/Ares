@@ -30,4 +30,4 @@ $ ck_take : @Int = if foldl (\a x => a + x) 0 (take 4 [1 ...]) == 10 => 0 else 1
 
 $ test : @Int = ck_head + ck_nth + ck_map + ck_range + ck_take
 
-$ &assert (test == 0) "LAZY_LISTS: a check failed"
+$ !assert (test == 0) "LAZY_LISTS: a check failed"

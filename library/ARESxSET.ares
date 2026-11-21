@@ -30,7 +30,7 @@ $ inter : @ctx { t: @Type } -> @use { o: IOrd t } -> Set t -> Set t -> Set t = \
 
 # Elements of `a` not in `b`.
 $ diff : @ctx { t: @Type } -> @use { o: IOrd t } -> Set t -> Set t -> Set t = \b a =>
-    filter (\x => !(has x b)) a
+    filter (\x => not (has x b)) a
 
 # ---- the collection interfaces ----
 
@@ -47,7 +47,7 @@ $ impl_IToList_for_Set : @ctx { t: @Type } -> IToList (Set t) (@Vec t) =
     .{ .to_list = \s => keys s.m }
 $ impl_IFold_for_Set : @ctx { t: @Type, a: @Type } -> IFold (Set t) a (a -> t -> a) =
     .{ .fold = \f acc s => fold (\a k u => f a k) acc s.m }
-$ impl_IFilter_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IFilter (Set t) (t -> @Bool) =
+$ impl_IFilter_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IFilter (Set t) (t -> Bool) =
     .{ .filter = \p s => Set.{ .m = filter (\k u => p k) s.m } }
 $ impl_IMerge_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IMerge (Set t) =
     .{ .merge = \a b => Set.{ .m = merge b.m a.m } }

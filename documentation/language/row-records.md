@@ -108,7 +108,7 @@ disruptive.
 
 A declaration never carries a free row variable, so copying another struct's
 fields into one is not row extension: it is text, generated at build time. A
-`&` entry splices in the fields a generator builds (`$ Point3 : @Type = @struct
+`!` entry splices in the fields a generator builds (`$ Point3 : @Type = @struct
 &ARES.fields_of "Point", z: @Int` is the closed row `{ x, y, z }`). `| r` in a
 **signature** is extension by an **unknown** tail.
 

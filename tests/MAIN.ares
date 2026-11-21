@@ -32,7 +32,7 @@ $ excluded_tests : @Vec @Str = ["STDLIB_IO", "STDLIB_ASYNC_IO", "STDLIB_CHANNELS
 
 # Every example, less the ones tests/EXCEPTIONS.ares says this platform cannot run.
 $ modules : {} -> <@Meta, @IO> @Vec @Str =
-    filter (\m => !(EXCEPTIONS.skipped TARGET.os m))
+    filter (\m => not (EXCEPTIONS.skipped TARGET.os m))
         (fmap ARES.strip_ext (filter (\f => ends_with ".ares" f) (read_dir "examples")))
 
 $ check_call : @Str -> @Str = \m =>

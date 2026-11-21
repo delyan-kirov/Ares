@@ -216,7 +216,7 @@ back to a cycle).
 
 **Decision (2026-10-04, revising the affine decision kept below).** A resumption
 may be invoked **any number of times**. Nothing in the surface language or the
-type system says how often: `ctl k` is applied as often as the handler needs, so
+type system says how often: `is k` is applied as often as the handler needs, so
 nondeterminism, backtracking and probabilistic search are ordinary handlers.
 
 **Why the affine argument did not hold.** It rested on the premise that
@@ -258,11 +258,11 @@ a copy and the original stays resumable for its other owners.
 What this buys over the static per-clause walk it replaced:
 
 - **Escaping continuations move.** Parameter-passing state
-  (`ctl k | get u => \s => (k s) s`, `k` captured by a lambda) and the
-  coroutine idiom (`ctl k | yield v => Task.Susp.{ v, k }`, `k` stashed and
+  (`is k | get u => \s => (k s) s`, `k` captured by a lambda) and the
+  coroutine idiom (`is k | yield v => Task.Susp.{ v, k }`, `k` stashed and
   resumed elsewhere) are dynamically one-shot, and the runtime now sees it. The
   walk had to copy both per resume.
-- **The final resume of a multi-shot clause moves.** In `k @true + k @false` the
+- **The final resume of a multi-shot clause moves.** In `k true + k false` the
   first `k` is not its last use, so that resume copies; the second is, so it
   takes the slice. n resumes cost n-1 copies.
 - **`Never` is unchanged.** It is still decided statically, so `for`/`formap`
@@ -277,7 +277,7 @@ not either. A uniquely owned callee has its contents taken rather than shared on
 entry (a closure's environment, a partial application's operands), which is what
 lets a resumption captured in a lambda arrive unshared.
 
-**`@oneshot` (removed, #249).** `ctl @oneshot k` existed to buy back the move
+**`@oneshot` (removed, #249).** `is @oneshot k` existed to buy back the move
 where `k` escaped the clause, by asserting at most one resume. Exact ownership
 finds the move on its own wherever the annotation was correct, so it was removed
 from the syntax.
@@ -564,7 +564,7 @@ Each clause resumes once; deep keeps get/put handled across the resume OK.
   each resumed once.
 - **Async/await:** the continuation after `await` is resumed once on resolve.
 - **Nondeterminism / backtracking:** the clause resumes the SAME `k` once per
-  choice (`k @true ++ k @false`), each resume on its own copy. This is the one
+  choice (`k true ++ k false`), each resume on its own copy. This is the one
   that needs section 2's general discipline; the four above do not.
 
 ---
@@ -598,8 +598,8 @@ Status legend: [X] done, [~] in progress, [ ] planned.
   first-class resumptions (affine at first, general since 2026-10-04), dynamic
   handler search. **Mostly landed (2026-06-27).** Surface is keyword-frugal (section 12): no `perform`/`resume` calling
   an operation performs, applying `k` resumes; unit `{}` added. Done in substeps:
-  - [X] **3a** parse `do <body> ctl k  is op a = e ...  [else x = e]` into
-    `ExHandle` (new `do`/`ctl` keywords; `is`/`else` reused).
+  - [X] **3a** parse `do <body> is k  is op a = e ...  [else x = e]` into
+    `ExHandle` (new `do`/`is` keywords; `is`/`else` reused).
   - [X] **3c** typing (`CHandle` in TC: `op : A -> B` gives `a:A`, `k:B->result`;
     `else`/identity value clause) + CR/IR lowering (clauses/`else` as lifted
     closures; a `Handle` IR node; `Program.operations`).
@@ -627,7 +627,7 @@ Status legend: [X] done, [~] in progress, [ ] planned.
     the live stack, so enclosing handlers are still installed), and when a stored
     continuation completes. Detected via the resumption's `used` flag + a kval
     refcount ("stored") check -- NOT a destructor, so timing is correct. Also made
-    `do <body>` (no `ctl`) a plain block. `dat/FINALLY.ares`. Limitation: a stored
+    `do <body>` (no `is`) a plain block. `dat/FINALLY.ares`. Limitation: a stored
     continuation dropped without ever being resumed does not run its `defer`.
   - [X] **`@finale` replaces `defer` (2026-11-08).** The keyword is gone:
     `@finale cleanup body` is a CORE builtin over two thunks, so it pipes,
@@ -643,7 +643,7 @@ Status legend: [X] done, [~] in progress, [ ] planned.
     mapped to one copy). The per-clause `ResumeUse` walk keeps the old cost:
     `Never` skips the capture entirely (and so is faster than before for
     `for`/`formap` and exceptions), `Once` still moves, only `Many` copies.
-    `ctl @oneshot k` restores the move where `k` escapes and nothing can be
+    `is @oneshot k` restores the move where `k` escapes and nothing can be
     proved. No typing or surface change otherwise. Both engines; `examples/AMB.ares`
     (two-way choice, collected paths, a backtracking triple search) agrees across
     them and is valgrind-clean. See section 2.
@@ -718,7 +718,7 @@ Status legend: [X] done, [~] in progress, [ ] planned.
     Go-style surface; desugars to the internal `%finally` intrinsic). `initially`
     and the stored-then-dropped case remain unaddressed.
   - Effect **surface syntax** **DECIDED 2026-06-27**; see section 12 and the
-    language reference (documentation/language/language-reference.md section 8). `@effect` declaration; `do ... ctl k ... is ... else
+    language reference (documentation/language/language-reference.md section 8). `@effect` declaration; `do ... is k ... is ... else
     ...`; no `perform` (call the operation), no `resume` (apply the first-class `k`);
     unit `{}`.
   - **Named handlers** vs pure effect-label dispatch; `mask`.
@@ -782,8 +782,8 @@ the result is **closest to Flix**.
   (runtime-checked), droppable (= the exception case), storable (= generators /
   coroutines).
 
-- **Handling.** `do <body> ctl k  | op a => e ...  | pat => e ...`. `do` takes
-  the body (no parens, `ctl` delimits it). `ctl k` binds the one continuation,
+- **Handling.** `do <body> is k  | op a => e ...  | pat => e ...`. `do` takes
+  the body (no parens, `is` delimits it). `is k` binds the one continuation,
   shared by all clauses (exactly one `k` per performed op). `| op a => e` handles
   `op`, binding its argument `a`. A value arm `| pat => e` is the value clause
   (normal completion), matching the body's result like a match arm; optional,
@@ -791,8 +791,8 @@ the result is **closest to Flix**.
   `Eff.op a`), which no pattern does, so the parser tells the two apart without a
   marker (#232 replaced the earlier `else x => e`). Handlers are deep (section 3).
 
-Net new keywords: `@effect`, `do`, `ctl`; all
-contextual. `ctl` is borrowed from Koka and reserved as the slot for a future
+Net new keywords: `@effect`, `do`, `is`; all
+contextual. `is` is borrowed from Koka and reserved as the slot for a future
 `fun` (tail-resumptive, no-capture) clause kind see section 6.
 
 ---

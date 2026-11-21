@@ -322,7 +322,8 @@ pub const NAT: &str = "@Nat";
 pub const UNIVERSE: &str = "@Type";
 pub const REAL: &str = "@Float64";
 pub const STR: &str = "@Str";
-pub const BOOL: &str = "@Bool";
+/// CORE's `Bool`, an ordinary union the engines hold as a machine boolean.
+pub const BOOL: &str = "Bool";
 pub const UNIT: &str = "{}";
 pub const PTR: &str = "@Ptr";
 pub const ARRAY: &str = "@Array";
@@ -573,7 +574,7 @@ fn closed_row_is(types: &Types, row: Type, want: &[&str]) -> bool {
 
 /// The one name the compiler knows a program by: `$ @main`, a C-style entry that
 /// takes the argument vector and returns an exit code. Nothing else is special;
-/// a test harness is ordinary code (a compile-time check under `$ &`, or a
+/// a test harness is ordinary code (a compile-time check under `$ !`, or a
 /// global some tool evaluates by name).
 pub const ENTRY: &str = "@main";
 
@@ -604,7 +605,7 @@ pub fn is_entry_type(types: &Types, ty: Type) -> bool {
 /// runs *during* compilation. Its `@Code` result is injected in place of its own
 /// definition, so a module generates part of itself from whatever the build can
 /// see. It is the only context whose effect row discharges `<@IO>` at compile
-/// time, which is what separates it from `$ &`: building is IO.
+/// time, which is what separates it from `$ !`: building is IO.
 pub const BUILD: &str = "@build";
 
 /// The build function's mandated signature, in source spelling, for diagnostics.
@@ -631,7 +632,7 @@ pub fn is_build_type(types: &Types, ty: Type) -> bool {
 /// The built-in types, by their `@` names.
 pub const BASE_TYPES: &[&str] = &[
     "@Int", "@Nat", "@Int8", "@Int16", "@Int32", "@Int64", "@Nat8", "@Nat16", "@Nat32", "@Nat64",
-    "@Float32", "@Float64", "@Str", "@Ptr", "@Bool", "@Array", "@Vec", "@Code", "@Future",
+    "@Float32", "@Float64", "@Str", "@Ptr", "@Array", "@Vec", "@Code", "@Future",
     "@Chan", "@TVar", "@Type",
 ];
 

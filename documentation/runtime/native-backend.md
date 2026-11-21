@@ -178,7 +178,7 @@ Atoms `Local`/`Env`/`Glob`/`LitI`/`LitR`/`LitS`/`MkClosure`; expressions `Ret`,
 `Let` (incl. recursive), `App` (with TCO), `Case` (@Int/Real/Con + payload bind +
 default), `MkStruct`, `Field`, `MkVariant`, `Unk`; lazy-memoized global CAFs;
 built-in @Int/Real operators and the `%array` primitive; **C FFI** (`@extern`,
-below); and **algebraic effects** handlers (`do`/`ctl`), operations,
+below); and **algebraic effects** handlers (`do`/`is`), operations,
 first-class resumptions, and `@finale` (see below).
 
 The backend now lowers the whole IR: **all 24 `examples/` programs compile and
@@ -277,7 +277,7 @@ here). The driver owns a single heap continuation stack `kont` of `KFrame`s
 (`K_RET` / `K_PROMPT` / `K_DEFER` / `K_THUNKRET` / `K_AFTERCLAUSE`) and drives
 the generated block functions:
 
-- **`do body ctl k ...`** lowers to `ARESxK_handle`, which pushes a `K_PROMPT`
+- **`do body is k ...`** lowers to `ARESxK_handle`, which pushes a `K_PROMPT`
   holding the (evaluated) clause closures and the value clause `els`, then runs
   the body block under it. A handler clause is the 2-parameter `Code`
   (`IR::conv_clause`): op argument in slot 0, resumption `k` in slot 1.
@@ -364,7 +364,7 @@ so those functions carry the ownership rules:
   size, so a block may come from malloc and go to a list, or the other way
   round. A block on a list is not live, so the leak check stays exact; a worker
   hands its lists back to malloc when it exits.
-- **Shared constants**: `{}`, `@true`, `@false` and the integers -128 to 1023
+- **Shared constants**: `{}`, `true`, `false` and the integers -128 to 1023
   are static cells (`ARESxRT_unit` / `ARESxRT_bool` / `ARESxRT_int`), immortal under
   threads (`rc == 0`) and out of reach of zero without. A let box is always a
   fresh cell (`fresh_box`), since it is patched in place; patching a constant

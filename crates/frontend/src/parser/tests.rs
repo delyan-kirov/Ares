@@ -221,9 +221,9 @@ fn removed_and_ambiguous_type_forms_are_rejected() {
     // checker rejects it (tests/diagnostics/TENSOR_NO_VARIANCE.ares).
     for bad in [
         "$ v : List @Tensor 3 @Int = []",        // `@Tensor` is only a head
-        "$ v : @Vec &f @Int = []",               // a splice is never an argument
+        "$ v : @Vec !f @Int = []",               // a splice is never an argument
         "$ f : @Int -> @Int = \\x .Tag => x",    // a later parameter starts with `.`
-        "$ f : @Int -> @Int = \\x &p => x",      // a splice parameter
+        "$ f : @Int -> @Int = \\x !p => x",      // a splice parameter
     ] {
         let src = format!("$ @mod M\n{bad}");
         assert!(parse(&src).is_err(), "{bad} should not parse");
@@ -386,7 +386,7 @@ fn one_import_per_item() {
 #[test]
 fn union_effect_import_and_directives() {
     let src = "$ @mod M\n$ @import Foo\n$ @private\n$ Color : @Type = @union Red, Green, Blue\n\
-                   $ State : @Type = @effect get : @Int, put : @Int -> @Int\n$ &1";
+                   $ State : @Type = @effect get : @Int, put : @Int -> @Int\n$ !1";
     let p = prog(src);
     let items = p.ast.slice(p.program.items);
     assert!(matches!(items[0], Item::Import { .. }));
@@ -602,11 +602,11 @@ fn operator_in_parens_is_a_function_reference() {
     assert_eq!(p.ast.text(*name), "+");
 
     // A prefix-only operator references its named global, not its lexeme.
-    let p = prog("$ @mod M\n$ y = (!)");
+    let p = prog("$ @mod M\n$ y = (~~~)");
     let Expr::Var { module: None, name } = p.ast.expr(only_def_body(&p)) else {
         panic!("expected an operator reference")
     };
-    assert_eq!(p.ast.text(*name), "not");
+    assert_eq!(p.ast.text(*name), "complement");
 
     // An operator the parser rewrites has no binding, so it eta-expands.
     let p = prog("$ @mod M\n$ y = (&&)");
@@ -718,7 +718,7 @@ fn a_stray_annotation_names_where_the_type_goes() {
     assert!(text.contains("help: insert `]`\n  |\n2 | $ y = [1, 2]\n"), "{text}");
 }
 
-/// The handler of the single global's `do ... ctl` body.
+/// The handler of the single global's `do ... is` body.
 fn only_handler(p: &Parsed) -> &Handler {
     let Expr::Handle { handler: Some(h), .. } = p.ast.expr(only_def_body(p)) else {
         panic!("expected a handled `do`")
@@ -728,7 +728,7 @@ fn only_handler(p: &Parsed) -> &Handler {
 
 #[test]
 fn handler_value_arms_match_the_body_result() {
-    let p = prog("$ @mod M\n$ f = do g {} ctl k | E.op x => 0 | .A => 1 | .B.{ n } if n > 0 => n | _ => 2");
+    let p = prog("$ @mod M\n$ f = do g {} is k | E.op x => 0 | .A => 1 | .B.{ n } if n > 0 => n | _ => 2");
     let h = only_handler(&p);
     assert_eq!(h.clauses.len(), 1);
     let (name, body) = h.value.expect("a value clause");
@@ -741,18 +741,18 @@ fn handler_value_arms_match_the_body_result() {
 
 #[test]
 fn a_lone_binder_value_arm_binds_directly() {
-    let p = prog("$ @mod M\n$ f = do g {} ctl k | op x => 0 | r => r");
+    let p = prog("$ @mod M\n$ f = do g {} is k | op x => 0 | r => r");
     let (name, body) = only_handler(&p).value.expect("a value clause");
     assert_eq!(p.ast.text(name), "r");
     assert!(matches!(p.ast.expr(body), Expr::Var { .. }));
 
-    let p = prog("$ @mod M\n$ f = do g {} ctl k | op x => 0");
+    let p = prog("$ @mod M\n$ f = do g {} is k | op x => 0");
     assert!(only_handler(&p).value.is_none());
 }
 
 #[test]
 fn a_match_in_a_clause_ends_at_the_next_operation_clause() {
-    let p = prog("$ @mod M\n$ f = do g {} ctl k | E.op x => x |> \\ | 1 => 0 | _ => 1 | E.other y => 2 | put n => 3");
+    let p = prog("$ @mod M\n$ f = do g {} is k | E.op x => x |> \\ | 1 => 0 | _ => 1 | E.other y => 2 | put n => 3");
     let h = only_handler(&p);
     assert_eq!(h.clauses.len(), 3);
     assert!(h.value.is_none());
@@ -768,7 +768,7 @@ fn a_match_in_a_clause_ends_at_the_next_operation_clause() {
 #[test]
 fn else_no_longer_ends_a_match_or_a_handler() {
     assert!(parse("$ @mod M\n$ f = \\ | 1 => 0 else 1").is_err());
-    assert!(parse("$ @mod M\n$ f = do g {} ctl k | op x => 0 else r => r").is_err());
+    assert!(parse("$ @mod M\n$ f = do g {} is k | op x => 0 else r => r").is_err());
 }
 
 #[test]
@@ -887,7 +887,7 @@ fn a_multi_arm_lambda_is_a_lambda_over_a_match() {
         assert_eq!(p.ast.slice(*arms).len(), 3);
     }
     // A handler's operation clause still ends the arms of a multi-arm lambda.
-    prog("$ @mod M\n$ E : @Type = @effect op: @Int -> @Int\n$ f = \\u => do u {} ctl k | op x => \\ | 0 => 1 | _ => 2 | v => v");
+    prog("$ @mod M\n$ E : @Type = @effect op: @Int -> @Int\n$ f = \\u => do u {} is k | op x => \\ | 0 => 1 | _ => 2 | v => v");
 }
 
 /// `\ | p, q => e` takes one argument per comma-separated pattern: a lambda of
@@ -942,7 +942,7 @@ fn arms_agree_on_their_pattern_count() {
     for src in [
         "$ @mod M\n$ f = \\ | 0, b => b | a => a",
         "$ @mod M\n$ f = \\ | 0, _ | 1 => 0 | _, _ => 1",
-        "$ @mod M\n$ f = do g {} ctl k | op x => 0 | a, b => a",
+        "$ @mod M\n$ f = do g {} is k | op x => 0 | a, b => a",
     ] {
         let err = match parse(src) {
             Err(e) => e.to_string(),
@@ -967,14 +967,14 @@ fn a_bare_ctx_parameter_fixes_to_a_named_use_field() {
     };
     let m = "$ @mod M\n";
     assert_eq!(
-        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = \\d x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = \\d x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
     );
     assert_eq!(
-        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = \\d => \\x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> @Bool = \\x => d.eq x x\n"))
+        fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = \\d => \\x => d.eq x x\n")),
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
     );
-    let help = fixed(&format!("{m}$ eq : @ctx {{t: @Type}} -> @ctx IEq t -> t -> @Bool = eq_impl\n"));
+    let help = fixed(&format!("{m}$ eq : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = eq_impl\n"));
     assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d: IEq t} -> ...`")), "{help:?}");
     // A field of a `@ctx` record is named.
     let err = parse(&format!("{m}$ z : @ctx {{ISub t, IZero t, t: @Type}} -> t -> t = \\{{s, z}} x => s.sub x z.zero\n")).err();

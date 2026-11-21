@@ -1230,7 +1230,7 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    /// Type a `do body ctl k <clauses> <value arms>` handler. `R` is the result
+    /// Type a `do body is k <clauses> <value arms>` handler. `R` is the result
     /// of the whole handled computation: every clause body and the value arms have
     /// type `R`, and with no value arm the body's own value passes through (`R` is
     /// the body type). In a clause handling `op : Arg -> Res`, the payload `arg` has
@@ -1869,7 +1869,7 @@ impl<'a> Checker<'a> {
         self.scopes[1..].iter().any(|s| s.contains_key(&name))
     }
 
-    /// The operand of an expression or pattern splice `&X`, run at compile time.
+    /// The operand of an expression or pattern splice `!X`, run at compile time.
     /// First-order data is inserted as a literal of its own type. Anything else
     /// must be `@Code`, which denotes something only known once the driver has
     /// spliced it and re-checked, so the caller leaves that site unconstrained.
@@ -1916,7 +1916,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether a value of `ty` has a literal the driver can write back into the
-    /// source: a number, a `@Bool` or a `@Str`.
+    /// source: a number, a `Bool` or a `@Str`.
     fn is_literal_data(&self, ty: Type) -> bool {
         if self.is_numeric(ty) {
             return true;
@@ -1940,14 +1940,14 @@ impl<'a> Checker<'a> {
     /// Require a splice operand to be `@Code`.
     pub(super) fn require_code(&mut self, found: Type) -> Result<()> {
         let code = self.unifier.types.con("@Code");
-        if self.unifier.unify(found, code, "in a `&` operand").is_ok() {
+        if self.unifier.unify(found, code, "in a `!` operand").is_ok() {
             return Ok(());
         }
         let shown = self.unifier.show(found);
         Err(diag!(
             Code::TypeMismatch, Span::at(0), 0,
-            "`&` inserts code or a literal, but its operand is `{shown}`";
-            note: "a literal is a number, a `@Bool` or a `@Str`; anything else must be `@Code`";
+            "`!` inserts code or a literal, but its operand is `{shown}`";
+            note: "a literal is a number, a `Bool` or a `@Str`; anything else must be `@Code`";
             help: "write the code as a string literal expected as `@Code`; a site run only \
                    for its effect returns empty code (`\"\"`)"
         ))
@@ -2559,7 +2559,7 @@ impl<'a> Checker<'a> {
                 // Pinned to a genuinely UNKNOWN con (a typo'd type): let that type's
                 // own "unknown type" diagnostic surface instead of the numeric error.
                 TypeNode::Con(name) if !self.is_known_type(name) => {}
-                // Pinned to a known non-numeric type (e.g. `if 1` wants `@Bool`): a
+                // Pinned to a known non-numeric type (e.g. `if 1` wants `Bool`): a
                 // bare literal is a number, so this is a type error, not a coercion.
                 _ => {
                     let shown = self.show(*t);
@@ -2737,7 +2737,7 @@ pub(super) fn unbound(name: impl Display) -> Diagnostic {
 
 /// The numeric types a bare integer/real literal may take: the friendly word-size
 /// `Int`/`Nat`/`Real` and every sized `@`-form. A literal used anywhere else (a
-/// `@Bool` condition, a `@Ptr`, a `Str`) is a type error.
+/// `Bool` condition, a `@Ptr`, a `Str`) is a type error.
 pub(super) fn is_numeric_type(name: &str) -> bool {
     matches!(
         name,

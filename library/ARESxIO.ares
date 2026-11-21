@@ -51,7 +51,7 @@ $ read_file : @Str -> <@IO> Opt @Str = \path =>
 # byte-wise so the result never depends on the filesystem's or the locale's
 # order. Empty when the directory cannot be read.
 $ read_dir : @Str -> <@IO> @Vec @Str = \dir =>
-    sort_by cmp_str (filter (\name => !(is_empty name)) (lines (C.dir_entries dir)))
+    sort_by cmp_str (filter (\name => not (is_empty name)) (lines (C.dir_entries dir)))
 
 # A directory's entries with their kinds, in the order the system lists them.
 # The kind needs no `stat` per entry where the system reports it while listing.
@@ -75,11 +75,11 @@ $ mtime : @Str -> <@IO> Opt @Int = \path =>
 
 # Write (truncating) / append `content` to the file; true on success, false
 # on failure to open.
-$ write_file : @Str -> @Str -> <@IO> @Bool = \path content => spill_file path content "wb"
+$ write_file : @Str -> @Str -> <@IO> Bool = \path content => spill_file path content "wb"
 
-$ append_file : @Str -> @Str -> <@IO> @Bool = \path content => spill_file path content "ab"
+$ append_file : @Str -> @Str -> <@IO> Bool = \path content => spill_file path content "ab"
 
-$ remove_file : @Str -> <@IO> @Bool = \path => (C.remove path) == 0
+$ remove_file : @Str -> <@IO> Bool = \path => (C.remove path) == 0
 
 # The environment variable's value, or "" when unset (libc's NULL becomes
 # the empty string across the FFI).
@@ -97,7 +97,7 @@ $ read_line_acc : @Str -> <@IO> @Str = \acc =>
     if c == 10 => acc else if is_byte c => read_line_acc (@array_push acc c) else acc
 
 # `fgetc`/`getchar` return a byte, or EOF (-1).
-$ is_byte : @Int -> @Bool = \c => if c < 0 => @false else c <= 255
+$ is_byte : @Int -> Bool = \c => if c < 0 => false else c <= 255
 
 $ read_bytes : @Int -> @Int -> @Str -> <@IO> @Str = \f n acc =>
     if n <= 0 =>
@@ -145,6 +145,6 @@ $ entries : @Str -> @Int -> @Vec Entry -> @Vec Entry = \s i acc =>
 
 $ newline : @Str = byte_set "\n"
 
-$ spill_file : @Str -> @Str -> @Str -> <@IO> @Bool = \path content mode =>
+$ spill_file : @Str -> @Str -> @Str -> <@IO> Bool = \path content mode =>
     let f = C.fopen { path, mode } in
-    if f == 0 => @false else C.fwrite { content, 1, @array_len content, f }; (C.fclose f) == 0
+    if f == 0 => false else C.fwrite { content, 1, @array_len content, f }; (C.fclose f) == 0

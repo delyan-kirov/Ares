@@ -393,7 +393,7 @@ fn check_root(base: Rc<Base>, root_path: &Path, root_src: String, fresh: bool) -
     }
 
     let generative = is_generative(&root_src);
-    // A type whose `&` entries have not been spliced in lacks their members,
+    // A type whose `!` entries have not been spliced in lacks their members,
     // so any error past parsing may be only early, as a lenient compile round
     // treats it.
     let awaiting = checker.awaits_splices();
@@ -403,7 +403,7 @@ fn check_root(base: Rc<Base>, root_path: &Path, root_src: String, fresh: bool) -
         if awaiting && d.root().code != Code::UnexpectedToken {
             d = d
                 .with_severity(Severity::Hint)
-                .with_note("a type here still waits for the members its `&` entries generate; saving checks it fully");
+                .with_note("a type here still waits for the members its `!` entries generate; saving checks it fully");
         } else if generative && d.root().code == Code::TypeUnbound {
             d = d
                 .with_severity(Severity::Hint)
@@ -423,7 +423,7 @@ fn check_root(base: Rc<Base>, root_path: &Path, root_src: String, fresh: bool) -
 }
 
 /// Whether a module has compile-time code that may define names: a `@build`, or
-/// a `&` splice other than an `assert` check.
+/// a `!` splice other than an `assert` check.
 fn is_generative(src: &str) -> bool {
     if src.contains("@build") {
         return true;

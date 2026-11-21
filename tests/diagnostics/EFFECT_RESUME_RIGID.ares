@@ -13,6 +13,6 @@ $ use : {} -> <Box> @Int =
 
 $ run : @Int =
 	do use {}
-	ctl k
+	is k
 	| Box.take x => k x  #~ error[TYPE_MISMATCH]: expected `a` of `Box.take`, found @Int
 	| r => r

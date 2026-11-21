@@ -237,7 +237,7 @@ pub(crate) fn load_core(
 
 /// Load every module an import names that is not loaded yet, transitively. The
 /// initial set comes from [`load_core`]; this reopens it after an expansion round,
-/// where a `@build` or a `$ &` may have injected `$ @import M` for a module no
+/// where a `@build` or a `$ !` may have injected `$ @import M` for a module no
 /// hand-written source mentions.
 fn load_injected_imports(loaded: &mut Loaded, fetch: &Fetch) -> Result<(), String> {
     let mut queue: Vec<(String, utilities::Span, usize)> = Vec::new();
@@ -717,7 +717,7 @@ pub(crate) fn dotted(ast: &frontend::Ast, parts: utilities::Slice<utilities::Str
 /// and lower every module, returning the lowered modules (root first). The
 /// parse/check state is local (self-borrowing), so only the owned `lowered`
 /// escapes; the expansion loop in [`lower_all`] calls this repeatedly on
-/// progressively `&`-expanded sources.
+/// progressively `!`-expanded sources.
 type Compiled = (
     Vec<frontend::core::CoreProgram>,
     Reflection,
@@ -875,9 +875,9 @@ fn check_entry(
     Ok(())
 }
 
-/// Render a compile-time `&` fault at its call site: fill the fault's (sentinel)
+/// Render a compile-time `!` fault at its call site: fill the fault's (sentinel)
 /// span with the site's span and render against that module's source, so the
-/// caret lands on the `&` in the user's file rather than a synthetic global.
+/// caret lands on the `!` in the user's file rather than a synthetic global.
 fn render_e_fault(
     diag: utilities::Diagnostic,
     module: &str,
@@ -898,7 +898,7 @@ fn render_e_fault(
 }
 
 /// Move an error raised inside a `@Code` fragment into the
-/// string literal that spells it: the first one inside the `&` site that
+/// string literal that spells it: the first one inside the `!` site that
 /// decodes to the fragment, else the first anywhere in the module. A fragment
 /// no literal spells (built at compile time) stays at the site, quoted in a
 /// note.
@@ -933,7 +933,7 @@ fn place_in_literal(diag: utilities::Diagnostic, src: &str, site: utilities::Spa
                 let (a, b) = (start + at[s.start], start + at[s.end]);
                 Some(utilities::Span::new(a, b.max(a + 1)))
             });
-            if inside { diag } else { diag.with_label(site, "the `&` that ran it") }
+            if inside { diag } else { diag.with_label(site, "the `!` that ran it") }
         }
         None => diag
             .place_fragment(|_| None)
@@ -992,7 +992,7 @@ fn map_back(rounds: &[HashMap<String, Vec<(usize, usize, usize)>>], module: &str
     p.max(0) as usize
 }
 
-/// Run `path`'s whole compile-time pipeline (every `$ &` and `@build`, then the
+/// Run `path`'s whole compile-time pipeline (every `$ !` and `@build`, then the
 /// strict check) and return what it reports, as `(module, diagnostic)` with
 /// spans in the sources as written. For an editor's on-save check.
 pub(crate) fn compile_time_diagnostics(path: &str) -> Vec<(String, utilities::Diagnostic)> {
@@ -1017,12 +1017,12 @@ pub(crate) fn compile_time_diagnostics(path: &str) -> Vec<(String, utilities::Di
 }
 
 /// How many expansion rounds [`lower_all`] runs before it gives up. Staging depth
-/// is unbounded by design (a `&` may inject another `&`), so this only stops a
+/// is unbounded by design (a `!` may inject another `!`), so this only stops a
 /// generator that injects a fresh site every round from hanging the build.
 const MAX_META_ROUNDS: usize = 100;
 
-/// Compile `path`, iteratively expanding every `&` (compile-time code
-/// insertion): each round compiles the current sources, forces every `&` site,
+/// Compile `path`, iteratively expanding every `!` (compile-time code
+/// insertion): each round compiles the current sources, forces every `!` site,
 /// and substitutes the code it returns in source, repeating until
 /// none remain. `@link`/`@link_path` calls record build directives along the way,
 /// drained into the returned `BuildPlan`. Returns the expanded modules too, so a
@@ -1082,15 +1082,15 @@ fn expand_loaded(
             eprintln!("{}", msg.trim_end());
             return Err(ExitCode::FAILURE);
         }
-        // Compile leniently while `&` sites remain: a generator may inject a
+        // Compile leniently while `!` sites remain: a generator may inject a
         // definition that hand-written code forward-references, which would not
         // yet resolve. Unbound names are deferred (fresh vars) so the generators
         // can still run; the final strict compile below validates the result.
         let mut compiled = compile_sources(loaded, true, want_entry, shell)?;
-        // Gather every `&` site this round, as `(module, qualified global, span,
+        // Gather every `!` site this round, as `(module, qualified global, span,
         // how its code is spliced)`: item position (`$ &X`) replaces the
         // directive with the items, expression and type position splice the code
-        // parenthesized to keep precedence, and pattern position (`&X`) splices
+        // parenthesized to keep precedence, and pattern position (`!X`) splices
         // it bare, since a pattern has no parentheses.
         let sites: Vec<(String, String, utilities::Span, Splice)> = compiled
             .0
@@ -1122,7 +1122,7 @@ fn expand_loaded(
             })
             .collect();
         if sites.is_empty() && build_sites.is_empty() {
-            // No `&` remains: re-check strictly so any name still unbound after
+            // No `!` remains: re-check strictly so any name still unbound after
             // all injection, or a missing/ill-typed entry, is reported now.
             let final_compiled = compile_sources(loaded, false, want_entry, shell)?;
             // Fold in any `@link`/`@link_path` directives recorded while running.
@@ -1187,12 +1187,12 @@ fn expand_loaded(
         };
         // `@build` first, and alone in its round: it contributes the definitions
         // the rest of the compile-time code may depend on, so its items have to
-        // land before any `$ &` that reads them runs. Each `@build` is forced
+        // land before any `$ !` that reads them runs. Each `@build` is forced
         // once, and the items of the `@Code` it returns are APPENDED to its
-        // module's source. Appending (rather than replacing a span, as an `$ &`
+        // module's source. Appending (rather than replacing a span, as an `$ !`
         // directive does) is what makes `@build` a definition that stays put: it
         // contributes items to its module instead of becoming them. Whatever it
-        // injects is expanded by the rounds that follow, so a generated `$ &`
+        // injects is expanded by the rounds that follow, so a generated `$ !`
         // still runs.
         let ran_builds = !build_sites.is_empty();
         for (module, qualified) in build_sites {
@@ -1300,7 +1300,7 @@ fn expand_loaded(
             let v = match v {
                 Ok(v) => v,
                 Err(d) => {
-                    faults.push((d.with_note("raised while running this compile-time `&`"), module, span));
+                    faults.push((d.with_note("raised while running this compile-time `!`"), module, span));
                     continue;
                 }
             };
@@ -1310,7 +1310,7 @@ fn expand_loaded(
                     match interpreter::machine::data::check_fragment(&code, kind) {
                         Ok(()) => hygienic(code, &v, kind, &module),
                         Err(d) => {
-                            faults.push((d.with_note(format!("this `&` splices {what}")), module, span));
+                            faults.push((d.with_note(format!("this `!` splices {what}")), module, span));
                             continue;
                         }
                     }
@@ -1322,7 +1322,7 @@ fn expand_loaded(
                             utilities::Code::TypeMismatch,
                             span,
                             0,
-                            "this `&` produced a value with no literal",
+                            "this `!` produced a value with no literal",
                         )
                         .with_note("a real that is infinite or not a number has no literal to insert");
                         faults.push((d, module, span));
@@ -1353,7 +1353,7 @@ fn expand_loaded(
             // lenient check deferred is an error: the strict check reports it.
             if held > 0 {
                 compile_sources(loaded, false, want_entry, shell)?;
-                eprintln!("ares: a compile-time `&` waits on code that never resolved");
+                eprintln!("ares: a compile-time `!` waits on code that never resolved");
             }
             return Err(ExitCode::FAILURE);
         }
@@ -1369,7 +1369,7 @@ fn import_line((file, module): (utilities::StrId, utilities::StrId)) -> String {
     format!("\n$ @import {module} = {file}\n")
 }
 
-/// The syntax category the `@Code` of the `&` site backed by the global
+/// The syntax category the `@Code` of the `!` site backed by the global
 /// `qualified` must parse as, read from the synthetic name the desugarer gave
 /// it, and how to name it in a diagnostic.
 fn fragment_of(qualified: &str) -> (interpreter::machine::data::Fragment, &'static str) {
@@ -1384,14 +1384,14 @@ fn fragment_of(qualified: &str) -> (interpreter::machine::data::Fragment, &'stat
         "splice_pat" => (Fragment::Pattern, "a pattern"),
         "splice_fields" => (Fragment::Fields, "a struct's fields"),
         "splice_variants" => (Fragment::Variants, "a union's variants"),
-        _ => unreachable!("`{qualified}` backs no `&` site"),
+        _ => unreachable!("`{qualified}` backs no `!` site"),
     }
 }
 
-/// How the code a `&` site returns replaces the site.
+/// How the code a `!` site returns replaces the site.
 #[derive(Clone, Copy)]
 enum Splice {
-    /// `$ &X`: the whole directive becomes the items, so empty code (a check,
+    /// `$ !X`: the whole directive becomes the items, so empty code (a check,
     /// an `@link`) drops it.
     Items,
     /// Expression and type position: the code, parenthesized.
@@ -1480,7 +1480,7 @@ fn site_of(sources: &[(String, String, String)], module: &str, span: utilities::
 /// Render what `@warn` reported while the site at `span` of `module` ran.
 fn report_meta_warnings(module: &str, span: utilities::Span, sources: &[(String, String, String)]) {
     for w in interpreter::machine::take_meta_warnings() {
-        let w = w.with_note("raised while running this compile-time `&`");
+        let w = w.with_note("raised while running this compile-time `!`");
         eprint!("{}", render_e_fault(w, module, span, sources));
     }
 }
@@ -1496,7 +1496,7 @@ struct ReflectTables {
     scopes: HashMap<utilities::StrId, Rc<Vec<(String, String)>>>,
 }
 
-/// Index a round's collected type shapes for `$ &` reflection.
+/// Index a round's collected type shapes for `$ !` reflection.
 fn reflect_tables(Reflection { info: reflect, scopes, .. }: Reflection) -> Rc<ReflectTables> {
     use interpreter::machine::TypeInfo;
     let mut qualified = HashMap::new();
@@ -1520,7 +1520,7 @@ fn reflect_tables(Reflection { info: reflect, scopes, .. }: Reflection) -> Rc<Re
     Rc::new(ReflectTables { qualified, bare, scopes })
 }
 
-/// The `$ &` reflection host for the module whose directive is running: a
+/// The `$ !` reflection host for the module whose directive is running: a
 /// by-name lookup answering `@type_kind`/`@type_fields`/`@type_variants`/`@type_of`.
 ///
 /// A bare name resolves to `caller`'s OWN type first. Types are namespaced per
@@ -1562,15 +1562,15 @@ fn as_code_src(v: &interpreter::machine::data::PVal) -> Option<String> {
     None
 }
 
-/// The offsets of the lone `&`s in `src`, the splice sites unless one sits in
-/// a string or a comment. `&&` and `&&&` are other operators.
+/// The offsets of the `!`s in `src`, the splice sites unless one sits in a
+/// string or a comment. `!=` is another operator.
 pub fn splice_offsets(src: &str) -> impl Iterator<Item = usize> + '_ {
     let b = src.as_bytes();
-    (0..b.len()).filter(move |&i| b[i] == b'&' && (i == 0 || b[i - 1] != b'&') && b.get(i + 1) != Some(&b'&'))
+    (0..b.len()).filter(move |&i| b[i] == b'!' && b.get(i + 1) != Some(&b'='))
 }
 
 /// The source literal of a first-order value a splice inserts: a number, a
-/// `@Bool` or a `@Str` (the checker admits no other data). `None` for a value
+/// `Bool` or a `@Str` (the checker admits no other data). `None` for a value
 /// with no literal, such as an infinite real.
 fn as_literal_src(v: &interpreter::machine::data::PVal) -> Option<String> {
     use interpreter::machine::data::Value;
@@ -1578,13 +1578,13 @@ fn as_literal_src(v: &interpreter::machine::data::PVal) -> Option<String> {
         Value::Int(n) => Some(n.to_string()),
         Value::Real(x) if x.is_finite() => Some(format!("{x:?}")),
         Value::Real32(x) if x.is_finite() => Some(format!("{x:?}")),
-        Value::Bool(b) => Some(if *b { "@true" } else { "@false" }.to_string()),
+        Value::Bool(b) => Some(if *b { "Bool.True" } else { "Bool.False" }.to_string()),
         Value::Str(bytes) => Some(interpreter::machine::data::str_literal(bytes)),
         _ => None,
     }
 }
 
-/// Apply `&` source substitutions to each module, right-to-left within a module
+/// Apply `!` source substitutions to each module, right-to-left within a module
 /// so earlier spans stay valid as later ones are replaced.
 fn splice_sources(sources: &mut [(String, String, String)], mut edits: Vec<(String, utilities::Span, String)>) {
     if sink_active() {
@@ -1640,7 +1640,7 @@ impl Session {
 
     /// Install the compile-time hosts for running the shell's `REPL` module: the
     /// shell evaluates at compile time, so `<@Meta>` operations work in it as in
-    /// a `$ &`. Undo with [`leave_session_meta`].
+    /// a `$ !`. Undo with [`leave_session_meta`].
     pub fn enter_meta(&self, root_dir: &Path) {
         let Some(meta) = &self.meta else { return };
         let module = SHELL_MODULE;
@@ -1662,7 +1662,7 @@ pub fn leave_session_meta(root_dir: &Path) {
 /// The shell's in-memory root module.
 pub const SHELL_MODULE: &str = "REPL";
 
-/// Expand every `$ &` (and `@build`) of the shell session `source`, as a file's
+/// Expand every `$ !` (and `@build`) of the shell session `source`, as a file's
 /// are, and return the expanded session. Diagnostics are printed.
 pub fn expand_session(source: &str, root_dir: &Path) -> Option<String> {
     let fetch = |name: &str| load_module(name, root_dir);
@@ -1691,7 +1691,7 @@ pub fn compile_session(source: &str, root_dir: &Path) -> Result<Session, String>
 /// not, `CORE` and `C` included) to a diagnostic path and source. The root must
 /// have an entry. Returns the lowered modules, root first, or the rendered
 /// diagnostics. This is the pipeline for a host with no filesystem to search,
-/// such as the browser playground. It expands every `$ &` (and `@build`) as a
+/// such as the browser playground. It expands every `$ !` (and `@build`) as a
 /// file compile does, so a generated item or member works the same there.
 pub fn compile_program(
     source: &str,
@@ -1726,7 +1726,7 @@ fn compile_in_memory(
     let lowered = run.desugar(&order, &resolved);
     let kept = run.kept_ids(&order);
 
-    // The shell runs its items at compile time: give it the hosts a `$ &` has.
+    // The shell runs its items at compile time: give it the hosts a `$ !` has.
     let meta = if open_effects {
         let reflect = reflection(&run, &loaded, &resolved, &|m| m == loaded.root_name);
         // A fragment imports the session, but not the item being evaluated,
@@ -1884,8 +1884,8 @@ pub fn install_eval_host(root_dir: PathBuf) {
 
 pub fn cmd_run(path: &str, prog_args: &[String]) -> ExitCode {
     start_progress(2);
-    // `lower_all` has already expanded every `$ &` (compile-time execution and
-    // code injection); the lowered program is `&`-free.
+    // `lower_all` has already expanded every `$ !` (compile-time execution and
+    // code injection); the lowered program is `!`-free.
     let (lowered, _loaded, _plan) = match lower_all(path, true) {
         Ok(x) => x,
         Err(code) => return code,
@@ -2203,7 +2203,7 @@ fn libares_dir() -> Option<PathBuf> {
     dirs.into_iter().find(|d| d.join(&name).exists())
 }
 
-/// Print the source as the checker finally saw it: every `&` spliced
+/// Print the source as the checker finally saw it: every `!` spliced
 /// and every `@build`'s items appended. This is the only view of what a
 /// metaprogram actually produced, so it is how a generator is debugged.
 ///
@@ -2295,7 +2295,7 @@ pub fn cmd_check(path: &str) -> ExitCode {
     }
     start_progress(1);
     // Expanding first means the printed types are the ones the program really has
-    // (a `&`-injected definition included), and that every `$ &` directive has
+    // (a `!`-injected definition included), and that every `$ !` directive has
     // run: a module's compile-time assertions are checked by checking it.
     let (_lowered, loaded, _plan) = match lower_all(path, false) {
         Ok(x) => x,

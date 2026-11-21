@@ -18,11 +18,11 @@ $ @import ARESxOPT
 
 # ---- the value shape ----
 
-$ is_ok : @ctx { t: @Type, e: @Type } -> Result t e -> @Bool = \r =>
-    r |> \ | Result.Ok.{ _ } => @true | _ => @false
+$ is_ok : @ctx { t: @Type, e: @Type } -> Result t e -> Bool = \r =>
+    r |> \ | Result.Ok.{ _ } => true | _ => false
 
-$ is_err : @ctx { t: @Type, e: @Type } -> Result t e -> @Bool = \r =>
-    r |> \ | Result.Ok.{ _ } => @false | _ => @true
+$ is_err : @ctx { t: @Type, e: @Type } -> Result t e -> Bool = \r =>
+    r |> \ | Result.Ok.{ _ } => false | _ => true
 
 # `unwrap_or r d`: the answer, or `d` when the computation failed.
 $ impl_IUnwrapOr_for_Result : @ctx { t: @Type, e: @Type } -> IUnwrapOr (Result t e) t =
@@ -52,12 +52,12 @@ $ Fail : @Type = @effect
 # Run a computation that may Fail, reifying the outcome as a Result.
 $ try : @ctx { t: @Type } -> ({} -> <Fail> t) -> Result t @Str = \action =>
     do Result.Ok.{ action {} }
-    ctl k | Fail.fail msg => Result.Err.{ msg }
+    is k | Fail.fail msg => Result.Err.{ msg }
 
 # Run a computation that may Fail; a failure just yields the default.
 $ try_or : @ctx { t: @Type } -> ({} -> <Fail> t) -> t -> t = \action d =>
     do action {}
-    ctl k | Fail.fail _ => d
+    is k | Fail.fail _ => d
 
 # ---- bridges ----
 

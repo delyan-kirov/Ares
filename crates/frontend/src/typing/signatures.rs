@@ -586,7 +586,7 @@ impl<'a> Checker<'a> {
 
 impl<'a> Checker<'a> {
     /// Elaborate an effect row: each entry's label extended onto the tail. The
-    /// tail is the written one together with one per `&X` entry still waiting to
+    /// tail is the written one together with one per `!X` entry still waiting to
     /// be spliced (all one row variable), or the closed row when there is none.
     pub(super) fn row_of_ast(
         &mut self,
@@ -603,7 +603,7 @@ impl<'a> Checker<'a> {
             tails.push(v);
         }
         for entry in ast.slice(entries) {
-            // `<&X>`: the labels are unknown until the driver splices them, so
+            // `<!X>`: the labels are unknown until the driver splices them, so
             // the entry stands as an open tail.
             if let Some(expr) = entry.meta {
                 self.meta_splice_operand(expr);
@@ -616,7 +616,7 @@ impl<'a> Checker<'a> {
                     Code::TypeMismatch, entry.span, 0,
                     "type alias `{name}` is not an effect";
                     help: "an effect row names effects; a set of them is a `@Code` global \
-                           spliced as `<&name>`"
+                           spliced as `<!name>`"
                 ));
                 continue;
             }
@@ -685,9 +685,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Check the operand of a type or row splice `&X` under the `<@Meta>`
+    /// Check the operand of a type or row splice `!X` under the `<@Meta>`
     /// ambient against `@Code`, so a string literal there is a quotation. See
-    /// `Ty::MetaE` in `ty_of_ast`. The operand is its own boundary, as a `$ &`
+    /// `Ty::MetaE` in `ty_of_ast`. The operand is its own boundary, as a `$ !`
     /// directive is: what it plans (a quotation's hole instances) resolves here,
     /// apart from the requirements of any definition it sits in.
     pub(super) fn meta_splice_operand(&mut self, expr: Aol<Expr>) {
@@ -848,7 +848,7 @@ impl<'a> Checker<'a> {
                 self.check_type_arity(ty, true);
                 self.spine_of_ast(ty, tvars)
             }
-            // `&X` in type position: infer `X` (so its calls/overloads resolve
+            // `!X` in type position: infer `X` (so its calls/overloads resolve
             // for lowering) and require it to build `@Code`; the spliced-in type is
             // unknown until the driver's expand loop runs `X`, so it stands as a
             // fresh variable here. Only reachable in a lenient (pre-expansion)

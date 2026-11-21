@@ -128,11 +128,11 @@ impl Layout<'_, '_> {
     fn unary(&self, i: usize) -> bool {
         let t = &self.toks[i];
         let next_glued = self.toks.get(i + 1).is_some_and(|n| !n.gap);
-        if matches!(t.kind, Kind::Op) && t.text == "&" {
+        if matches!(t.kind, Kind::Op) && t.text == "!" {
             // A splice has no infix form, so it always hugs its operand.
             return next_glued;
         }
-        matches!(t.kind, Kind::Op) && matches!(t.text, "-" | "!" | "~~~") && next_glued
+        matches!(t.kind, Kind::Op) && matches!(t.text, "-" | "~~~") && next_glued
             && (i == 0
                 || t.gap
                 || matches!(
@@ -561,23 +561,23 @@ impl Layout<'_, '_> {
             Kind::Do => {
                 let k = self.tok(Self::first_tok(&ts[*pos]));
                 *pos += 1;
-                let ctl_or = |t: &Tok| halt(t) || matches!(t.kind, Kind::Ctl);
-                let body = self.expr(ts, pos, &ctl_or, false);
+                let is_or = |t: &Tok| halt(t) || matches!(t.kind, Kind::Is);
+                let body = self.expr(ts, pos, &is_or, false);
                 let head = self.hang(k, body);
-                let Some(ctl) = self.expect(ts, pos, |t| matches!(t.kind, Kind::Ctl)) else {
+                let Some(is) = self.expect(ts, pos, |t| matches!(t.kind, Kind::Is)) else {
                     return head;
                 };
                 let bar_or = |t: &Tok| halt(t) || is_bar(t);
                 let name = self.expr(ts, pos, &bar_or, false);
-                let ctl_head = self.join(&[ctl, name]).expect("non-empty");
-                if self.multiline(head.last, ctl.last) {
-                    // `do` and `ctl` on lines of their own, the clauses at `ctl`'s level.
-                    let handled = self.arms(ctl_head, ts, pos, halt, false);
+                let is_head = self.join(&[is, name]).expect("non-empty");
+                if self.multiline(head.last, is.last) {
+                    // `do` and `is` on lines of their own, the clauses at `is`'s level.
+                    let handled = self.arms(is_head, ts, pos, halt, false);
                     let joined = self.line_join(head, handled, Node::Line);
                     return P { d: self.kept_group(None, joined.d, false, true), ..joined };
                 }
-                // `do .. ctl k` on one line when it fits, the clauses one level under it.
-                let joined = self.line_join(head, ctl_head, Node::Line);
+                // `do .. is k` on one line when it fits, the clauses one level under it.
+                let joined = self.line_join(head, is_head, Node::Line);
                 let g = self.docs.group(joined.d, false);
                 self.arms_laid(P { d: g, ..joined }, ts, pos, halt, false, Under::UnlessBroken(g))
             }
@@ -1055,10 +1055,10 @@ impl Layout<'_, '_> {
         }
         let eq = ts.iter().position(|t| matches!(self.tok_of(t).map(|t| t.kind), Some(Kind::Eq)));
         let second = ts.get(1).and_then(|t| self.tok_of(t)).copied();
-        let is_splice = second.is_some_and(|t| matches!(t.kind, Kind::Op) && t.text == "&");
+        let is_splice = second.is_some_and(|t| matches!(t.kind, Kind::Op) && t.text == "!");
         let is_import = second.is_some_and(|t| matches!(t.kind, Kind::At) && t.text == "@import");
         let Some(eq) = eq.filter(|_| !is_splice && !is_import) else {
-            // `$ &expr`, `$ @import [A =] M`, `$ @private`, `$ @mod M`.
+            // `$ !expr`, `$ @import [A =] M`, `$ @private`, `$ @mod M`.
             let split = if is_splice { 1 } else { ts.len() };
             let head_ps: Vec<P> = ts[..split].iter().map(|t| self.tree(t)).collect();
             let head = self.join(&head_ps).expect("non-empty");
@@ -1069,7 +1069,7 @@ impl Layout<'_, '_> {
             let body = self.expr(ts, &mut pos, &|_| false, false);
             let rest = self.leftovers(ts, pos, body);
             if is_splice {
-                // `$ &f a b` stays on the `$` line; a long one breaks inside the
+                // `$ !f a b` stays on the `$` line; a long one breaks inside the
                 // application, its arguments one level in.
                 let space = self.docs.text(" ");
                 return self.docs.cat(vec![head.d, space, rest.d]);

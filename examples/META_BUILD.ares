@@ -6,7 +6,7 @@ $ @mod META_BUILD
 #       @IO> @Code` is the one name its BUILD starts from: the compiler runs it
 #       during compilation and adds the items of the `@Code` it returns to this
 #       module. One name, one signature, like the entry.
-#       Its privilege over `$ &` is the `<@IO>` in that row. `$ &` installs
+#       Its privilege over `$ !` is the `<@IO>` in that row. `$ !` installs
 #       `<@Meta>` alone, so it is hermetic: a generator there can compute, parse
 #       and inject, but not touch the world.
 #       Building IS IO, so `@build` is the one context that discharges it.
@@ -50,4 +50,4 @@ $ ck_self : @Int = if ARES.cmp_str first_file "META_BUILD.ares" <= 0 => 0 else 4
 
 $ test : @Int = ck_count + ck_first + ck_self
 
-$ &assert (test == 0) "META_BUILD: a check failed"
+$ !assert (test == 0) "META_BUILD: a check failed"

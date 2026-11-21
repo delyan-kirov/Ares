@@ -84,7 +84,7 @@ Unmarked, found by audit:
 | `app/DR.cpp:578` | `std::system("cc -O2 ...")` -- host C compiler hardcoded; no cross toolchain, no MSVC, no wasi-sdk/emcc. |
 | `engines/FF.cpp` `desc_of` | Keys on **stale pre-Phase-0 names** (`"@Int"`, `"Str"`, ...). Canonical `@`-names all fall through to the word-sized `slong` default -- including `@Str`/`@Ptr`. Works today only because on x86-64 pointer and slong have identical ABI class. Breaks on 32-bit and wasm. Latent bug. |
 | `engines/ITxDATA.cpp:79` | Stale `"Str"`/`"Real"` return-type string compares (same vintage as above). |
-| `engines/ITxDATA.cpp:66` | `Real` argument marshalled by `memcpy(&w,&d,sizeof(w))` into an `ssize_t` word -- on a 32-bit host this copies 4 of the double's 8 bytes. The whole "everything is one machine word" FFI marshalling is a 64-bit-host assumption. |
+| `engines/ITxDATA.cpp:66` | `Real` argument marshalled by `memcpy(!w,!d,sizeof(w))` into an `ssize_t` word -- on a 32-bit host this copies 4 of the double's 8 bytes. The whole "everything is one machine word" FFI marshalling is a 64-bit-host assumption. |
 | `platforms/ARESxVALUE.h:59` | `T_INT` payload is `long long` unconditionally -- a 32-bit target's `@Int` (`@Int32`) would still compute at 64-bit width in the runtime; semantics undefined per target. |
 
 Contained / already correct (keep as models):
@@ -354,7 +354,7 @@ easier to hold in nix than mingw/wine; Windows moves after wasm.
   of the `C`/libm namespace (`engines/FF.cpp`'s `#ifndef ARES_3RD_PARTY_ON`
   branch: one adapter per symbol calling the real function with its TRUE
   signature -- required because wasm type-checks indirect calls, so casting
-  `&free` to an int-returning pointer would trap). `web/site/index.html` is a
+  `!free` to an int-returning pointer would trap). `web/site/index.html` is a
   self-contained playground (Run / IR / C / AST, ccall into `ares_eval`);
   `web/smoke.mjs` runs it headlessly under node in CI, and `.github/
   workflows/pages.yml` deploys `web/site/` to GitHub Pages. `no-ffi` native

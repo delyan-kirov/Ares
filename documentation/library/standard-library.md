@@ -57,12 +57,12 @@ counts as a standard library when it holds `CORE.ares`, so an unrelated
 
 ## The parts
 
-Convention: predicates (and predicate parameters) are `@Bool`-typed, matching
+Convention: predicates (and predicate parameters) are `Bool`-typed, matching
 `if` and comparisons; three-way COMPARISONS (`cmp_int`, `cmp_str`, the `sort_by`
 orderings) stay `@Int` (negative / 0 / positive). Where an operation needs
 equality or ordering on a type parameter, it asks for CORE's `IEq` / `IOrd`
 interface with `@use`, resolved by type at the call site (`Map`, `Set`). IO's
-`write_file` / `append_file` / `remove_file` return `@Bool` success. Paired
+`write_file` / `append_file` / `remove_file` return `Bool` success. Paired
 results use the language's tuples (`{\`A, \`B}`, accessed `.0`/`.1`).
 
 **Pipelines.** Every operation takes the value it works on LAST, so a chain of

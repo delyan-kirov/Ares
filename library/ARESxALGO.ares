@@ -43,19 +43,19 @@ $ formap : @ctx { s: @Type, a: @Type, t: @Type, b: @Type, e: @Type }
     d.mapping xs f
 
 # An instance's step: run `body` on `x`, and say whether the loop goes on.
-$ loop_body : @ctx { a: @Type, e: @Row } -> a -> (a -> <Loop | e> {}) -> <e> @Bool = \x body =>
+$ loop_body : @ctx { a: @Type, e: @Row } -> a -> (a -> <Loop | e> {}) -> <e> Bool = \x body =>
     do body x
-    ctl k
-    | Loop.continue u => @true
-    | Loop.break u    => @false
-    | _               => @true
+    is k
+    | Loop.continue u => true
+    | Loop.break u    => false
+    | _               => true
 
 # The three ways a `formap` step can end, and the step itself.
 $ LoopStep : (b: @Type) -> @Type = @union Keep: { b }, Skip: {}, Stop: {},
 $ loop_step : @ctx { a: @Type, e: @Row, b: @Type } -> a -> (a -> <Loop | e> b)
     -> <e> LoopStep b = \x f =>
     do let y = f x in LoopStep.Keep.{ y }
-    ctl k
+    is k
     | Loop.continue u => LoopStep.Skip
     | Loop.break u    => LoopStep.Stop
     | s               => s
@@ -69,8 +69,8 @@ $ forever : List {} = List.Cons.{ {}, forever }
 $ ILen : (s: @Type) -> @Type = @struct len: s -> @Int,
 $ len : @ctx { s: @Type } -> @use { d: ILen s } -> s -> @Int = \x => d.len x
 
-$ IEmpty : (s: @Type) -> @Type = @struct is_empty: s -> @Bool,
-$ is_empty : @ctx { s: @Type } -> @use { d: IEmpty s } -> s -> @Bool = \x => d.is_empty x
+$ IEmpty : (s: @Type) -> @Type = @struct is_empty: s -> Bool,
+$ is_empty : @ctx { s: @Type } -> @use { d: IEmpty s } -> s -> Bool = \x => d.is_empty x
 
 # An empty container, of the type the context asks for: `new {}`.
 $ INew : (t: @Type) -> @Type = @struct new: {} -> t,
@@ -119,8 +119,8 @@ $ get_or : @ctx { s: @Type, k: @Type, v: @Type } -> @use { d: IGet s k v } -> k 
     -> v = \k fallback xs =>
     d.get xs k |> \ | Opt.Some.{ x } => x | _ => fallback
 
-$ IHas : (s: @Type) -> (k: @Type) -> @Type = @struct has: s -> k -> @Bool,
-$ has : @ctx { s: @Type, k: @Type } -> @use { d: IHas s k } -> k -> s -> @Bool = \k xs => d.has xs k
+$ IHas : (s: @Type) -> (k: @Type) -> @Type = @struct has: s -> k -> Bool,
+$ has : @ctx { s: @Type, k: @Type } -> @use { d: IHas s k } -> k -> s -> Bool = \k xs => d.has xs k
 
 $ IRemove : (s: @Type) -> (k: @Type) -> @Type = @struct remove: s -> k -> s,
 $ remove : @ctx { s: @Type, k: @Type } -> @use { d: IRemove s k } -> k -> s -> s = \k xs =>
@@ -147,17 +147,17 @@ $ foldr : @ctx { s: @Type, a: @Type, t: @Type } -> @use { d: IFoldr s a t } -> (
     -> s -> a = \f z xs =>
     d.foldr f z xs
 
-$ IFind : (s: @Type) -> (t: @Type) -> @Type = @struct find: (t -> @Bool) -> s -> Opt t,
-$ find : @ctx { s: @Type, t: @Type } -> @use { d: IFind s t } -> (t -> @Bool) -> s
+$ IFind : (s: @Type) -> (t: @Type) -> @Type = @struct find: (t -> Bool) -> s -> Opt t,
+$ find : @ctx { s: @Type, t: @Type } -> @use { d: IFind s t } -> (t -> Bool) -> s
     -> Opt t = \p xs =>
     d.find p xs
 
-$ IAny : (s: @Type) -> (t: @Type) -> @Type = @struct any: (t -> @Bool) -> s -> @Bool,
-$ any : @ctx { s: @Type, t: @Type } -> @use { d: IAny s t } -> (t -> @Bool) -> s -> @Bool = \p xs =>
+$ IAny : (s: @Type) -> (t: @Type) -> @Type = @struct any: (t -> Bool) -> s -> Bool,
+$ any : @ctx { s: @Type, t: @Type } -> @use { d: IAny s t } -> (t -> Bool) -> s -> Bool = \p xs =>
     d.any p xs
 
-$ IAll : (s: @Type) -> (t: @Type) -> @Type = @struct all: (t -> @Bool) -> s -> @Bool,
-$ all : @ctx { s: @Type, t: @Type } -> @use { d: IAll s t } -> (t -> @Bool) -> s -> @Bool = \p xs =>
+$ IAll : (s: @Type) -> (t: @Type) -> @Type = @struct all: (t -> Bool) -> s -> Bool,
+$ all : @ctx { s: @Type, t: @Type } -> @use { d: IAll s t } -> (t -> Bool) -> s -> Bool = \p xs =>
     d.all p xs
 
 $ IZip : (s: @Type) -> (t: @Type) -> (u: @Type) -> @Type = @struct zip: s -> t -> u,
@@ -170,13 +170,13 @@ $ take : @ctx { s: @Type } -> @use { d: ITake s } -> @Int -> s -> s = \n xs => d
 $ IDrop : (s: @Type) -> @Type = @struct drop: @Int -> s -> s,
 $ drop : @ctx { s: @Type } -> @use { d: IDrop s } -> @Int -> s -> s = \n xs => d.drop n xs
 
-$ ITakeWhile : (s: @Type) -> (t: @Type) -> @Type = @struct take_while: (t -> @Bool) -> s -> s,
-$ take_while : @ctx { s: @Type, t: @Type } -> @use { d: ITakeWhile s t } -> (t -> @Bool) -> s
+$ ITakeWhile : (s: @Type) -> (t: @Type) -> @Type = @struct take_while: (t -> Bool) -> s -> s,
+$ take_while : @ctx { s: @Type, t: @Type } -> @use { d: ITakeWhile s t } -> (t -> Bool) -> s
     -> s = \p xs =>
     d.take_while p xs
 
-$ IDropWhile : (s: @Type) -> (t: @Type) -> @Type = @struct drop_while: (t -> @Bool) -> s -> s,
-$ drop_while : @ctx { s: @Type, t: @Type } -> @use { d: IDropWhile s t } -> (t -> @Bool) -> s
+$ IDropWhile : (s: @Type) -> (t: @Type) -> @Type = @struct drop_while: (t -> Bool) -> s -> s,
+$ drop_while : @ctx { s: @Type, t: @Type } -> @use { d: IDropWhile s t } -> (t -> Bool) -> s
     -> s = \p xs =>
     d.drop_while p xs
 

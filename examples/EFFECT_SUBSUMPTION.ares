@@ -16,7 +16,7 @@ $ count : @Int -> <Tally> @Int = \n => tick n; n
 $ total : @ctx { a: @Type } -> ({} -> <Tally> a) -> @Int = \body =>
     let h =
         do body {}; {}
-        ctl k | tick n => \s => (k {}) (s + n) | _ => \s => s
+        is k | tick n => \s => (k {}) (s + n) | _ => \s => s
     in
     h 0
 
@@ -26,4 +26,4 @@ $ mapped : @Int = total <| \_ => formap [1, 2, 3] count
 
 $ test : @Int = if composed == 10 && mapped == 6 => 0 else 1
 
-$ &assert (test == 0) "EFFECT_SUBSUMPTION: a check failed"
+$ !assert (test == 0) "EFFECT_SUBSUMPTION: a check failed"

@@ -20,11 +20,11 @@ $ path : @Str = "ares_stdlib_io_test.txt"
 # only `ck_fmt` (pure string formatting) stays a plain value.
 $ ck_roundtrip : {} -> <@IO> @Int =
     let w = write_file path "line one\nline two\n" in
-    if !w =>
+    if not w =>
         1
     else
         let a = append_file path "line three\n" in
-        if !a =>
+        if not a =>
             1
         else
             let body = unwrap_or "<unreadable>" (read_file path) in
@@ -43,7 +43,7 @@ $ ck_missing : {} -> <@IO> @Int =
 # of the corpus.
 $ ck_dir : {} -> <@IO> @Int =
     let names = read_dir "examples" in
-    if !(ARES.contains_by ARES.eq "STDLIB_IO.ares" names) =>
+    if not (ARES.contains_by ARES.eq "STDLIB_IO.ares" names) =>
         1
     else if ARES.contains_by ARES.eq "." names =>
         1
@@ -81,6 +81,6 @@ $ sorted_from : @Vec @Str -> @Int -> @Int = \names i =>
         sorted_from names (i + 1)
 
 # These checks touch the filesystem, so they run at run time rather than under a
-# `$ &` compile-time assert like the rest of the corpus: this module is a
+# `$ !` compile-time assert like the rest of the corpus: this module is a
 # program, and `$ @main` is what makes it one.
 $ @main : @Vec @Str -> <@IO> @Int = \args => test {}

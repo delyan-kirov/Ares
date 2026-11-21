@@ -15,7 +15,7 @@ Conventions used throughout: a global is `$ name : Type = expr`; a lambda is
 `\x => e` (curried: `\a b => e`); a branch is `if c => t else e`; a match is
 `scrut |> \ | pat => e ...`. The comparison operators are `==` (equal),
 `!=` (not equal), `<` (less), `>` (greater), `<=` (at most), `>=` (at least),
-each of type `a -> a -> @Bool`.
+each of type `a -> a -> Bool`.
 
 ---
 
@@ -188,8 +188,8 @@ $ id : @ctx {t: @Type} -> t -> t = \x => x
 
 Involved (definitions may appear in any order and reference each other):
 ```ares
-$ even : @Int -> @Bool = \n => if n == 0 => @true else odd (n - 1)
-$ odd  : @Int -> @Bool = \n => if n == 0 => @false else even (n - 1)
+$ even : @Int -> Bool = \n => if n == 0 => true else odd (n - 1)
+$ odd  : @Int -> Bool = \n => if n == 0 => false else even (n - 1)
 ```
 
 ## 2.3 Imports `$ @import`
@@ -261,7 +261,7 @@ $ @main : @Vec @Str -> <@IO> @Int = \args => 0      # args[0] is the program pat
 
 A module without `@main` is a library: `ares check` type-checks it and runs its
 compile-time assertions, and `ares run`/`build` reject it. Nothing else is
-special, so a test harness is ordinary code: a check under `$ &` (section 11)
+special, so a test harness is ordinary code: a check under `$ !` (section 11)
 or a global some tool evaluates by name.
 
 ---
@@ -297,11 +297,11 @@ $ z : @Int32 = w * 2          # @Int32 + @Int32 : @Int32
 ```
 
 ## 3.3 Other `@`-typed built-ins
-`@Ptr` (raw pointer), `@Bool` (values `@true`/`@false`), `@Array` (byte block),
-`@Vec` (the growable vector, and the default sequence).
+`@Ptr` (raw pointer), `@Array` (byte block), `@Vec` (the growable vector, and
+the default sequence). `Bool` is not one of them: it is a CORE union (12.1).
 
 ```ares
-$ flag : @Bool  = @true
+$ flag : Bool  = true
 $ bytes: @Array = @Array.{ 8 }      # 8 zeroed bytes
 $ xs   : @Vec @Int = [1, 2, 3]
 ```
@@ -478,13 +478,13 @@ $ Point : @Type = (\t => {x: t, y: t}) @Float64
 Choosing a type by a value (`if`, a match) waits for dependent types (#406).
 
 A type may also stand where a value does. Its type is its kind: `@Int` and
-`@Int -> @Bool` are `@Type`, `pair` and `@Vec` are `@Type -> @Type`, and a
+`@Int -> Bool` are `@Type`, `pair` and `@Vec` are `@Type -> @Type`, and a
 size parameter takes a `@Nat`. A type carries nothing at run time, so it
 erases to `{}`:
 ```ares
 $ pair : @Type -> @Type = \t => {t, t}
 $ arity : @Type -> @Int = \_ => 1
-$ n : @Int = arity (pair @Str) + arity (@Int -> @Bool)
+$ n : @Int = arity (pair @Str) + arity (@Int -> Bool)
 ```
 In term position `{@Str, @Str}` is a tuple whose two items are types, of type
 `{@Type, @Type}`; the product type stands there through a name, as `pair @Str`
@@ -509,7 +509,7 @@ global's type is the filled-in one. Each `_` is its own unknown.
 ```ares
 $ succ : _ -> @Int = \x => x + 1        # succ : @Int -> @Int
 $ same : @ctx {a: @Type} -> a -> _ = \x => x               # same : a -> a
-$ n : @Int = let p : {_, @Bool} = {3, @true} in p.0
+$ n : @Int = let p : {_, Bool} = {3, true} in p.0
 ```
 
 What `_` comes out as may use the signature's own type variables but no new
@@ -564,14 +564,14 @@ same. Tuples and qualified variants pass their expected type to their parts too:
 `{1, 2} : {Big, Big}`, `Opt.Some.{ 1 } : Opt Big`.
 
 ## 4.3 Arithmetic and unary operators
-`+ - * / %`, unary `-` (negation) and `!` (boolean not). Standard precedence,
-`( )` groups.
+`+ - * / %` and unary `-` (negation); boolean not is the CORE function `not`.
+Standard precedence, `( )` groups.
 
 ```ares
 $ a : @Int  = 1 + 2 * 3 - 4      # 3
 $ b : @Int  = (1 + 2) * (3 - 4)  # -3
 $ c : @Int  = -42
-$ d : @Bool = !@true             # @false
+$ d : Bool = not true          # false
 ```
 
 The bitwise operators work on every integer type: `&&&` (and), `|||` (or),
@@ -588,12 +588,12 @@ $ g : @Nat8 = ~~~200             # 55
 ```
 
 ## 4.4 Comparisons
-`==` `!=` `<` `>` `<=` `>=`, all `a -> a -> @Bool`.
+`==` `!=` `<` `>` `<=` `>=`, all `a -> a -> Bool`.
 
 ```ares
-$ lt : @Bool = 3 < 8
-$ le : @Bool = 8 <= 8
-$ ne : @Bool = 3 != 4
+$ lt : Bool = 3 < 8
+$ le : Bool = 8 <= 8
+$ ne : Bool = 3 != 4
 ```
 
 Like arithmetic, these are `CORE` functions over interfaces: `==` and `!=` over
@@ -605,7 +605,7 @@ A type of your own joins them with an instance:
 $ Money : @Type = @struct cents: @Int
 
 $ impl_IOrd_for_Money : IOrd Money = .{ .lt = \a b => a.cents < b.cents }
-$ cheaper : @Bool = Money.{ .cents = 150 } < Money.{ .cents = 900 }
+$ cheaper : Bool = Money.{ .cents = 150 } < Money.{ .cents = 900 }
 ```
 
 There is NO structural fallback: a type with no `IEq` instance cannot be compared
@@ -632,11 +632,11 @@ $ xs : @Vec @Int = 1 :: 2 :: 3 :: []
 Desugar to a lazy `if`, so the right operand runs only when needed.
 
 ```ares
-$ safe : @Int -> @Bool = \n => n > 0 && 100 / n > 5
+$ safe : @Int -> Bool = \n => n > 0 && 100 / n > 5
 ```
 
 ## 4.7 Conditional `if ... => ... else`
-`if c => t else e`. The condition is a `@Bool`. One `if` has one arm; several
+`if c => t else e`. The condition is a `Bool`. One `if` has one arm; several
 chain with `else if`. It is lazy (only the taken branch runs) and is not a
 pattern match.
 
@@ -845,7 +845,7 @@ the union inferred from the arms. Payloads nest.
 ```ares
 $ Maybe : (t: @Type) -> @Type = @union Just: t, None: {}
 $ get : @Int -> Maybe @Int -> @Int = \d m => m |> \ | Maybe.Just.{ x } => x | _ => d
-$ isJust : @ctx {t: @Type} -> Maybe t -> @Bool = \m => m |> \ | .Just.{ _ } => @true | _ => @false
+$ isJust : @ctx {t: @Type} -> Maybe t -> Bool = \m => m |> \ | .Just.{ _ } => true | _ => false
 ```
 
 ## 5.6 Range patterns
@@ -1049,8 +1049,8 @@ matching, #543): in `Vec.Cons.{ _, t }`, `t` has the type `Vec a n` for an `n`
 of its own, which the arm may not take for any other size. Indices are erased,
 so a `Vec` is a list at run time.
 
-## 6.4 Generated members `&`
-An entry `&X` of a `@struct` or `@union` runs `X` at build time and splices the
+## 6.4 Generated members `!`
+An entry `!X` of a `@struct` or `@union` runs `X` at build time and splices the
 fields or variants its `@Code` spells in its place.
 DERIVE's `fields_of` and `variants_of` copy another declaration's members, a
 copy with no subtyping relationship. A copied type may itself be generated; a
@@ -1060,9 +1060,9 @@ duplicate member is an error.
 ```ares
 $ @import ARESxDERIVE
 $ Point  : @Type = @struct x: @Int, y: @Int
-$ Point3 : @Type = @struct &ARES.fields_of "Point", z: @Int   # x, y, then z
+$ Point3 : @Type = @struct !ARES.fields_of "Point", z: @Int   # x, y, then z
 $ Base   : @Type = @union Red: {}, Green: {}
-$ Color  : @Type = @union &ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
+$ Color  : @Type = @union !ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 ```
 
 ## 6.5 Recursive types are lazy
@@ -1251,7 +1251,7 @@ concrete type takes it from an effect parameter instead.
 
 ```ares
 $ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
-$ safe : @Int = do 1 + Exn.throw "no" ctl k | Exn.throw m => 0     # aborts: fine
+$ safe : @Int = do 1 + Exn.throw "no" is k | Exn.throw m => 0     # aborts: fine
 # `| Exn.throw m => k 0` is an error: `k` wants `a` of `Exn.throw`, not @Int
 ```
 
@@ -1264,8 +1264,8 @@ $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
 $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x
 ```
 
-## 8.3 Handling `do ... ctl`
-`do body ctl k | op a => e ... | pat => e ...`. `k` is the captured
+## 8.3 Handling `do ... is`
+`do body is k | op a => e ... | pat => e ...`. `k` is the captured
 continuation, shared by every clause. Each `| op a => e` handles an operation. A
 value arm `| pat => e` runs on normal completion, matching the body's final value
 like a match arm; with none, that value is the handler's result. An operation
@@ -1278,14 +1278,14 @@ Exception (ignores `k`, so it resumes zero times):
 $ Exn : @Type = @effect throw : @Str -> @Int,
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
 	do if b == 0 => Exn.throw "div0" else a / b
-	ctl k | Exn.throw msg => -1
+	is k | Exn.throw msg => -1
 ```
 
 Generator (resume once per yield, summing results):
 ```ares
 $ sumGen : ({} -> <Yield> {}) -> @Int = \gen =>
 	do gen {}
-	ctl k | Yield.yield v => v + k {}
+	is k | Yield.yield v => v + k {}
 	      | _ => 0
 ```
 
@@ -1299,7 +1299,7 @@ computation is still governed by the same handler).
 $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task }
 $ spawn : ({} -> <Yield> {}) -> Task = \t =>
 	do t {}
-	ctl k | Yield.yield v => Task.Susp.{ v, k }     # store k, resume later
+	is k | Yield.yield v => Task.Susp.{ v, k }     # store k, resume later
 	      | _ => Task.Fin.{}
 ```
 
@@ -1309,7 +1309,7 @@ its own copy, which is what nondeterminism and backtracking are:
 ```ares
 $ sum_all : ({} -> <Amb> @Int) -> @Int = \body =>
 	do body {}
-	ctl k | Amb.flip u => k @true + k @false        # both branches
+	is k | Amb.flip u => k true + k false        # both branches
 	      | x => x
 ```
 
@@ -1592,85 +1592,85 @@ specially, and the `@tensor_*` primitives are typed in the compiler (#342).
 
 # 11. Compile-time evaluation
 
-## 11.1 `&`, the splice
-`&X` runs `X` at build time and replaces itself with the result:
+## 11.1 `!`, the splice
+`!X` runs `X` at build time and replaces itself with the result:
 
 - an `@Code` is spliced in as source, usually written as a quotation
   (section 11.2);
-- first-order data (a number, a `@Bool` or a `@Str`) is inserted as a literal.
+- first-order data (a number, a `Bool` or a `@Str`) is inserted as a literal.
 
 The inserted source is then checked like hand-written code. Any other result,
-such as a function, is an error at the `&`. In type, row, member and item
+such as a function, is an error at the `!`. In type, row, member and item
 position only code makes sense, so there the operand is expected as `@Code`
 and a string literal is a quotation; in expression and pattern position a
 string is data.
 
-`&` is syntax, not a function: there is no `(&)` section, no `x |> &`, and no
-`$ (&)` definition. It binds like the other prefix operators, so it scopes over
-an application: `&f a b` splices `f a b`, `&f a ++ b` is `(&(f a)) ++ b`, and a
-pipe chain is parenthesized, `&(x |> f)`. It works in every position:
+`!` is syntax, not a function: there is no `(!)` section, no `x |> !`, and no
+`$ (!)` definition. It binds like the other prefix operators, so it scopes over
+an application: `!f a b` splices `f a b`, `!f a ++ b` is `(!(f a)) ++ b`, and a
+pipe chain is parenthesized, `!(x |> f)`. It works in every position:
 
 ```ares
 $ fib : @Int -> @Int = \k => if k < 2 => k else fib (k - 1) + fib (k - 2)
-$ fib10 : @Int = &fib 10                            # expression: inserts `55`
-$ n     : &"@Int64" = 1024                          # type
-$ &"$ injected : @Int = 99"                         # item
-$ is55  : @Int -> @Bool = \ | &fib 10 => @true | _ => @false   # pattern
+$ fib10 : @Int = !fib 10                            # expression: inserts `55`
+$ n     : !"@Int64" = 1024                          # type
+$ !"$ injected : @Int = 99"                         # item
+$ is55  : @Int -> Bool = \ | !fib 10 => true | _ => false   # pattern
 ```
 
 A type splice may stand at any type position: a signature, a struct field, a
 union payload, a type-level function's body, an effect operation, an effect-row argument, a
 `@use` field, or an annotation inside a body (`let x : T`, `\(x : T)`,
-`(e : T)`). Effect-row entries themselves can be spliced too, as `<&X>`; a
-`&` right after an operator lexes on its own, so `<&X>` is `<` then `&X`.
+`(e : T)`). Effect-row entries themselves can be spliced too, as `<!X>`; a
+`!` right after an operator lexes on its own, so `<!X>` is `<` then `!X`.
 
 ```ares
 $ pick : {} -> @Code = "@Int"
-$ Point : @Type = @struct x: &pick {}, y: &pick {}
+$ Point : @Type = @struct x: !pick {}, y: !pick {}
 ```
 
-In a pattern, `&X` is how a value the compiler can compute stands as a
-constant: `&answer` matches the value of the global `answer`, while a bare
+In a pattern, `!X` is how a value the compiler can compute stands as a
+constant: `!answer` matches the value of the global `answer`, while a bare
 `answer` would bind. Because the value is inserted as a real literal,
 exhaustiveness and `UNREACHABLE_ARM` treat it like a hand-written `42`. The
 operand ends before the `=>`, `|` or `::` after it. A generator may also build
 a pattern as `@Code`; that pattern may bind names, and its coverage is checked
 once it is spliced.
 
-A generator never runs code the checker could not yet resolve. While `&` sites
+A generator never runs code the checker could not yet resolve. While `!` sites
 remain, a missing name or instance is left open, since a generator may still
-supply it; a `&` whose code reaches one waits for a later round, and if no
+supply it; a `!` whose code reaches one waits for a later round, and if no
 round supplies it the error is reported as written.
 
 `X` may perform the compile-time operations (`@emit`, `@abort`, `@fresh`,
 `@link`, `@link_path`, and the reflection `@type_kind`, `@type_params`,
 `@type_fields`, `@type_variants`, `@type_of`). They carry the `<@Meta>` effect,
-which `&` discharges. The richer ones speak CORE types:
+which `!` discharges. The richer ones speak CORE types:
 
 - `@lookup name` is a `Decl`: `Struct`, `Union` (each with its shape), `Value`
   (a global's type as source) or `Missing`.
-- `@here {}` is the running `&`'s `Site` (`file`, `line`, `column`).
-- `@check code` type-checks an expression fragment as if written at the `&`
+- `@here {}` is the running `!`'s `Site` (`file`, `line`, `column`).
+- `@check code` type-checks an expression fragment as if written at the `!`
   and gives its type as source; an ill-typed fragment fails the build.
 - `@fail d` and `@warn d` report a `Diag` (`message`, `notes`, `helps`; `diag
-  msg` has none) at the `&`: `@fail` as `META_ABORT`, ending the build, `@warn`
+  msg` has none) at the `!`: `@fail` as `META_ABORT`, ending the build, `@warn`
   as a `META_WARNING` warning.
 
 `@Code` is source text with no syntax category of its own: the site that
 splices it decides what it must parse as (an expression, a type, the entries of
 a row, a pattern, fields, variants or items) and checks it there. An effect-row
-splice `<&X>` stands for one or more entries.
+splice `<!X>` stands for one or more entries.
 
-`&` discharges `<@Meta>` and nothing else, so it is **hermetic**: a generator
+`!` discharges `<@Meta>` and nothing else, so it is **hermetic**: a generator
 cannot perform `@IO`. Compile-time IO lives in `@build` alone (section 11.4).
 
 Empty code inserts nothing. A site that runs only for its effect returns it, so
 the directive disappears once it has run.
 
 A syntax error in a fragment points into the string literal that spells it,
-escapes accounted for, even when that literal is in a helper the `&` calls. A
+escapes accounted for, even when that literal is in a helper the `!` calls. A
 fragment built at compile time (`"a" ++ b`, or a quotation with holes) has no
-such literal, so the error points at the `&` and quotes the fragment.
+such literal, so the error points at the `!` and quotes the fragment.
 
 ## 11.2 Quotations
 A string literal expected as `@Code` is a **quotation**: its text is source. It
@@ -1681,14 +1681,14 @@ it. Its holes run in the generator, and what a hole pastes depends on its type:
 | Hole type | Pasted |
 |---|---|
 | `@Code` | its source, as is |
-| a number, `@Bool`, `@Str` | the literal spelling its value: `3`, `@true`, `"hi"` |
+| a number, `Bool`, `@Str` | the literal spelling its value: `3`, `Bool.True`, `"hi"` |
 
 ```ares
 $ times : @Int -> @Code -> @Code = \n c => "(?(c)) * ?(n)"
 $ sum   : @Code = "1 + 2 * 3"
-$ x     : @Int = &times 3 sum                   # inserts `(1 + 2 * 3) * 3`
+$ x     : @Int = !times 3 sum                   # inserts `(1 + 2 * 3) * 3`
 $ greet : @Str -> @Code = \s => "?(s) ++ \"!\""
-$ hi    : @Str = &greet "hi"                    # inserts `"hi" ++ "!"`
+$ hi    : @Str = !greet "hi"                    # inserts `"hi" ++ "!"`
 ```
 
 A hole pastes code bare, so the quotation decides precedence: write `(?(c))`
@@ -1704,18 +1704,18 @@ quotation is written: a generator's `scale` is its own module's `scale`, even
 where the code lands in a module with a `scale` of its own. A binder it spells
 binds only names the same quotation spells, so a generator's `let tmp` never
 captures the caller's `tmp`. Code the site hands in keeps the site's meaning: a
-quotation written in the `&` operand itself, and `@code` text.
+quotation written in the `!` operand itself, and `@code` text.
 
 ```ares
 $ @import ARESxOPT
 $ plus_one : @Code -> @Code = \c => "let tmp = 1 in tmp + ?(c)"
-$ add_one  : @Int -> @Int = \tmp => &plus_one "tmp"      # tmp + 1, the caller's tmp
+$ add_one  : @Int -> @Int = \tmp => !plus_one "tmp"      # tmp + 1, the caller's tmp
 $ some_of  : @Code -> @Code = \v => "Opt.Some.{?(v)}"
-$ or_zero  : Opt @Int -> @Int = \ | &some_of "x" => x | _ => 0
+$ or_zero  : Opt @Int -> @Int = \ | !some_of "x" => x | _ => 0
 ```
 
 So a generated pattern binds a name for the arm body only when the site names
-it, as `&some_of "x"` does. The splice site renames a generator's binders apart
+it, as `!some_of "x"` does. The splice site renames a generator's binders apart
 (`tmp__6`) and qualifies the names it reaches (`GEN.scale`), which `ares expand`
 shows; operators and effect operations resolve at the site.
 
@@ -1726,14 +1726,14 @@ $ Template : @Type = @struct pieces: @Vec @Str, holes: @Vec @Code
 ```
 
 Its pieces stay text and its holes are **quoted**, not evaluated, since they
-name what is in scope where the literal is written, which at a `&` is often a
-run-time parameter. `@check` at that `&` sees the locals in scope there, so a
+name what is in scope where the literal is written, which at a `!` is often a
+run-time parameter. `@check` at that `!` sees the locals in scope there, so a
 macro learns a hole's type:
 
 ```ares-fragment
 $ sql : Template -> <@Meta> @Code = ...   # numbers the holes `$1`, `$2`, ...
 $ by_name : @Str -> @Int -> Query = \name age =>
-    &sql "SELECT id FROM users WHERE name = ?(name) AND age > ?(age)"
+    !sql "SELECT id FROM users WHERE name = ?(name) AND age > ?(age)"
 ```
 
 `sql` receives `pieces = ["SELECT id FROM users WHERE name = ", " AND age > ", ""]`
@@ -1743,19 +1743,19 @@ meaning. A literal with no holes is a `Template` of one piece.
 `examples/META_TEMPLATE.ares` is the whole macro.
 
 ## 11.3 Compile-time assertions and build directives
-There is no `@assert` builtin. `CORE.assert : @Bool -> @Str -> <@Meta> @Code` is
+There is no `@assert` builtin. `CORE.assert : Bool -> @Str -> <@Meta> @Code` is
 one line of ordinary Ares over `@abort` that returns empty code, so a module
 states its own invariants and checking it is testing it.
 
 ```ares
 $ fib  : @Int -> @Int = \n => if n < 2 => n else fib (n - 1) + fib (n - 2)
 $ fact : @Int -> @Int = \n => if n == 0 => 1 else n * fact (n - 1)
-$ &assert (fib 10 == 55) "fib 10 should be 55"
-$ &assert (fact 5 == 120) "fact 5 should be 120"
+$ !assert (fib 10 == 55) "fib 10 should be 55"
+$ !assert (fact 5 == 120) "fact 5 should be 120"
 ```
 
 A failing assertion, like any `@abort`, is an `error[META_ABORT]` carrying the
-message, pointed at the `&` site. A fault the code runs into on its own (a
+message, pointed at the `!` site. A fault the code runs into on its own (a
 division by zero, a failed match) stays a `RUNTIME_FAULT`.
 
 `@link` / `@link_path` steer the compilation itself: they add a library to the
@@ -1763,8 +1763,8 @@ link line and the dlopen set, or a directory to the search path. Both return
 empty code.
 
 ```ares
-$ &@link "m"             # link/preload libm
-$ &@link_path "/opt/lib"
+$ !@link "m"             # link/preload libm
+$ !@link_path "/opt/lib"
 ```
 
 ## 11.4 `@build`, the compile-time entry
@@ -1789,9 +1789,9 @@ running program opens. `ARES.read_dir` (a directory's entry names, sorted) is th
 listing a `@build` usually wants.
 
 Rules: every module may have one (not just the root, unlike `@main`), it runs
-once, and it runs before any `$ &` of that round, so code it generates is
+once, and it runs before any `$ !` of that round, so code it generates is
 available to the rest of the compile-time code. Anything it injects is itself
-expanded, so a generated `$ &` still runs and a generated `$ @import M` loads M.
+expanded, so a generated `$ !` still runs and a generated `$ @import M` loads M.
 Note what "every module" implies: importing a module lets its `@build` perform IO
 during *your* build, the same trust an imported `build.rs` carries.
 
@@ -1801,7 +1801,7 @@ adding a file. See `examples/META_BUILD.ares` and
 documentation/language/metaprogramming.md.
 
 To see what a metaprogram produced, `ares expand <file> [MODULE]` prints the
-source as the checker finally saw it: every `&` spliced and every
+source as the checker finally saw it: every `!` spliced and every
 `@build`'s items appended. That is the view to debug a generator from, since
 nothing else shows the generated text.
 
@@ -1863,14 +1863,16 @@ every module they import is in `source/`.
 
 # 12. Intrinsic types and primitives
 
-## 12.1 `@Bool` and its literals
-The built-in boolean; values are `@true` and `@false` (matched with the
-`@`-spelling, since bare `true`/`false` would bind a variable). Comparisons yield
-`@Bool`; `!` negates it.
+## 12.1 `Bool`
+An ordinary CORE union, `$ Bool : @Type = @union False: {}, True: {},`, which the
+engines hold as a machine boolean. CORE names its values `true` and `false`; a
+pattern spells the constructor, `Bool.True` or `.True`, since a bare `true`
+would bind a variable. `if`, guards, `&&` and `||` branch on it, comparisons
+yield it, and the CORE function `not` negates it.
 
 ```ares
-$ b : @Bool = 3 < 4
-$ chk : @Int = b |> \ | @true => 0 | _ => 1
+$ b : Bool = 3 < 4
+$ chk : @Int = b |> \ | Bool.True => 0 | _ => 1
 ```
 
 ## 12.2 `@Array` (byte block)
@@ -1902,12 +1904,12 @@ $ v : @Vec @Int = push 2 (push 1 (new {}))   # VEC over @vec_* primitives
 ```
 
 ## 12.4 `to_string` (CORE) and interpolation
-`CORE` (implicitly imported) provides `to_string` for `Str`, `@Bool`, and `@Int`,
+`CORE` (implicitly imported) provides `to_string` for `Str`, `Bool`, and `@Int`,
 and the `Stream`/`range`/`count_from` prelude. String interpolation desugars
 through `to_string`; extend it (7.3) for your own types.
 
 ```ares
-$ s : @Str = to_string 42 ++ " " ++ to_string @true      # "42 true"
+$ s : @Str = to_string 42 ++ " " ++ to_string true      # "42 true"
 ```
 
 ## 12.5 `TARGET` reflection
@@ -1915,7 +1917,7 @@ The `TARGET` module (qualified, no import) reflects the compilation target: word
 size, @Int bounds, and os/arch names, fixed at compile time.
 
 ```ares
-$ wide : @Bool = TARGET.int_bits == 64
+$ wide : Bool = TARGET.int_bits == 64
 $ name : @Str = TARGET.arch ++ "-" ++ TARGET.os     # equals TARGET.name
 ```
 
@@ -1939,11 +1941,10 @@ A quick index of the `@`-forms and where each is documented above.
 | `@Top` `@tt` `@Bottom` `@Eq` `@refl` `@transp` `@cast` `@Quot` `@qin` `@qelim` | kernel primitives | 16 |
 | `@absurd` | the empty match | 5.1 |
 | `@private` | visibility | 2.4 |
-| `&` `@abort` | compile-time splice | 11 |
+| `!` `@abort` | compile-time splice | 11 |
 | `@link` `@link_path` | build directives | 11.2 |
 | `@import_path` | module search, in `BUILD.ares` | 11.4 |
 | `@cast` | integer-width reinterpret | 4.11 |
-| `@true` `@false` `@Bool` | boolean | 12.1 |
 | `@Int8..64` `@Nat8..64` `@Float32/64` | sized numerics | 3.2 |
 | `@I*` | blessed literal / indexing / range / interpolation interfaces | 1.4, 1.6, 9.5 |
 | `@Ptr` `@Array` `@Vec` | built-in containers/pointer | 3.3, 12 |
@@ -1963,7 +1964,7 @@ is `MAIN.ares` in the current directory (or the sole `.ares` file there).
 | --- | --- |
 | `run` | run a program (needs `$ @main`) on the interpreter; extra args pass to it |
 | `build` | compile a program to a native executable beside the source |
-| `check` | run `@build`, expand metaprograms, run `$ &` checks, print inferred types |
+| `check` | run `@build`, expand metaprograms, run `$ !` checks, print inferred types |
 | `expand` | print the source after expansion, to inspect what a metaprogram made |
 | `emit-c` | emit standalone C to stdout |
 | `parse` | print the parsed syntax tree |

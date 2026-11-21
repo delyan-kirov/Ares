@@ -1,4 +1,4 @@
 $ @mod META_WARN
 
-# `@warn` reports at the `&` and the build goes on.
-$ &(@warn (diag "worth knowing"); "") #~ warning[META_WARNING]: worth knowing
+# `@warn` reports at the `!` and the build goes on.
+$ !(@warn (diag "worth knowing"); "") #~ warning[META_WARNING]: worth knowing

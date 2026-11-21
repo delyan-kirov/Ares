@@ -22,10 +22,10 @@ $ origin : Point = { .x = 0.0, .y = 0.0 }
 # result depends on it, so the checker needs no dependent types here.
 $ arity : @Type -> @Int = \_ => 1
 
-$ counted : @Int = arity @Int + arity (pair @Str) + arity (@Int -> @Bool) + arity { x: @Int }
+$ counted : @Int = arity @Int + arity (pair @Str) + arity (@Int -> Bool) + arity { x: @Int }
 
 $ test : @Int =
     (if (swap { 1, 2 }).0 == 2 => 0 else 1) + (if origin.x == 0.0 => 0 else 2)
         + (if counted == 4 => 0 else 4)
 
-$ &assert (test == 0) "TYPES_AS_TERMS: a check failed"
+$ !assert (test == 0) "TYPES_AS_TERMS: a check failed"

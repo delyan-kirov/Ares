@@ -15,6 +15,24 @@ fn lower(src: &str) -> CoreProgram {
     desugar_program(&ast, &program, &resolved)
 }
 
+/// Like [`lower`], for a module that uses CORE names (`Bool`, `true`, ...):
+/// CORE is checked first and imported, as the driver does.
+fn lower_with_core(src: &str) -> CoreProgram {
+    let core_src = include_str!("../../../../library/CORE.ares");
+    let (ast, core) = crate::parse_into(Ast::new(), core_src).expect("parse CORE");
+    let (ast, program) = crate::parse_into(ast, src).expect("parse");
+    let types = std::rc::Rc::new(Types::new());
+    let mut core_checker = Checker::new(&ast, types.clone());
+    core_checker.check_program(&core).expect("check CORE");
+    let mut checker = Checker::new(&ast, types);
+    checker.import_from(&core_checker);
+    checker
+        .check_program(&program)
+        .unwrap_or_else(|e| panic!("{}", e.render(src, "test.ares")));
+    let resolved = collect_resolved(&[core_checker, checker]);
+    desugar_program(&ast, &program, &resolved)
+}
+
 fn global(program: &CoreProgram, name: &str) -> Aol<Term> {
     program
         .globals
@@ -26,7 +44,7 @@ fn global(program: &CoreProgram, name: &str) -> Aol<Term> {
 
 #[test]
 fn if_becomes_one_case_on_the_condition() {
-    let p = lower("$ @mod M\n$ f : @Bool -> @Int = \\b => if b => 1 else 2\n");
+    let p = lower_with_core("$ @mod M\n$ f : Bool -> @Int = \\b => if b => 1 else 2\n");
     let t = &p.terms;
     let Term::Lam { param, body } = t.get(global(&p, "f")) else {
         panic!("expected a lambda");

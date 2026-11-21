@@ -35,7 +35,7 @@ Rules, all of them:
 
 1. **Any number of `@use` parameters, anywhere on the signature's arrows**, each
    with one or more named fields: `@use {o: IOrd t, s: ISub t, z: IZero t} -> t -> t`
-   or `t -> @use {d: IEq t} -> t -> @Bool`. Field names are unique across the
+   or `t -> @use {d: IEq t} -> t -> Bool`. Field names are unique across the
    signature, and `@use {}` is an error. Internally every field travels in ONE
    leading bundle (the field itself, or a tuple of them) that the call site BUILDS,
    so no global of the bundled type has to exist. `@use` stands only on a global

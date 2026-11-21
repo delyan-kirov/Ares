@@ -48,26 +48,26 @@ $ intersperse : @ctx { t: @Type } -> t -> @Vec t -> @Vec t = \sep v =>
 
 # ---- predicates / search ----
 
-$ find_index : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> Opt @Int = \p v =>
+$ find_index : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> Opt @Int = \p v =>
     find_index_from p v 0
 
-$ contains_by : @ctx { t: @Type } -> (t -> t -> @Bool) -> t -> @Vec t -> @Bool = \eqf x v =>
+$ contains_by : @ctx { t: @Type } -> (t -> t -> Bool) -> t -> @Vec t -> Bool = \eqf x v =>
     any_from (\y => eqf x y) v 0
 
-$ lookup_by : @ctx { k: @Type, v: @Type } -> (k -> k -> @Bool) -> k -> @Vec { k, v }
+$ lookup_by : @ctx { k: @Type, v: @Type } -> (k -> k -> Bool) -> k -> @Vec { k, v }
     -> Opt v = \eqf k ps =>
     find_at (\p => eqf k p.0) ps 0 |> \ | Opt.Some.{ p } => Opt.Some.{ p.1 } | _ => Opt.None
 
-$ span : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
+$ span : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
     let n = prefix_len p v 0 in { @vec_slice v 0 n, @vec_slice v n (@vec_len v) }
 
 $ split_at : @ctx { t: @Type } -> @Int -> @Vec t -> { @Vec t, @Vec t } = \n v =>
     { take n v, drop n v }
 
-$ partition : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
-    { filter p v, filter (\x => !(p x)) v }
+$ partition : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
+    { filter p v, filter (\x => not (p x)) v }
 
-$ remove_first : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Vec t = \p v =>
+$ remove_first : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Vec t = \p v =>
     find_index p v |>
         \ | Opt.Some.{ i } => append (@vec_slice v (i + 1) (@vec_len v)) (@vec_slice v 0 i) | _ => v
 
@@ -146,7 +146,7 @@ $ impl_IFoldr_for_vec : @ctx { t: @Type, a: @Type } -> IFoldr (@Vec t) a t =
     .{ .foldr = \f z v => foldr_from f z v (@vec_len v) }
 $ impl_IFmap_for_vec : @ctx { a: @Type, b: @Type } -> IFmap (@Vec a) a (@Vec b) b =
     .{ .fmap = vec_map }
-$ impl_IFilter_for_vec : @ctx { t: @Type } -> IFilter (@Vec t) (t -> @Bool) =
+$ impl_IFilter_for_vec : @ctx { t: @Type } -> IFilter (@Vec t) (t -> Bool) =
     .{ .filter = vec_filter }
 $ impl_IFilterMap_for_vec : @ctx { a: @Type, b: @Type } -> IFilterMap (@Vec a) a (@Vec b) b = .{
     .filter_map = \f v =>
@@ -202,7 +202,7 @@ $ vec_get_opt : @ctx { t: @Type } -> @Vec t -> @Int -> Opt t = \v i =>
 $ vec_map : @ctx { a: @Type, b: @Type } -> (a -> b) -> @Vec a -> @Vec b = \f v =>
     foldl_from (\acc x => @vec_push acc (f x)) (@vec_new {}) v 0
 
-$ vec_filter : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Vec t = \p v =>
+$ vec_filter : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Vec t = \p v =>
     foldl_from (\acc x => if p x => @vec_push acc x else acc) (@vec_new {}) v 0
 
 $ vec_append : @ctx { t: @Type } -> @Vec t -> @Vec t -> @Vec t = \xs ys =>
@@ -229,19 +229,19 @@ $ foldr_from : @ctx { t: @Type, a: @Type } -> (t -> a -> a) -> a -> @Vec t -> @I
     -> a = \f z v i =>
     if i <= 0 => z else foldr_from f (f (@vec_get v (i - 1)) z) v (i - 1)
 
-$ any_from : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> @Bool = \p v i =>
-    if i >= @vec_len v => @false else if p (@vec_get v i) => @true else any_from p v (i + 1)
+$ any_from : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Bool = \p v i =>
+    if i >= @vec_len v => false else if p (@vec_get v i) => true else any_from p v (i + 1)
 
-$ all_from : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> @Bool = \p v i =>
-    if i >= @vec_len v => @true else if p (@vec_get v i) => all_from p v (i + 1) else @false
+$ all_from : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Bool = \p v i =>
+    if i >= @vec_len v => true else if p (@vec_get v i) => all_from p v (i + 1) else false
 
-$ find_at : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> Opt t = \p v i =>
+$ find_at : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Opt t = \p v i =>
     if i >= @vec_len v =>
         Opt.None
     else
         let x = @vec_get v i in if p x => Opt.Some.{ x } else find_at p v (i + 1)
 
-$ find_index_from : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> Opt @Int = \p v i =>
+$ find_index_from : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Opt @Int = \p v i =>
     if i >= @vec_len v =>
         Opt.None
     else if p (@vec_get v i) =>
@@ -249,7 +249,7 @@ $ find_index_from : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> Opt @
     else
         find_index_from p v (i + 1)
 
-$ prefix_len : @ctx { t: @Type } -> (t -> @Bool) -> @Vec t -> @Int -> @Int = \p v i =>
+$ prefix_len : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> @Int = \p v i =>
     if i >= @vec_len v => i else if p (@vec_get v i) => prefix_len p v (i + 1) else i
 
 $ zip_with_from : @ctx { a: @Type, b: @Type, c: @Type } -> (a -> b -> c) -> @Vec a -> @Vec b -> @Int

@@ -216,7 +216,7 @@ fn diagnostics_fixes_hover_definition_and_formatting() {
     assert!(labels.contains(&"double"), "{labels:?}");
 
     // Saving runs the compile-time checks, whose failures show up too.
-    let checked = "$ @mod DEMO\n$ two : @Int = 2\n$ &assert (two == 3) \"two is not three\"\n";
+    let checked = "$ @mod DEMO\n$ two : @Int = 2\n$ !assert (two == 3) \"two is not three\"\n";
     std::fs::write(&path, checked).unwrap();
     c.notify(
         "textDocument/didChange",
@@ -479,7 +479,7 @@ fn builtins_are_defined_in_core() {
     let dir = std::env::temp_dir().join(format!("ares-lsp-builtins-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("USE.ares");
-    let src = "$ @mod USE\n$ n : @Int = @iadd 1 2\n$ b : @Bool = not @true\n$ v : @Int = @vec_len [1, 2]\n";
+    let src = "$ @mod USE\n$ n : @Int = @iadd 1 2\n$ b : Bool = not true\n$ v : @Int = @vec_len [1, 2]\n";
     std::fs::write(&path, src).unwrap();
     let uri = ares::lsp::path_to_uri(&path.canonicalize().unwrap());
     let core_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/CORE.ares").canonicalize().unwrap();
@@ -512,7 +512,7 @@ fn builtins_are_defined_in_core() {
     let diags = c.diagnostics(&uri);
     assert!(diags.is_empty(), "{diags:?}");
 
-    for (line, col, decl) in [(1, 15, "$ @iadd "), (2, 16, "$ not "), (3, 15, "$ @vec_len ")] {
+    for (line, col, decl) in [(1, 15, "$ @iadd "), (2, 14, "$ not "), (3, 15, "$ @vec_len ")] {
         let def = c.request("textDocument/definition", Json::obj([("textDocument", doc(&uri)), ("position", pos(line, col))]));
         assert_eq!(def.get("uri").as_str(), Some(core_uri.as_str()), "{decl}: {def}");
         assert_eq!(def.get("range").get("start").get("line").as_i64(), Some(core_line(decl)), "{decl}: {def}");
@@ -538,7 +538,7 @@ fn members_a_splice_generates_are_not_errors_while_editing() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("COPY.ares");
     let src = "$ @mod COPY\n\n$ @import ARESxDERIVE\n\n$ Point : @Type = @struct x: @Int, y: @Int\n\
-               $ Point3 : @Type = @struct &ARES.fields_of \"Point\", z: @Int\n\n\
+               $ Point3 : @Type = @struct !ARES.fields_of \"Point\", z: @Int\n\n\
                $ sum : Point3 -> @Int = \\p => p.x + p.z\n";
     std::fs::write(&path, src).unwrap();
     let path = path.canonicalize().unwrap();

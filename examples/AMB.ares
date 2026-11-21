@@ -5,16 +5,16 @@ $ @mod AMB
 # two-way choice, `choose n` the n-way one. A clause that may resume again gets a
 # private copy of the captured slice per resume, so one branch never observes
 # another's bindings; a clause that resumes at most once still hands the slice
-# over, at no cost. Neither is written differently: `ctl k` is just applied as
+# over, at no cost. Neither is written differently: `is k` is just applied as
 # often as the handler needs.
 
-$ Amb : @Type = @effect flip : {} -> @Bool,
+$ Amb : @Type = @effect flip : {} -> Bool,
 $ Choose : @Type = @effect choose : @Int -> @Int,
 
 # Every path's result, summed: the clause resumes `k` twice, once per branch.
 $ sum_all : ({} -> <Amb> @Int) -> @Int = \body =>
     do body {}
-    ctl k | Amb.flip u => k @true + k @false | x => x
+    is k | Amb.flip u => k true + k false | x => x
 
 $ one_flip : @Int = sum_all <| \u => if flip {} => 10 else 1
 
@@ -27,7 +27,7 @@ $ two_flips : @Int =
 # concatenated in the order the clause resumes.
 $ all_paths : @ctx { a: @Type } -> ({} -> <Amb> a) -> List a = \body =>
     do body {}
-    ctl k | Amb.flip u => k @true ++ k @false | x => List.Cons.{ x, List.Nil }
+    is k | Amb.flip u => k true ++ k false | x => List.Cons.{ x, List.Nil }
 
 $ list_sum : List @Int -> @Int = \xs => xs |> \ | List.Cons.{ h, t } => h + list_sum t | _ => 0
 
@@ -40,7 +40,7 @@ $ resume_each : (@Int -> @Int) -> @Int -> @Int -> @Int = \k i n =>
 
 $ search : ({} -> <Choose> @Int) -> @Int = \body =>
     do body {}
-    ctl k | Choose.choose n => resume_each k 1 n | x => x
+    is k | Choose.choose n => resume_each k 1 n | x => x
 
 # Backtracking search over three nested choices: the pythagorean triples with
 # a <= b and every side at most 15 (3-4-5, 5-12-13, 6-8-10, 9-12-15).
@@ -55,4 +55,4 @@ $ test : @Int =
     (if one_flip == 11 => 0 else 1) + (if two_flips == 22 => 0 else 2)
         + (if list_sum collected == 11 => 0 else 4) + (if triples == 4 => 0 else 8)
 
-$ &assert (test == 0) "AMB: a check failed"
+$ !assert (test == 0) "AMB: a check failed"

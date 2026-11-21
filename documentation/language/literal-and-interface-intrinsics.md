@@ -39,7 +39,7 @@ Deleted as builtins: `@Str` (folded into `@Array`), `@list` (redefined as a core
 `@union`).
 
 Scalars stay primitive: `@Int`, `@Nat`, `@Float64` (and the sized `@intN`/`@natN`/
-`@Float32`), `@Bool` (control flow needs a concrete branch value; `Bool` is out of
+`@Float32`), `Bool` (control flow needs a concrete branch value; `Bool` is out of
 scope for literal work).
 
 ## The blessed-interface family
@@ -183,7 +183,7 @@ Touchpoints: `parser.rs`/`typing.rs` (literal lowering + defaulting),
 
 Landed both halves. A literal PATTERN (`is "foo"`, `is 42`) whose scrutinee is a user
 type routes through that type's construction hook (to build the literal into the type)
-plus `@compiler_interface_equality : t -> t -> @Bool`, matching by a boolean test. A
+plus `@compiler_interface_equality : t -> t -> Bool`, matching by a boolean test. A
 sequence PATTERN (`is [a, b] ++ r`, `is h :: t`, `is []`) on a user type unfolds
 `@compiler_interface_sequence_view : f t -> SeqView (f t) t` (core union
 `$ SeqView s t = Empty | More t s`), stepping `More elem tail` per leading element and
@@ -270,7 +270,7 @@ Touchpoints: `typing.rs` (drop `@list`/`@Str` builtins), `library/CORE.ares`,
 - Make `@Int`/`@Nat` canonical; drop the `Int`/`Nat` aliases entirely.
 - Keep `Real` as a core alias to `@Float64`, the single surviving alias (float has
   no obvious default name; int/nat do). Drop every other alias.
-- Drop the friendly `Bool` spelling; `@Bool` only.
+- Drop the friendly `Bool` spelling; `Bool` only.
 - Migrate corpus, examples, and docs.
 
 Touchpoints: `typing/types.rs` (`display_con`, base-type set), `library/CORE.ares`,

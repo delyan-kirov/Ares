@@ -148,7 +148,7 @@ fn lex_tokenizes_a_string_into_tokens() {
                $ toks : @Vec Token = @lex \"foo + 12\"\n\
                $ word : @Str = @vec_get toks 0 |> \\ | Token.Word.{ w } => w | _ => \"\"\n\
                $ n : @Int = @vec_len toks\n\
-               $ ck : @Bool =\n\
+               $ ck : Bool =\n\
                \t@token_kind (@vec_get toks 0) == \"Word\"\n\
                \t\t&& @token_text (@vec_get toks 0) == \"foo\"\n\
                \t\t&& @token_kind (@vec_get toks 1) == \"Op\"\n\
@@ -162,8 +162,8 @@ fn lex_tokenizes_a_string_into_tokens() {
 #[test]
 fn parse_str_produces_opaque_code() {
     // A valid expression parses into an opaque `@Code` carrying its source. A
-    // syntax error traps (verified via `ares run`: a compile-time `&` of a
-    // bad `@parse_str` fails the build), the same fault path as a `&` trap.
+    // syntax error traps (verified via `ares run`: a compile-time `!` of a
+    // bad `@parse_str` fails the build), the same fault path as a `!` trap.
     let src = "$ @mod T\n$ c : @Code = @parse_str \"1 + 2\"";
     assert_eq!(run(src, "T.c"), "@Code.{ .src = \"1 + 2\" }");
 }
@@ -198,44 +198,44 @@ fn eval_dispatches_to_the_meta_host_and_embeds_the_result() {
 #[test]
 fn fresh_mints_distinct_names() {
     // `@fresh` returns a unique identifier each call, for hygienic codegen. It
-    // carries `<@Meta>`, so it runs inside `&`; force the synthetic global.
+    // carries `<@Meta>`, so it runs inside `!`; force the synthetic global.
     let src = "$ @mod T\n\
-               $ ck : @Bool = &@parse_str (if @fresh \"t\" == @fresh \"t\" => \"@true\" else \"@false\")";
-    assert_eq!(run(src, "T.@splice_expr#0"), "@Code.{ .src = \"@false\" }");
+               $ ck : Bool = !@parse_str (if @fresh \"t\" == @fresh \"t\" => \"true\" else \"false\")";
+    assert_eq!(run(src, "T.@splice_expr#0"), "@Code.{ .src = \"false\" }");
 }
 
 #[test]
 fn expr_position_splice_lowers_to_a_synthetic_global() {
-    // `&X` in expression position becomes a synthetic global `@splice_expr#i = X`
+    // `!X` in expression position becomes a synthetic global `@splice_expr#i = X`
     // (the driver splices the code it returns; here we force the body directly
     // to confirm the site was lowered and the callee is in scope).
     let src = "$ @mod T\n\
                $ fib : @Int -> @Int = \\n => if n < 2 => n else fib (n - 1) + fib (n - 2)\n\
-               $ x : @Int = &(@parse_str <| to_string <| fib 10)";
+               $ x : @Int = !(@parse_str <| to_string <| fib 10)";
     assert_eq!(run(src, "T.@splice_expr#0"), "@Code.{ .src = \"55\" }");
 }
 
 #[test]
 fn ct_run_lowers_to_a_forceable_synthetic_global() {
-    // `$ &<expr>` becomes a synthetic global (`Module.@splice#i`) that the driver
+    // `$ !<expr>` becomes a synthetic global (`Module.@splice#i`) that the driver
     // forces at compile time. Here we force it directly to confirm it is emitted
     // and evaluates.
     let src = "$ @mod T\n\
                $ triple : @Int -> @Int = \\n => n * 3\n\
-               $ &(@code <| \"$ k : @Int = \" ++ to_string (triple 14))\n\
+               $ !(@code <| \"$ k : @Int = \" ++ to_string (triple 14))\n\
                $ test : @Int = 0";
     assert_eq!(run(src, "T.@splice#0"), "@Code.{ .src = \"$ k : @Int = 42\" }");
 }
 
 #[test]
 fn type_position_splice_lowers_to_a_forceable_synthetic_global() {
-    // `Foo : &X = ...` records the type-position `&X` as a synthetic global
+    // `Foo : !X = ...` records the type-position `!X` as a synthetic global
     // (`Module.@splice_type#i`) the driver forces at compile time, then splices the
     // resulting `@Code`'s type source into the annotation. Here we force it
     // directly to confirm it is emitted and yields the type-carrying `@Code`.
     let src = "$ @mod T\n\
                $ pick : @Str -> @Code = \\s => @parse_str \"@Int\"\n\
-               $ x : &pick \"num\" = 42";
+               $ x : !pick \"num\" = 42";
     assert_eq!(run(src, "T.@splice_type#0"), "@Code.{ .src = \"@Int\" }");
 }
 
@@ -499,7 +499,7 @@ fn a_name_defined_twice_is_rejected() {
     // `kind` can be resolved at a call site instead of at the declaration.
     let src = "$ @mod M\n\
                $ kind : @Int -> @Int = \\x => 1\n\
-               $ kind : @Bool -> @Int = \\b => 2\n\
+               $ kind : Bool -> @Int = \\b => 2\n\
                $ r : @Int = kind 7";
     assert!(errors(src).contains("`kind` is defined twice"), "{}", errors(src));
 }
@@ -510,7 +510,7 @@ fn ctx_resolves_by_type() {
     // site does not write. It is found by its type (`Ord @Int`), and injected as a
     // leading argument.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
@@ -525,7 +525,7 @@ fn ctx_chains_and_is_overridden() {
     // `max_of` into a min. The flipped instance is local, so global scope keeps one
     // value per type.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
                $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
@@ -546,11 +546,11 @@ fn ctx_generic_instance_resolves_per_element_type() {
                $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
                $ show : @ctx {t: @Type} -> @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
-               $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
+               $ sh_bool : Show Bool = .{ .show = \\b => to_string b }\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
                $ sh_box : @ctx {t: @Type} -> @use {d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }\n\
-               $ r : @Int = if (show (Box.Wrap.{ 5 } : Box @Int) == \"W(5)\") && (show (Box.Wrap.{ @true } : Box @Bool) == \"W(true)\") => 0 else 1";
+               $ r : @Int = if (show (Box.Wrap.{ 5 } : Box @Int) == \"W(5)\") && (show (Box.Wrap.{ true } : Box Bool) == \"W(true)\") => 0 else 1";
     assert_eq!(run(src, "r"), "0");
 }
 
@@ -562,11 +562,11 @@ fn ctx_bundle_resolves_each_component() {
     let src = "$ @mod M\n\
                $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
-               $ sh_bool : Show @Bool = .{ .show = \\b => to_string b }\n\
+               $ sh_bool : Show Bool = .{ .show = \\b => to_string b }\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
                $ show_pair : @ctx {a: @Type, b: @Type} -> @use {sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
                \t\"(\" ++ sa.show x.fst ++ \", \" ++ sb.show x.snd ++ \")\"\n\
-               $ r : @Int = if show_pair (Pair.{ .fst = 5, .snd = @true } : Pair @Int @Bool) == \"(5, true)\" => 0 else 1";
+               $ r : @Int = if show_pair (Pair.{ .fst = 5, .snd = true } : Pair @Int Bool) == \"(5, true)\" => 0 else 1";
     assert_eq!(run(src, "r"), "0");
 }
 
@@ -608,7 +608,7 @@ fn qualified_ctx_call_injects_its_context() {
     // `MOD.f` (qualified) plans its context just like a bare `f`, resolving the
     // instance from the caller's scope.
     let lib = "$ @mod LM\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> @Bool,\n\
+               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
                $ maxf : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
     let root = "$ @mod M\n\
                 $ @import LM\n\
@@ -1130,7 +1130,7 @@ fn imported_global_does_not_shadow_a_same_named_effect_op() {
     let b = "$ @mod B\n\
         $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
         $ getit : {} -> <State> @Int = get {}\n\
-        $ run : @Int = do getit {} ctl k | State.get u => k 42 | State.put v => k {} | r => r";
+        $ run : @Int = do getit {} is k | State.get u => k 42 | State.put v => k {} | r => r";
     let root = "$ @mod M\n$ @import A\n$ @import B\n$ r : @Int = B.run";
     assert_eq!(run_modules(&[a, b, root], "r"), "42");
 }
@@ -1160,7 +1160,7 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
         $ Y : @Type = @effect yield : @Int -> {},\n\
         $ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n\
         $ sum : ({} -> <Y> @Int) -> @Int = \
-          \\body => do body {} ctl k | Y.yield v => v + k {} | x => x\n";
+          \\body => do body {} is k | Y.yield v => v + k {} | x => x\n";
     // Normal completion: body yields 1 and returns 100, cleanup yields 2 -> 103.
     let normal =
         format!("{prelude}$ r : @Int = sum (\\_ => @finale (\\_ => Y.yield 2) (\\_ => let _ = Y.yield 1 in 100))");
@@ -1169,7 +1169,7 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
     // still runs under the enclosing `Y` handler -> 9.
     let abort = format!(
         "{prelude}$ r : @Int = sum (\\_ => \
-         do @finale (\\_ => Y.yield 9) (\\_ => let _ = Exn.throw \"x\" in 100) ctl k | Exn.throw e => 0)"
+         do @finale (\\_ => Y.yield 9) (\\_ => let _ = Exn.throw \"x\" in 100) is k | Exn.throw e => 0)"
     );
     assert_eq!(run(&abort, "r"), "9");
     // Nested finales run innermost-first: 1 + 2 + 3 = 6.
@@ -1194,9 +1194,9 @@ fn a_clause_may_resume_its_continuation_more_than_once() {
     // slice. The second `flip` is performed inside a resumed copy and captures
     // again from there: 11 + 1 + 10 + 0.
     let src = "$ @mod M\n\
-        $ Amb : @Type = @effect flip : {} -> @Bool,\n\
+        $ Amb : @Type = @effect flip : {} -> Bool,\n\
         $ sum_all : ({} -> <Amb> @Int) -> @Int = \
-          \\body => do body {} ctl k | Amb.flip u => k @true + k @false | x => x\n\
+          \\body => do body {} is k | Amb.flip u => k true + k false | x => x\n\
         $ one : @Int = sum_all (\\_ => if flip {} => 10 else 1)\n\
         $ two : @Int = sum_all (\\_ => \
           let a = if flip {} => 1 else 0 in \
@@ -1214,7 +1214,7 @@ fn a_stored_continuation_may_be_resumed_more_than_once() {
         $ Co : @Type = @effect step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
-          \\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
+          \\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
           \\t => t |> \\ | Task.Fin.{} => 0 | Task.Susp.{ v, k } => v + drive (k {}) | _ => 0\n\
         $ twice : @Int = spawn (\\_ => let _ = step 1 in (let _ = step 2 in {})) |> \\ \
@@ -1235,9 +1235,9 @@ fn n_resumes_of_one_continuation_cost_n_minus_one_copies() {
     // The first `k` is not its last use, so that resume copies; the second is,
     // so it takes the slice itself.
     let src = "$ @mod M\n\
-        $ Amb : @Type = @effect flip : {} -> @Bool,\n\
+        $ Amb : @Type = @effect flip : {} -> Bool,\n\
         $ r : @Int = do (if flip {} => 10 else 1) \
-          ctl k | Amb.flip u => k @true + k @false | x => x";
+          is k | Amb.flip u => k true + k false | x => x";
     assert_eq!(copies_while(src, "r"), ("11".into(), 1));
 }
 
@@ -1250,7 +1250,7 @@ fn parameter_passing_state_moves_without_an_annotation() {
         $ count : @Int -> <St> @Int = \\n => \
           if n == 0 => get {} else (let s = get {} in let _ = put (s + 1) in count (n - 1))\n\
         $ r : @Int = \
-          let run = do count 50 ctl k \
+          let run = do count 50 is k \
             | St.get u => (\\s => (k s) s) \
             | St.put v => (\\s => (k {}) v) \
             | x => (\\s => x) \
@@ -1264,7 +1264,7 @@ fn a_stashed_coroutine_continuation_moves_when_driven_once() {
         $ Co : @Type = @effect step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
-          \\t => do t {} ctl k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
+          \\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
           \\t => t |> \\ | Task.Fin.{} => 0 | Task.Susp.{ v, k } => v + drive (k {}) | _ => 0\n\
         $ once : @Int = drive (spawn (\\_ => let _ = step 1 in (let _ = step 2 in {})))\n\
@@ -1297,7 +1297,7 @@ fn a_stored_continuation_resumed_twice_copies() {
         $ Co : @Type = @effect step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
-          \\t => do t {} ctl k \
+          \\t => do t {} is k \
           | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
           \\t => t |> \\ | Task.Fin.{} => 0 | Task.Susp.{ v, k } => v + drive (k {}) | _ => 0\n\
@@ -1314,7 +1314,7 @@ fn finale_cleanup_runs_when_a_stored_continuation_completes() {
         $ Co : @Type = @effect step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
-          \\t => do t {} ctl k | step v => Task.Susp.{ k } | _ => Task.Fin.{}\n\
+          \\t => do t {} is k | step v => Task.Susp.{ k } | _ => Task.Fin.{}\n\
         $ drive : Task -> @Int = \
           \\t => t |> \\ | Task.Fin.{} => 0 | Task.Susp.{ k } => 1 + drive (k {}) | _ => 0\n\
         $ r : @Int = drive (spawn (\\_ => @finale (\\_ => step 2) (\\_ => let _ = step 1 in {})))";
@@ -1465,7 +1465,7 @@ fn scalar_serialization_round_trips() {
     // int/nat, and boolean scalars. They are defined entirely in CORE (byte-level
     // `@array_*` plus arithmetic), not as compiler primitives, so a round trip
     // through text recovers the original value.
-    let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
+    let ok = |src: &str| run(&format!("$ @mod M\n$ a : Bool = {src}"), "a");
 
     // @Int, including the negative branch.
     assert_eq!(ok("(from_str (to_string 1234)) == Opt.Some.{ 1234 }"), "true");
@@ -1502,7 +1502,7 @@ fn float_widths_mix_only_by_explicit_conversion() {
     // An operator takes one type for both operands, so `@Float32 + @Float64` is a
     // type error rather than a silent widening: `f32_to_f64` says where the
     // conversion happens.
-    let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
+    let ok = |src: &str| run(&format!("$ @mod M\n$ a : Bool = {src}"), "a");
     assert_eq!(
         ok("let x : @Float32 = (from_str \"1.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
             let y : @Float64 = (from_str \"2.25\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
@@ -1510,7 +1510,7 @@ fn float_widths_mix_only_by_explicit_conversion() {
         "true"
     );
     let err = errors(
-        "$ @mod M\n$ a : @Bool = \
+        "$ @mod M\n$ a : Bool = \
          let x : @Float32 = (from_str \"1.5\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in \
          let y : @Float64 = (from_str \"2.25\" |> \\ | Opt.Some.{ v } => v | _ => 0.0) in (x + y) == y",
     );
@@ -1522,7 +1522,7 @@ fn sized_arithmetic_takes_literals_but_not_word_variables() {
     // A bare LITERAL drops into sized arithmetic, because it is checked against the
     // other operand's type rather than inferred on its own. A word-typed VARIABLE
     // does not: one operator, one type, so `@cast` says where the conversion is.
-    let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
+    let ok = |src: &str| run(&format!("$ @mod M\n$ a : Bool = {src}"), "a");
     assert_eq!(
         ok("let p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
             let x : @Int = 5 in \
@@ -1531,7 +1531,7 @@ fn sized_arithmetic_takes_literals_but_not_word_variables() {
         "true"
     );
     let err = errors(
-        "$ @mod M\n$ a : @Bool = \
+        "$ @mod M\n$ a : Bool = \
          let p : @Int32 = (from_str \"3\" |> \\ | Opt.Some.{ v } => v | _ => 0) in \
          let x : @Int = 5 in (x * p) == p",
     );
@@ -1556,7 +1556,7 @@ fn sized_literal_arithmetic_evaluates() {
     // Two bare literals in a sized-int context resolve to that sized type and
     // compute the right value (the operand types are pinned to the result type,
     // not defaulted to `@Int`).
-    let ok = |src: &str| run(&format!("$ @mod M\n$ a : @Bool = {src}"), "a");
+    let ok = |src: &str| run(&format!("$ @mod M\n$ a : Bool = {src}"), "a");
     assert_eq!(
         ok("let r : @Int32 = 2 + 3 * 4 in r == (from_str \"14\" |> \\ | Opt.Some.{ v } => v | _ => 0)"),
         "true"
@@ -1583,7 +1583,7 @@ fn operator_table_every_entry() {
             // Structural punctuation.
             "\\" => ("$ a : @Int = (\\x => x) 5", "5"),
             "=" => ("$ a : @Int = 5", "5"),
-            "=>" => ("$ a : @Int = if @true => 1 else 0", "1"),
+            "=>" => ("$ a : @Int = if true => 1 else 0", "1"),
             "->" => ("$ f : @Int -> @Int = \\x => x\n$ a : @Int = f 5", "5"),
             ":" => ("$ a : @Int = 5", "5"),
             "$" => ("$ a : @Int = 5", "5"),
@@ -1594,7 +1594,6 @@ fn operator_table_every_entry() {
             "/" => ("$ a : @Int = 13 / 4", "3"),
             "%" => ("$ a : @Int = 13 % 5", "3"),
             "^" => ("$ a : @Int = 2 ^ 3", "8"),
-            "!" => ("$ a : @Int = if !@false => 1 else 0", "1"),
             // Bitwise.
             "&&&" => ("$ a : @Int = 12 &&& 10", "8"),
             "|||" => ("$ a : @Int = 12 ||| 10", "14"),
@@ -1603,7 +1602,7 @@ fn operator_table_every_entry() {
             ">>>" => ("$ a : @Int = (0 - 16) >>> 2", "-4"),
             "~~~" => ("$ a : @Int = ~~~0", "-1"),
             // The splice runs its operand at compile time; forcing `a` here runs it.
-            "&" => ("$ a : @Int = &(2 + 3)", "5"),
+            "!" => ("$ a : @Int = !(2 + 3)", "5"),
             // Comparison.
             "==" => ("$ a : @Int = if 3 == 3 => 1 else 0", "1"),
             "!=" => ("$ a : @Int = if 3 != 4 => 1 else 0", "1"),
@@ -1621,8 +1620,8 @@ fn operator_table_every_entry() {
             "|" => ("$ a : @Int = 1 |> \\ | 1 => 10 | _ => 0", "10"),
             // Pipes, short-circuit, sequencing, cons, concat.
             "<|" => ("$ a : @Int = (\\n => n + 1) <| 5", "6"),
-            "&&" => ("$ a : @Int = if @true && @true => 1 else 0", "1"),
-            "||" => ("$ a : @Int = if @false || @true => 1 else 0", "1"),
+            "&&" => ("$ a : @Int = if true && true => 1 else 0", "1"),
+            "||" => ("$ a : @Int = if false || true => 1 else 0", "1"),
             ";" => ("$ a : @Int = 1 ; 2 ; 3", "3"),
             "|>" => ("$ a : @Int = 5 |> (\\n => n + 1)", "6"),
             // Composition applies the RIGHT function first: 5 * 2, then + 1.
@@ -1784,8 +1783,8 @@ fn short_circuit_and_or() {
     // result is already decided: a `1 / 0` on the skipped side must not fault.
     // Precedence: `&&`/`||` bind looser than comparison (`a < b && c < d`).
     let src = "$ @mod M\n\
-               $ f : @Bool = @false\n\
-               $ t : @Bool = @true\n\
+               $ f : Bool = false\n\
+               $ t : Bool = true\n\
                $ sc_and : @Int = if (f && (1 / 0 == 0)) => 1 else 0\n\
                $ sc_or  : @Int = if (t || (1 / 0 == 0)) => 0 else 1\n\
                $ prec   : @Int = if (3 < 5 && 5 < 9) => 0 else 1\n\
@@ -1830,9 +1829,9 @@ fn deep_tail_recursion_is_constant_stack() {
 
 #[test]
 fn emit_returns_unit_and_abort_faults() {
-    // `@emit` carries `<@Meta>`, so it is used inside `&` (which discharges the
+    // `@emit` carries `<@Meta>`, so it is used inside `!` (which discharges the
     // effect); forcing the synthetic global runs it, printing and returning unit.
-    let src = "$ @mod T\n$ u : {} = &(@emit \"note\"; @parse_str \"{}\")";
+    let src = "$ @mod T\n$ u : {} = !(@emit \"note\"; @parse_str \"{}\")";
     assert_eq!(run(src, "T.@splice_expr#0"), "@Code.{ .src = \"{}\" }");
 }
 
@@ -1896,9 +1895,9 @@ fn equality_forces_lazy_slots() {
                $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
                $ eq_l : @ctx {a: @Type} -> @use {d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
-               \tx |> \\ | L.N => (y |> \\ | L.N => @true | _ => @false)\n\
-               \t| L.C.{ h, t } => (y |> \\ | L.C.{ h2, t2 } => d.eq h h2 && eq_l.eq t t2 | _ => @false) }\n\
-               $ r : @Bool = mk 4 == mk 4";
+               \tx |> \\ | L.N => (y |> \\ | L.N => true | _ => false)\n\
+               \t| L.C.{ h, t } => (y |> \\ | L.C.{ h2, t2 } => d.eq h h2 && eq_l.eq t t2 | _ => false) }\n\
+               $ r : Bool = mk 4 == mk 4";
     assert_eq!(run(src, "r"), "true");
 }
 

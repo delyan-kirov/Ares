@@ -2,5 +2,5 @@ $ @mod TYPE_CHOSEN_BY_VALUE
 
 # Choosing a type by a value is a large elimination, which only the kernel
 # checks so far (#406).
-$ wide : @Bool = @true
+$ wide : Bool = true
 $ n : (if wide => @Int else @Int32) = 3  #~ error[UNSUPPORTED]: a type chosen by a value needs dependent types

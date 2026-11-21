@@ -169,7 +169,7 @@ $ spec : Command -> Spec = \c =>
 # `$ commands : @Vec Command = [Command.Build, ...]`, in declaration order.
 $ command_names : {} -> <@Meta> @Code =
     @code <| ARES.join ", " <| fmap (\v => "Command." ++ v.0) <| @type_variants "Command"
-$ &"$ commands : @Vec Command = [?(command_names {})]"
+$ !"$ commands : @Vec Command = [?(command_names {})]"
 
 $ parse_command : @Str -> Opt Command = \s => find (\c => (spec c).name == s) commands
 
@@ -207,7 +207,7 @@ $ native_path : @Str -> @Str = \p => if TARGET.os == "windows" => ARES.replace "
 # without shell syntax beyond `>`, so it runs under `cmd.exe` as well as `sh`;
 # CI runs it on every platform. `wasm` builds the native leg for wasm32-wasi and
 # runs it under node instead.
-$ corpus_task : @Bool -> <@IO, Fail> {} = \wasm =>
+$ corpus_task : Bool -> <@IO, Fail> {} = \wasm =>
     let bin = ares_bin {} in
     let interp = "target/corpus-interp.txt" in
     let native = "target/corpus-native.txt" in
@@ -273,30 +273,30 @@ $ stats_task : {} -> <@IO, Fail> {} =
     step "stats" (exe ++ " -e external -e applications")
 
 # Whether `exe` is missing or older than one of the .ares sources in `dir`.
-$ stale : @Str -> @Str -> <@IO> @Bool = \exe dir =>
-    mtime exe |> \ | Opt.Some.{ built } => newer_than built dir (read_dir dir) 0 | _ => @true
+$ stale : @Str -> @Str -> <@IO> Bool = \exe dir =>
+    mtime exe |> \ | Opt.Some.{ built } => newer_than built dir (read_dir dir) 0 | _ => true
 
-$ newer_than : @Int -> @Str -> @Vec @Str -> @Int -> <@IO> @Bool = \built dir names i =>
+$ newer_than : @Int -> @Str -> @Vec @Str -> @Int -> <@IO> Bool = \built dir names i =>
     if i >= @vec_len names =>
-        @false
-    else if !(ARES.ends_with ".ares" (@vec_get names i)) =>
+        false
+    else if not (ARES.ends_with ".ares" (@vec_get names i)) =>
         newer_than built dir names (i + 1)
     else
         mtime (dir ++ "/" ++ @vec_get names i) |>
-            \ | Opt.Some.{ t } if t > built => @true | _ => newer_than built dir names (i + 1)
+            \ | Opt.Some.{ t } if t > built => true | _ => newer_than built dir names (i + 1)
 
 # The module named on a corpus line (`OK NAME`, `ERR NAME`, `SKIP NAME (why)`).
 $ line_module : @Str -> @Str = \l =>
     let ws = ARES.split " " l in if @vec_len ws > 1 => @vec_get ws 1 else ""
 
-$ is_skip : @Str -> @Bool = \l => ARES.contains "SKIP" l
+$ is_skip : @Str -> Bool = \l => ARES.contains "SKIP" l
 
 # The modules a corpus run skipped (tests/EXCEPTIONS.ares) on its platform.
 $ skips : @Vec @Str -> @Vec @Str = \ls => fmap line_module (filter is_skip ls)
 
 # A corpus output without what either run skipped: the part both must agree on.
 $ comparable : @Vec @Str -> @Vec @Str -> @Vec @Str = \skip ls =>
-    filter (\l => !(is_skip l) && !(ARES.contains_by ARES.eq (line_module l) skip)) ls
+    filter (\l => not (is_skip l) && not (ARES.contains_by ARES.eq (line_module l) skip)) ls
 
 # `%expect` in the grammar is a tripwire: bison fails when the conflict count
 # moves, so a syntax change has to be accounted for in the spec.
@@ -332,7 +332,7 @@ $ tags_cmd : @Vec @Str -> @Str = \args =>
 # Every Ares source the formatter keeps canonical.
 $ fmt_files : @Str = "$(git ls-files --recurse-submodules -- '*.ares' ':!:tests/diagnostics/*')"
 
-$ fmt_cmd : @Bool -> @Str = \check =>
+$ fmt_cmd : Bool -> @Str = \check =>
     "${ARES_BIN:-ares} fmt " ++ (if check => "--check " else "") ++ fmt_files
 
 # Lake builds every file of the proof; a failed proof fails the build.
@@ -510,11 +510,11 @@ $ refresh_musl : {} -> <@IO, Fail> {} =
     else
         println "thrax: musl is up to date"
 
-$ is_linux : {} -> <@IO> @Bool = TARGET.os == "linux"
+$ is_linux : {} -> <@IO> Bool = TARGET.os == "linux"
 
 $ release_build : @Str -> <@IO, Fail> {} = \libc =>
     let musl = libc == "musl" in
-    if musl && !(is_linux {}) =>
+    if musl && not (is_linux {}) =>
         Fail.fail "musl is for Linux; this platform links its own C library"
     else
         refresh_ffi {};
@@ -529,7 +529,7 @@ $ windows_release : {} -> <@IO, Fail> {} =
     step "dist" windows_dist_cmd;
     println ("thrax: Windows release in " ++ dist_dir ++ "/bin/ares.exe")
 
-$ build_task : @Bool -> @Vec @Str -> <@IO, Fail> {} = \clean args =>
+$ build_task : Bool -> @Vec @Str -> <@IO, Fail> {} = \clean args =>
     arg_or args 2 "" |> \
         | ""    =>
             (if clean => C.system "cargo clean --profile dev" else 0);
@@ -578,8 +578,8 @@ $ arg_or : @Vec @Str -> @Int -> @Str -> @Str = \args i d =>
 
 $ run_command : Command -> @Vec @Str -> <@IO, Fail> {} = \c args =>
     c |> \
-        | .Build         => build_task @true args
-        | .Rebuild       => build_task @false args
+        | .Build         => build_task true args
+        | .Rebuild       => build_task false args
         | .Clean         => clean_task args
         | .Test          => step "cargo clean" "cargo clean"; step "cargo test" "cargo test"
         | .Install       =>
@@ -642,4 +642,4 @@ $ run : @Vec @Str -> <@IO, Fail> {} = \args =>
  -#
 $ @main : @Vec @Str -> <@IO> @Int = \args =>
     do run args; 0
-    ctl k | Fail.fail msg => println ("thrax: " ++ msg); 1
+    is k | Fail.fail msg => println ("thrax: " ++ msg); 1

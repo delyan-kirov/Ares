@@ -16,8 +16,8 @@ $ diff : @Int = (-) 10 4
 $ times : @Int = (*) 6 7
 $ quotient : @Int = (/) 84 2
 $ power : @Int = (^) 2 5
-$ less : @Bool = (<) 1 2
-$ negated : @Bool = (!) @false
+$ less : Bool = (<) 1 2
+$ complemented : @Int = (~~~) 0
 
 # Partial application: an operator reference curries like any other function.
 $ add_one : @Int -> @Int = (+) 1
@@ -42,8 +42,8 @@ $ pooled : Money = (+) Money.{ .cents = 150 } Money.{ .cents = 900 }
 # `::`) has no binding of its own, so its reference is the function `\l r => l op r`.
 # Referenced this way, `&&` evaluates both sides: short-circuiting is a property
 # of the infix form, not of the function.
-$ both : @Bool = (&&) @true @true
-$ either : @Bool = (||) @false @true
+$ both : Bool = (&&) true true
+$ either : Bool = (||) false true
 $ piped : @Int = (|>) 3 add_one
 $ consed : @Vec @Int = (::) 1 [2, 3]
 
@@ -59,7 +59,7 @@ $ test : @Int =
         && quotient == 42
         && power == 32
         && less
-        && negated
+        && complemented == -1
         && curried == 42
         && bound == 5
         && passed == 42
@@ -75,4 +75,4 @@ $ test : @Int =
     else
         1
 
-$ &assert (test == 0) "OPERATOR_REFS: a check failed"
+$ !assert (test == 0) "OPERATOR_REFS: a check failed"

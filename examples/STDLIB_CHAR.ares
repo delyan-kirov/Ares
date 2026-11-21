@@ -30,4 +30,4 @@ $ ck_show : @Int = if to_string e ++ to_string c == "éC" => 0 else 64
 
 $ test : @Int = ck_code + ck_eq + ck_bad + ck_chars + ck_fmap + ck_fold + ck_show
 
-$ &assert (test == 0) "STDLIB_CHAR: a check failed"
+$ !assert (test == 0) "STDLIB_CHAR: a check failed"

@@ -230,7 +230,7 @@ impl Lower<'_> {
             }
             AstItem::Union { name, sig, variants, splices, .. } => {
                 if !self.ast.slice(*splices).is_empty() {
-                    return Err(self.error(span, "a kernel union is written out, without `&` entries"));
+                    return Err(self.error(span, "a kernel union is written out, without `!` entries"));
                 }
                 let (ty, level_params) = (self.ty(*sig)?, self.level_params(*sig));
                 let ctors = self.ast.slice(*variants).iter().map(|v| self.constructor(v, span)).collect::<Result<_>>()?;

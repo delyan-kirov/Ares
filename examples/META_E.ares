@@ -1,18 +1,18 @@
 $ @mod META_E
 
 # \file META_E.ares
-# \info The compile-time splice. `&X` runs X at build time and replaces itself
+# \info The compile-time splice. `!X` runs X at build time and replaces itself
 #       with the result: an `@Code` is spliced in as source, and first-order
-#       data (a number, a `@Bool`, a `@Str`) is inserted as a literal. A string
+#       data (a number, a `Bool`, a `@Str`) is inserted as a literal. A string
 #       literal expected as `@Code` is a quotation: its text is source, and its
 #       holes `?(e)` paste code, or the literal of a value. The inserted source
 #       is then checked like hand-written code, against what its site needs (an
-#       expression, a type, items, ...). `&` works in expression, type,
+#       expression, a type, items, ...). `!` works in expression, type,
 #       member, row, pattern and item position, and binds like the other prefix
-#       operators: `&f a b` splices `f a b`, and a pipe chain is parenthesized,
-#       `&(x |> f)`. X may perform the compile-time operations (`@emit`,
+#       operators: `!f a b` splices `f a b`, and a pipe chain is parenthesized,
+#       `!(x |> f)`. X may perform the compile-time operations (`@emit`,
 #       `@abort`, `@fresh`, `@link`, the `@type_*` reflection), which carry the
-#       `<@Meta>` effect that `&` discharges; any other effect is an error.
+#       `<@Meta>` effect that `!` discharges; any other effect is an error.
 #       Empty code inserts nothing, so a site run only for its effect (a check, a
 #       link directive) returns `""`.
 
@@ -25,35 +25,35 @@ $ inc : @Int -> @Int = \x => x + 1
 
 # --- expression position ---------------------------------------------------
 $ ten : @Int = 10
-$ fib10 : @Int = &fib ten               # inserts `55`
-$ via_pipe : @Int = &(ten |> fib)       # the same, left to right
-$ chained : @Int = &(compose inc dbl) 5 # inc (dbl 5): inserts `11`
+$ fib10 : @Int = !fib ten               # inserts `55`
+$ via_pipe : @Int = !(ten |> fib)       # the same, left to right
+$ chained : @Int = !(compose inc dbl) 5 # inc (dbl 5): inserts `11`
 
 # The code is source, not a value: this inserts `1 + 2 * 3`, which yields 7.
 $ sum_code : @Code = "1 + 2 * 3"
-$ spliced : @Int = &sum_code
+$ spliced : @Int = !sum_code
 
 # A quotation's holes run in the generator: a `@Code` hole pastes its source, a
-# number pastes its literal. `&times 3 sum_code` inserts `(1 + 2 * 3) * 3`.
+# number pastes its literal. `!times 3 sum_code` inserts `(1 + 2 * 3) * 3`.
 $ times : @Int -> @Code -> @Code = \n c => "(?(c)) * ?(n)"
-$ tripled : @Int = &times 3 sum_code
+$ tripled : @Int = !times 3 sum_code
 
-# --- type position: `&` computes the annotation ----------------------------
+# --- type position: `!` computes the annotation ----------------------------
 $ pick_ty : {} -> @Code = "@Int"
-$ typed : &pick_ty {} = 42
+$ typed : !pick_ty {} = 42
 
-# --- item position: `$ &X` inserts top-level definitions ------------------
+# --- item position: `$ !X` inserts top-level definitions ------------------
 $ gen_def : {} -> @Code = "$ injected : @Int = 99"
-$ &gen_def {}
+$ !gen_def {}
 
 # --- compile-time operations -------------------------------------------------
 # `gen_meta` performs `@emit`, a `<@Meta>` op, so it declares `<@Meta>`.
 $ gen_meta : @Int -> <@Meta> @Int = \n => @emit "computing at build time"; n * 2
-$ from_meta : @Int = &gen_meta 21 # inserts `42`
+$ from_meta : @Int = !gen_meta 21 # inserts `42`
 
 # --- reflection ---------------------------------------------------------------
 # `@type_of` reads a global's type from the program being compiled, as source.
-$ &assert (@type_of "fib" == "@Int -> @Int") "META_E: `fib` has an unexpected type"
+$ !assert (@type_of "fib" == "@Int -> @Int") "META_E: `fib` has an unexpected type"
 
 # --- checks ----------------------------------------------------------------
 $ ck1 : @Int = if fib10 == 55 => 0 else 1
@@ -67,4 +67,4 @@ $ ck8 : @Int = if tripled == 21 => 0 else 128
 
 $ test : @Int = ck1 + ck2 + ck3 + ck4 + ck5 + ck6 + ck7 + ck8
 
-$ &assert (test == 0) "META_E: a check failed"
+$ !assert (test == 0) "META_E: a check failed"

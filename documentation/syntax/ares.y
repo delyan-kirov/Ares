@@ -25,7 +25,7 @@
  *                     (parenthesize to nest); the real parser also ends the
  *                     arms at a `| op x` operation clause, which this grammar
  *                     does not model; two
- *   - `do ... ctl`    `ctl` attaches to the nearest `do`
+ *   - `do ... is`    `is` attaches to the nearest `do`
  * Everything else that would conflict is ruled out by the grammar instead: a
  * splice is a prefix operator, never an argument (see app); an argument and a
  * later lambda parameter do not start with `.` (see app, params); a qualified
@@ -67,7 +67,6 @@
                        `@ctx {t: @Type, n: @Nat} ->`, and arguments that give
                        some by name, `f @ctx {.t = @Int}` (#537) */
 %token AT_PRIVATE AT_EXTERN AT_ARRAY AT_IMPORT
-%token AT_TRUE AT_FALSE /* the two `@Bool` literals (there is no `true`/`false` alias) */
 %token AT_TYCON     /* any other @name: a built-in type (@Int64, @Str, @Vec) or
                        effect (@IO) in a type, an intrinsic (@vec_len) as a value */
 
@@ -76,7 +75,7 @@
 %token EQ ARROW FATARROW DOLLAR COLON COMMA DOT  /* FATARROW is `=>` */
 
 %token KW_LET KW_IN KW_IF KW_ELSE
-%token KW_DO KW_CTL
+%token KW_DO KW_IS
 
 %right SEMI                         /* ; */
 %right PIPE_BACK                    /* <| */
@@ -90,13 +89,12 @@
 %left  STAR SLASH PERCENT AMP3 SHL3 SHR3  /* &&& <<< >>> bitwise and, shifts */
 %right CARET                        /* ^ exponentiation */
 %right COMPOSE                      /* <|> composition (desugars to `\x => f (g x)`) */
-%precedence NEG                     /* unary - ! ~~~ and the splice & */
+%precedence NEG                     /* unary - ~~~ and the splice ! */
 %precedence APP                     /* application */
 %left  DOT                          /* postfix . */
 
-%token BANG                         /* ! */
 %token TILDE3                       /* ~~~ bitwise complement */
-%token AMP                          /* & build-time splice */
+%token BANG                         /* ! build-time splice */
 %token ANGLE_EMPTY                  /* <> */
 %token BAR                          /* | */
 %token ELLIPSIS                     /* ... inclusive range (patterns + `t.[p...q]` slices) */
@@ -135,7 +133,7 @@ global
   /* A builtin, declarable only in CORE: the name is the runtime primitive
    * (`$ @iadd : t -> t -> t = @extern "ares"`). */
   | DOLLAR AT_TYCON COLON expr EQ builtin_lit
-  | DOLLAR splice  /* `$ &assert ..`: the items the code holds replace it */
+  | DOLLAR splice  /* `$ !assert ..`: the items the code holds replace it */
   | DOLLAR LPAREN operator_name RPAREN COLON expr EQ expr  /* `$ (+) : T = e` */
   ;
 
@@ -148,7 +146,7 @@ body      : expr | extern_lit ;
  * definition binds, and the function value `(op)` refers to. The grammatical
  * delimiters (`|`, `<>`) are excluded: they are not operators. */
 operator_name
-  : PLUS | MINUS | STAR | SLASH | PERCENT | CARET | BANG | CONCAT | CONS
+  : PLUS | MINUS | STAR | SLASH | PERCENT | CARET | CONCAT | CONS
   | AMP3 | BAR3 | CARET3 | SHL3 | SHR3 | TILDE3
   | EQEQ | NEQ | LT | GT | LE | GE
   | AND_AND | OR_OR | SEMI | PIPE_FWD | PIPE_BACK | COMPOSE
@@ -176,18 +174,18 @@ field_decl    : LIDENT COLON expr | entry_splice ;
 union_body    : variant_decls opt_comma ;
 variant_decls : variant_decl | variant_decls COMMA variant_decl ;
 variant_decl  : UIDENT COLON payload_decl | entry_splice ;
-/* `&X`: X builds the `@Code` of fields or variants, checked and spliced in
+/* `!X`: X builds the `@Code` of fields or variants, checked and spliced in
  * place of the entry before the final compile. */
 entry_splice  : splice ;
 
-/* `&X`, the build-time splice, valid in every position: X runs at compile time
+/* `!X`, the build-time splice, valid in every position: X runs at compile time
  * and its result replaces the site, `@Code` spliced in as source and
  * first-order data inserted as a literal. Syntax, not a function: no section
- * `(&)` and no `$ (&)` definition. The operand binds like a prefix operator's,
+ * `(!)` and no `$ (!)` definition. The operand binds like a prefix operator's,
  * so it is an application and stops before an infix operator, a `,`, `=>` or a
- * row's `>`. The lexer splits a trailing `&` off an operator run that is
- * otherwise unknown, so `<&Logging>` lexes as `<` `&`. */
-splice : AMP app ;
+ * row's `>`. The lexer splits a trailing `!` off an operator run that is
+ * otherwise unknown, so `<!Logging>` lexes as `<` `!`. */
+splice : BANG app ;
 
 /* After `Tag:` a '{' ALWAYS opens the payload's field braces (`{}` empty,
  * `{A, B}` two positional fields) never a bare tuple type; that is how
@@ -267,7 +265,7 @@ eff_row
   ;
 
 /* An entry is an effect applied to its arguments (`Chan @Int e`), or
- * entries a generator produces (`&X`, a whole entry). The arguments are
+ * entries a generator produces (`!X`, a whole entry). The arguments are
  * atoms, so a `>` inside one is parenthesized. A row has no alias. */
 eff_names : row_entry | eff_names COMMA row_entry ;
 row_entry : eff_entry | splice ;
@@ -349,9 +347,8 @@ op_expr
   | op_expr CARET op_expr
   | op_expr COMPOSE op_expr
   | MINUS op_expr %prec NEG
-  | BANG  op_expr %prec NEG
   | TILDE3 op_expr %prec NEG
-  | AMP   op_expr %prec NEG
+  | BANG  op_expr %prec NEG
   | app
   ;
 
@@ -360,8 +357,8 @@ op_expr
  * tensor is the builtin `@Tensor` applied, `@Tensor n a`. An argument is an
  * `arg`: an atom that does not start with `.` (`f x .Tag` would otherwise
  * read as `f (x.Tag)` or as two arguments), so `f (.Tag)` parenthesizes. A
- * splice is never an argument: `&` is a prefix operator (see op_expr), so
- * `@Vec (&f a)`. */
+ * splice is never an argument: `!` is a prefix operator (see op_expr), so
+ * `@Vec (!f a)`. */
 app    : atom | app arg %prec APP ;
 app_nb : atom_nb | app_nb arg %prec APP ;
 
@@ -382,8 +379,6 @@ plain
   | IMAG   /* resolves `@IImagLit <type>` and calls its field on the magnitude;
             * deliberately absent from `pat_atom` (a pattern holds no call) */
   | STR
-  | AT_TRUE   /* @Bool literals; the ONLY spelling (no bare `true`/`false`) */
-  | AT_FALSE
   | LIDENT    /* a variable: a value, a type or anything else in scope */
   | UIDENT
   | HOLE
@@ -491,7 +486,7 @@ builtin_lit : AT_EXTERN STR ;
 
 handle
   : KW_DO expr
-  | KW_DO expr KW_CTL LIDENT handler_arms
+  | KW_DO expr KW_IS LIDENT handler_arms
   ;
 
 /* A handler mixes operation clauses `| op x => e` with value arms `| pat => e`
@@ -528,7 +523,7 @@ arm
    `if` arm inside a type has its own `=>`). `\x: T => e` is an error.
    Only the first parameter may start with `.` (`\.Tag .{ x }` would read as
    one parameter or two), and a splice parameter is parenthesized, since its
-   operand would take the parameters after it: `\(&f a) b => e`. */
+   operand would take the parameters after it: `\(!f a) b => e`. */
 params : param | pat_dot | params param ;
 
 param : pat_plain | LPAREN pattern RPAREN | LPAREN pattern COLON expr RPAREN ;
@@ -547,7 +542,7 @@ pattern
 
 num_lit : INT | REAL | MINUS INT | MINUS REAL ;  /* `-` only directly before a literal */
 
-pat_atom : pat_plain | pat_dot | splice ;  /* splice: a constant (`&answer`)
+pat_atom : pat_plain | pat_dot | splice ;  /* splice: a constant (`!answer`)
                                             or a pattern a generator produces */
 pat_dot  : DOT UIDENT pat_payload ;
 
@@ -556,8 +551,6 @@ pat_plain
   | LIDENT
   | num_lit
   | STR
-  | AT_TRUE   /* @Bool literal patterns; lowercase true/false would bind */
-  | AT_FALSE
   | list_pattern
   | LBRACE pat_elem_list opt_comma RBRACE  /* tuple pattern; n >= 1 */
   | LBRACE rec_pats RBRACE                 /* record pattern `{ .x = a, .y, .._ }` */

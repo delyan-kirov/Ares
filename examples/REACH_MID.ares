@@ -15,4 +15,4 @@ $ bag : {} -> Bag = Bag.{
 
 $ test : @Int = 0
 
-$ &assert (test == 0) "REACH_MID: a check failed"
+$ !assert (test == 0) "REACH_MID: a check failed"

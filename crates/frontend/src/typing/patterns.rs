@@ -36,14 +36,14 @@ impl<'a> Checker<'a> {
                 let site = self.ast.pat_span(pat);
                 self.bind_local_at(*name, expected, site)
             }
-            // `&X` with data is a literal of the scrutinee's type. A `@Code`
+            // `!X` with data is a literal of the scrutinee's type. A `@Code`
             // pattern is unknown until the driver runs `X`, so it matches the
             // scrutinee at any type and binds nothing here. Only a lenient round
             // sees one; the final compile sees the spliced source.
             Pattern::MetaE(e) => {
                 let e = *e;
                 if let Spliced::Data(t) = self.infer_splice(e)? {
-                    self.unifier.unify(expected, t, "in a `&` pattern")?;
+                    self.unifier.unify(expected, t, "in a `!` pattern")?;
                 }
                 Ok(())
             }
@@ -61,10 +61,6 @@ impl<'a> Checker<'a> {
             Pattern::Str(_) => self
                 .unifier
                 .unify(expected, self.unifier.types.con(ty::STR), "in a string pattern"),
-            Pattern::Bool(_) => {
-                self.unifier
-                    .unify(expected, self.unifier.types.con(ty::BOOL), "in a boolean pattern")
-            }
             Pattern::Range { lo, hi } => {
                 // Both bounds are typed against the scrutinee, so a range forces its
                 // scalar (`1 ... 5` -> Int, `1.0 ... 5.0` -> Real) and rejects mixed
@@ -475,7 +471,7 @@ impl<'a> Checker<'a> {
         ))
     }
 
-    /// Whether `pat` holds an `&X` not spliced yet. Coverage is unknown until
+    /// Whether `pat` holds an `!X` not spliced yet. Coverage is unknown until
     /// it is, so only the final compile, which sees the spliced pattern, checks it.
     fn holds_meta_e(&self, pat: Aol<Pattern>) -> bool {
         let fields = |fields: utilities::Slice<FieldPat>| {
@@ -501,7 +497,6 @@ impl<'a> Checker<'a> {
             | Pattern::Int(_)
             | Pattern::Real(_)
             | Pattern::Str(_)
-            | Pattern::Bool(_)
             | Pattern::Range { .. } => false,
         }
     }
@@ -696,7 +691,6 @@ impl<'a> Checker<'a> {
                 let text = String::from_utf8_lossy(self.ast.bytes(*s));
                 DPat::Ctor(Ctor::Lit(format!("{text:?}")), Vec::new())
             }
-            Pattern::Bool(b) => DPat::Ctor(Ctor::Bool(*b), Vec::new()),
             Pattern::Range { lo, hi } => {
                 let Some(dom) = self.int_domain(pat) else {
                     return DPat::Opaque;

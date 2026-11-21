@@ -1,4 +1,4 @@
 $ @mod CTX_FIELD_INSTANCE
 
 # `@ctx` binds what unification solves; an instance is found by search, in `@use`.
-$ same : @ctx {t: @Type, d: IEq t} -> t -> @Bool = \x => d.eq x x  #~ error[TYPE_MISMATCH]: `@ctx` field `d` of `same` is an instance
+$ same : @ctx {t: @Type, d: IEq t} -> t -> Bool = \x => d.eq x x  #~ error[TYPE_MISMATCH]: `@ctx` field `d` of `same` is an instance

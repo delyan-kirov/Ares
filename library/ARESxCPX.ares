@@ -34,8 +34,8 @@ $ norm : Cpx -> Real = \z => z.re * z.re + z.im * z.im
 # The principal argument, in (-pi, pi].
 $ arg : Cpx -> Real = \z => C.atan2 { z.im, z.re }
 
-$ is_real : Cpx -> @Bool = \z => z.im == 0.0
-$ is_zero : Cpx -> @Bool = \z => z.re == 0.0 && z.im == 0.0
+$ is_real : Cpx -> Bool = \z => z.im == 0.0
+$ is_zero : Cpx -> Bool = \z => z.re == 0.0 && z.im == 0.0
 
 # ---- scaling and inversion ----
 

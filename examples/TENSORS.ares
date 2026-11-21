@@ -163,4 +163,4 @@ $ test : @Int =
         + ck_dot + ck_real + ck_ext + ck_gen + ck_row + ck_col + ck_slc + ck_rng + ck_ms + ck_kview
         + ck_kgen
 
-$ &assert (test == 0) "TENSORS: a check failed"
+$ !assert (test == 0) "TENSORS: a check failed"

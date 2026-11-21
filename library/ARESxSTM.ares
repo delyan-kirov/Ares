@@ -48,7 +48,7 @@ $ or_else : @ctx { a: @Type } -> ({} -> <Stm> a) -> ({} -> <Stm> a) -> <Stm> a =
     let mark = Stm.save {} in
     let r =
         do first {}
-        ctl k | Stm.retry u => Opt.None | v => Opt.Some.{ v }
+        is k | Stm.retry u => Opt.None | v => Opt.Some.{ v }
     in
     r |> \ | Opt.Some.{ v } => v | _ => (Stm.rollback mark; second {})
 
@@ -63,7 +63,7 @@ $ @private
 # when it retried.
 $ attempt : @ctx { a: @Type, e: @Row } -> ({} -> <Stm> a) -> <@IO | e> Opt a = \tx =>
     do tx {}
-    ctl k
+    is k
     | Stm.read t     => k (@stm_read t)
     | Stm.write p    => (@stm_write p.0 p.1; k {})
     | Stm.retry u    => Opt.None

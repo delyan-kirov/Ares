@@ -282,14 +282,14 @@ pub struct Checker<'a> {
     instances: HashMap<StrId, Vec<Inst>>,
     /// This module's own instances, re-exported to importers.
     own_instances: Vec<(StrId, Inst)>,
-    /// This module's types that still hold `&` entry splices. A lenient round
+    /// This module's types that still hold `!` entry splices. A lenient round
     /// holds back a global whose body fails while any remain, since the entries a
     /// generator has yet to splice in may be what it is missing.
     pending_types: HashSet<StrId>,
-    /// The operands of this module's `&` entries in `@struct`/`@union` bodies,
-    /// checked once the module's globals are in scope, as `$ &` directives are.
+    /// The operands of this module's `!` entries in `@struct`/`@union` bodies,
+    /// checked once the module's globals are in scope, as `$ !` directives are.
     entry_splices: Vec<Aol<Expr>>,
-    /// Whether a module this one imports awaits `&` entry splices, itself or
+    /// Whether a module this one imports awaits `!` entry splices, itself or
     /// through its own imports: their types reach this module incomplete too.
     imported_pending: bool,
     /// Type variables introduced by integer literals, which may be Int or Real;
@@ -356,7 +356,7 @@ pub struct Checker<'a> {
     /// Interpolated strings built as a `Template`; lowering takes their quoted
     /// reading.
     interp_quoted: HashSet<Aol<Expr>>,
-    /// The locals in scope at each expression splice `&X`, by the splice's span,
+    /// The locals in scope at each expression splice `!X`, by the splice's span,
     /// so `@check` there sees them.
     splice_locals: Vec<(Span, Vec<(StrId, Type)>)>,
     /// String literals and interpolations built as `@Code`: the quotations.
@@ -477,7 +477,7 @@ pub struct Checker<'a> {
     /// The variables of the constructors matched so far in the definition
     /// being checked, which must stay opaque (see [`OpaqueVar`]).
     opaque_vars: Vec<OpaqueVar>,
-    /// Set during a metaprogram-expansion round (`$ &` codegen not yet run): an
+    /// Set during a metaprogram-expansion round (`$ !` codegen not yet run): an
     /// unbound value name is treated as a fresh type variable rather than an error,
     /// so a module that forward-references an about-to-be-injected definition still
     /// checks well enough to run its generators. The final round checks strictly.
@@ -487,7 +487,7 @@ pub struct Checker<'a> {
     deferred: bool,
     /// The expression sites a lenient check deferred (an unbound name, an
     /// unresolved context or overload). Lowering marks the globals that contain
-    /// one, so the driver does not run a `&` that would reach them.
+    /// one, so the driver does not run a `!` that would reach them.
     /// See Note [Deferred sites hold back generators].
     deferred_sites: HashSet<Aol<Expr>>,
     /// Set for the interactive shell: a top-level body is checked under an open
@@ -730,7 +730,7 @@ impl<'a> Checker<'a> {
     /// Enable lenient checking for a metaprogram-expansion round: an unbound value
     /// name becomes a fresh variable instead of an error, so a module that
     /// forward-references an about-to-be-injected definition still type-checks
-    /// enough to run its `$ &` generators. The final round leaves this off.
+    /// enough to run its `$ !` generators. The final round leaves this off.
     pub fn set_lenient(&mut self, lenient: bool) {
         self.lenient = lenient;
     }
@@ -747,7 +747,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether some type this module sees, its own or an imported one, still
-    /// waits for its `&` entries, so a body failing against it may only be early.
+    /// waits for its `!` entries, so a body failing against it may only be early.
     pub fn awaits_splices(&self) -> bool {
         !self.pending_types.is_empty() || self.imported_pending
     }
@@ -1026,7 +1026,7 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
-        // Type-check `$ &<expr>` directives. All globals are in scope now, so
+        // Type-check `$ !<expr>` directives. All globals are in scope now, so
         // the expression resolves like a top-level body. The directive runs under
         // a closed `<@Meta>` handler and nothing else, so a stray `@IO` in a
         // generator is rejected (hermetic); `@build` is the one context that also
@@ -1057,7 +1057,7 @@ impl<'a> Checker<'a> {
         Ok(out)
     }
 
-    /// Check a `$ &` directive's operand builds `@Code`, so a string literal
+    /// Check a `$ !` directive's operand builds `@Code`, so a string literal
     /// there is a quotation. A directive is its own boundary: whatever it planned
     /// (an overload, a context) is resolved here, since no definition encloses it.
     fn check_run(&mut self, e: Aol<Expr>) -> Result<()> {
@@ -1892,7 +1892,7 @@ fn free_globals_field_inits(
     }
 }
 
-/// The globals the `&X` patterns' operands use. An operand runs at compile
+/// The globals the `!X` patterns' operands use. An operand runs at compile
 /// time, so it sees globals only, never a local in scope where it is written.
 fn free_globals_meta_patterns(
     ast: &Ast,
@@ -1906,7 +1906,7 @@ fn free_globals_meta_patterns(
 }
 
 /// Push every name a pattern binds onto `bound`, and the operand of every
-/// `&X` in it onto `metas`.
+/// `!X` in it onto `metas`.
 fn collect_pattern_binders(ast: &Ast, pat: Aol<Pattern>, bound: &mut Vec<StrId>, metas: &mut Vec<Aol<Expr>>) {
     match ast.pat(pat) {
         Pattern::MetaE(e) => metas.push(*e),
@@ -1951,8 +1951,7 @@ fn collect_pattern_binders(ast: &Ast, pat: Aol<Pattern>, bound: &mut Vec<StrId>,
         | Pattern::Wild
         | Pattern::Int(_)
         | Pattern::Real(_)
-        | Pattern::Str(_)
-        | Pattern::Bool(_) => {}
+        | Pattern::Str(_) => {}
     }
 }
 

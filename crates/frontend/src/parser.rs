@@ -444,8 +444,8 @@ impl<'a> Parser<'a> {
         }
     }
     /// Is the next token the operator with lexeme `s`?
-    /// The operand of a splice `&X`, with the cursor on the `&`. `&` binds like
-    /// the other prefix operators in every position, so `&f a b` splices `f a b`
+    /// The operand of a splice `!X`, with the cursor on the `!`. `!` binds like
+    /// the other prefix operators in every position, so `!f a b` splices `f a b`
     /// and the operand ends before an infix operator, a `,`, `=>` or `>`.
     fn parse_splice_operand(&mut self) -> Result<Aol<Expr>> {
         self.bump()?; // '&'
@@ -454,10 +454,10 @@ impl<'a> Parser<'a> {
     fn at_splice(&mut self) -> Result<bool> {
         self.at_op(table::SPLICE)
     }
-    /// `&` named as a function: a definition `$ (&)` or a section `(&)`.
+    /// `!` named as a function: a definition `$ (&)` or a section `(&)`.
     fn splice_not_a_function(&self, t: &Token) -> Diagnostic {
-        Diagnostic::error(Code::UnexpectedToken, t.span, t.line, "`&` is a splice, not a function")
-            .with_note("`&X` runs `X` at compile time and replaces itself with the result")
+        Diagnostic::error(Code::UnexpectedToken, t.span, t.line, "`!` is a splice, not a function")
+            .with_note("`!X` runs `X` at compile time and replaces itself with the result")
     }
     fn at_op(&mut self, s: &str) -> Result<bool> {
         let t = self.peek()?;
@@ -1472,7 +1472,7 @@ impl<'a> Parser<'a> {
         Ok(self.ast.make_slice(ops))
     }
 
-    /// A struct body: comma-separated `name : Type` fields and `&X` splices
+    /// A struct body: comma-separated `name : Type` fields and `!X` splices
     /// of generated fields, freely interleaved.
     fn parse_struct_body(&mut self) -> Result<(Slice<EntrySplice>, Slice<FieldDecl>)> {
         let mut splices = Vec::new();
@@ -1541,7 +1541,7 @@ impl<'a> Parser<'a> {
         Ok((self.ast.make_slice(splices), self.ast.make_slice(variants)))
     }
 
-    /// An `&X` entry in a struct or union declaration. `X` ends at the entry's
+    /// An `!X` entry in a struct or union declaration. `X` ends at the entry's
     /// comma, and the entry's span is what the generated entries replace.
     fn parse_entry_splice(&mut self) -> Result<EntrySplice> {
         let start = self.here()?;
@@ -1620,7 +1620,7 @@ impl<'a> Parser<'a> {
 
     fn starts_type_arg(&mut self) -> Result<bool> {
         // `@use` and `@ctx` open a signature's parameters, and a splice is a
-        // prefix operator, so none of them is an argument: `@Vec (&f a)`.
+        // prefix operator, so none of them is an argument: `@Vec (!f a)`.
         if self.at_ctx()? || self.at_intrinsic("use")? || self.at_splice()? {
             return Ok(false);
         }
@@ -1958,7 +1958,7 @@ impl<'a> Parser<'a> {
     /// An optional effect row right after `->`: `<>`, `<e>`, `<A, B>`,
     /// `<A, B | e>`, or `<| e>`. Effect names are Capitalized (user effects) or
     /// `@`-form (builtin effects like `@IO`); a lowercase name is the
-    /// row-polymorphic tail variable. An entry may be a splice `<&X, @IO>`; what
+    /// row-polymorphic tail variable. An entry may be a splice `<!X, @IO>`; what
     /// each name denotes is the checker's call.
     fn parse_effect_row_opt(&mut self) -> Result<Option<EffectRow>> {
         if self.at_op("<>")? {
@@ -1999,7 +1999,7 @@ impl<'a> Parser<'a> {
         let mut entries = Vec::new();
         loop {
             let start = self.here()?;
-            // `&X`: the operand binds tighter than a comparison, so it ends before
+            // `!X`: the operand binds tighter than a comparison, so it ends before
             // the `,` or the closing `>`.
             if self.at_splice()? {
                 let e = self.parse_splice_operand()?;
@@ -2782,19 +2782,10 @@ impl<'a> Parser<'a> {
         Ok(self.expr(Expr::List(elems)))
     }
 
-    /// An `@`-intrinsic in expression position: `@true`, `@false`, `@Array`,
-    /// `@extern`.
+    /// An `@`-intrinsic in expression position: `@Array`, `@extern`.
     fn parse_at_term(&mut self) -> Result<Aol<Expr>> {
         let at = self.peek()?;
         match self.intrinsic_name(at) {
-            "true" => {
-                self.bump()?;
-                Ok(self.expr(Expr::Bool(true)))
-            }
-            "false" => {
-                self.bump()?;
-                Ok(self.expr(Expr::Bool(false)))
-            }
             // `x |> @absurd`, the empty match: a lambda over a match with no arms,
             // so exhaustiveness accepts it only when `x`'s type is uninhabited.
             "absurd" => {
@@ -3073,7 +3064,7 @@ impl<'a> Parser<'a> {
     }
 
     /// One juxtaposed lambda parameter. A splice would take the parameters after
-    /// it as its operand's arguments (`\&f a b =>`), and `\.Tag .{ x } =>` would
+    /// it as its operand's arguments (`\!f a b =>`), and `\.Tag .{ x } =>` would
     /// read either as one parameter with its payload or as two, so a splice is
     /// parenthesized and only the first parameter may start with `.`.
     fn lambda_param(&mut self, first: bool) -> Result<LamParam> {
@@ -3085,7 +3076,7 @@ impl<'a> Parser<'a> {
                 t.line,
                 "a splice as a lambda parameter is parenthesized",
             )
-            .with_help("write `(&f a)`"));
+            .with_help("write `(!f a)`"));
         }
         if !first && matches!(t.kind, Kind::Dot) {
             return Err(Diagnostic::error(
@@ -3185,14 +3176,14 @@ impl<'a> Parser<'a> {
     fn parse_handle(&mut self) -> Result<Aol<Expr>> {
         self.bump()?; // 'do'
         let body = self.parse_expr(0)?;
-        if !matches!(self.peek_kind()?, Kind::Ctl) {
+        if !matches!(self.peek_kind()?, Kind::Is) {
             return Ok(self.expr(Expr::Handle {
                 body,
                 handler: None,
             }));
         }
-        self.bump()?; // 'ctl'
-        let continuation = self.expect_word("expected a continuation name after 'ctl'")?;
+        self.bump()?; // 'is'
+        let continuation = self.expect_word("expected a continuation name after 'is'")?;
         let start = self.here()?;
         let mut clauses = Vec::new();
         let mut value_arms = Vec::new();
@@ -3448,7 +3439,7 @@ impl<'a> Parser<'a> {
                 let name = self.intern(self.text(t));
                 Ok(self.pat(Pattern::Var(name)))
             }
-            // `&X`: the operand binds tighter than `::` and `++`, so it ends
+            // `!X`: the operand binds tighter than `::` and `++`, so it ends
             // before them and before the `=>`, `|` or `,` that follow a pattern.
             Kind::Op if self.text(t) == table::SPLICE => {
                 let e = self.parse_splice_operand()?;
@@ -3456,11 +3447,8 @@ impl<'a> Parser<'a> {
             }
             Kind::At => {
                 self.bump()?;
-                match self.intrinsic_name(t) {
-                    "true" => Ok(self.pat(Pattern::Bool(true))),
-                    "false" => Ok(self.pat(Pattern::Bool(false))),
-                    other => Err(self.unexpected(&t, &format!("'@{other}' is not a pattern"))),
-                }
+                let other = self.intrinsic_name(t);
+                Err(self.unexpected(&t, &format!("'@{other}' is not a pattern")))
             }
             Kind::LBrack => self.parse_list_pattern(),
             Kind::LBrace => self.parse_tuple_pattern(),

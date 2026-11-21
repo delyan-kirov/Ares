@@ -401,7 +401,7 @@ struct VariantLayout {
 /// The declared shape of every user type, for compile-time reflection. The
 /// driver keys its reflection host by both the bare `name` and the qualified
 /// `module.name`, so a name shared across modules can be disambiguated. Built by
-/// [`Declarations::reflect`], consumed by the driver's `$ &` type-reflection host.
+/// [`Declarations::reflect`], consumed by the driver's `$ !` type-reflection host.
 pub struct ReflectInfo {
     pub structs: Vec<(StrId, StrId, Shape<StructShape>)>,
     pub unions: Vec<(StrId, StrId, Shape<UnionShape>)>,
@@ -409,7 +409,7 @@ pub struct ReflectInfo {
     pub values: Vec<(StrId, StrId, String)>,
 }
 
-/// A declared type's parameters and members. `pending` while a `&` splice in
+/// A declared type's parameters and members. `pending` while a `!` splice in
 /// the declaration has not been spliced in, so the members are not all known.
 #[derive(Clone, Debug)]
 pub struct Shape<M> {

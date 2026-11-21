@@ -14,7 +14,7 @@ $ @import ARESxVEC
 
 $ at : @Int -> @Str -> @Int = \i s => @array_get s i
 
-$ eq : @Str -> @Str -> @Bool = \a b => a == b
+$ eq : @Str -> @Str -> Bool = \a b => a == b
 
 # Three-way byte-lexicographic comparison: negative / 0 / positive (strcmp
 # convention).
@@ -26,12 +26,12 @@ $ from_byte : @Int -> @Str = \c => @array_push "" c
 # The byte range [from, to), clamped to the string.
 $ substr : @Int -> @Int -> @Str -> @Str = \from to s => @array_slice s from to
 
-$ starts_with : @Str -> @Str -> @Bool = \p s => @array_match s 0 p
+$ starts_with : @Str -> @Str -> Bool = \p s => @array_match s 0 p
 
-$ ends_with : @Str -> @Str -> @Bool = \p s =>
+$ ends_with : @Str -> @Str -> Bool = \p s =>
     let n = @array_len p in
     let sn = @array_len s in
-    if n > sn => @false else @array_match s (sn - n) p
+    if n > sn => false else @array_match s (sn - n) p
 
 # The 256-byte mask `@array_scan` takes: 1 at each byte that occurs in `bytes`,
 # 0 elsewhere. `scan s from (byte_set "\n")` is the next newline.
@@ -54,7 +54,7 @@ $ index_of_from : @Str -> @Int -> @Str -> Opt @Int = \needle from s =>
 
 $ index_of : @Str -> @Str -> Opt @Int = \needle s => index_of_from needle 0 s
 
-$ contains : @Str -> @Str -> @Bool = \needle s => is_some (index_of needle s)
+$ contains : @Str -> @Str -> Bool = \needle s => is_some (index_of needle s)
 
 # Split on a non-empty separator; N separators yield N+1 pieces ("a,,b" on
 # "," is ["a", "", "b"]). An empty separator returns the whole string whole.
@@ -106,18 +106,18 @@ $ count : @Str -> @Str -> @Int = \needle s =>
 
 # ---- character (byte) predicates ----
 
-$ is_space : @Int -> @Bool = \c => if c == 32 => @true else if c >= 9 => c <= 13 else @false
+$ is_space : @Int -> Bool = \c => if c == 32 => true else if c >= 9 => c <= 13 else false
 
-$ is_digit : @Int -> @Bool = \c => if c >= 48 => c <= 57 else @false
+$ is_digit : @Int -> Bool = \c => if c >= 48 => c <= 57 else false
 
-$ is_alpha : @Int -> @Bool = \c =>
-    if c >= 65 => (if c <= 90 => @true else if c >= 97 => c <= 122 else @false) else @false
+$ is_alpha : @Int -> Bool = \c =>
+    if c >= 65 => (if c <= 90 => true else if c >= 97 => c <= 122 else false) else false
 
-$ is_alnum : @Int -> @Bool = \c => if is_digit c => @true else is_alpha c
+$ is_alnum : @Int -> Bool = \c => if is_digit c => true else is_alpha c
 
-$ is_upper : @Int -> @Bool = \c => if c >= 65 => c <= 90 else @false
+$ is_upper : @Int -> Bool = \c => if c >= 65 => c <= 90 else false
 
-$ is_lower : @Int -> @Bool = \c => if c >= 97 => c <= 122 else @false
+$ is_lower : @Int -> Bool = \c => if c >= 97 => c <= 122 else false
 
 # ---- trimming (ASCII whitespace) ----
 
@@ -206,13 +206,13 @@ $ map_bytes_from : (@Int -> @Int) -> @Str -> @Int -> @Str -> @Str = \f s i acc =
 
 # Does `needle` occur in `s` at byte `pos`, from needle byte `j` on? Compares in
 # place, so a search allocates nothing per position.
-$ matches_at : @Str -> @Str -> @Int -> @Int -> @Bool = \s needle pos j =>
+$ matches_at : @Str -> @Str -> @Int -> @Int -> Bool = \s needle pos j =>
     if j >= @array_len needle =>
-        @true
+        true
     else if (@array_get s (pos + j)) == (@array_get needle j) =>
         matches_at s needle pos (j + 1)
     else
-        @false
+        false
 
 # The pieces of `s` cut at each `sep` (non-empty), pushed onto `acc` in order.
 # `start` is where the current piece began; `i` is the next offset to test.
