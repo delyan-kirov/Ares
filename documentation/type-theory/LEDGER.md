@@ -87,6 +87,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | nanoda-level | nanoda_lib, an independent Lean 4 type checker in Rust, src/level.rs, commit 0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929 | https://github.com/ammkrn/nanoda_lib/blob/0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929/src/level.rs | nanoda/level.rs | a1afb0638fd9f427c6e7693ea44498b9775bd619bb6fff3bdc44dc52f1d587ad | Apache-2.0 |
 | nanoda-tc | nanoda_lib, an independent Lean 4 type checker in Rust, src/tc.rs, commit 0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929 | https://github.com/ammkrn/nanoda_lib/blob/0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929/src/tc.rs | nanoda/tc.rs | 1c74274ec2d979796f2dfa73e93d63db54cbb4ac388d283fda28e472dcd96781 | Apache-2.0 |
 | AMS07 | Altenkirch, McBride, Swierstra. Observational Equality, Now! PLPV 2007 | https://doi.org/10.1145/1292597.1292608 | - | - | ACM copyright, link only |
+| Flo62 | Floyd. Algorithm 97: Shortest Path. Communications of the ACM 5(6) 1962 | https://doi.org/10.1145/367766.368168 | - | - | ACM copyright, link only |
 | ST14 | Sozeau, Tabareau. Universe Polymorphism in Coq. ITP 2014 | https://doi.org/10.1007/978-3-319-08970-6_32 | - | - | Springer copyright, link only |
 | BS91 | Berger, Schwichtenberg. An Inverse of the Evaluation Functional for Typed λ-calculus. LICS 1991 | https://doi.org/10.1109/LICS.1991.151645 | - | - | IEEE copyright, link only |
 | Coq96 | Coquand. An Algorithm for Type-Checking Dependent Types. Science of Computer Programming 26, 1996 | https://doi.org/10.1016/0167-6423(95)00021-6 | - | - | Elsevier copyright, link only |
@@ -136,6 +137,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Level comparison by case split | nanoda-level | level.rs:158-173, leq_imax_by_cases, the same split on a parameter being zero or not; soundness is Lean Level comparison soundness | published-uncovered | #479 | yes |
 | Recursor generation | Dyb94 | not checked: not vendored | published-uncovered | - | yes |
 | Transitive axioms | - | - | conjecture | #480 | yes |
+| Level entailment | Flo62 | not checked: not vendored; longest paths over difference constraints between levels, for the frontend's `if` | published-uncovered | - | yes |
 | Local argument synthesis | PTu00 | not checked: not vendored | published-uncovered | - | yes |
 
 Glued evaluation changes no rule. Unfolding a definition is its definitional
@@ -216,6 +218,8 @@ those edges complete.
 | Quot-Intro | PT22 | Section 4.1, π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Elim | PT22, PLT25 | PT22 Section 4.1, Q-elim; the respect premise in PLT25 Section 7.6's direction | published | PT22 Quotients, Lean Consistency | - | yes |
 | Quot-Beta | PT22 | Section 4.1, Q-elim on π(u) | published | PT22 Quotients, Lean Consistency | - | yes |
+| Frontend-Univ | PT23 | Fig. 2, Univ with 𝒜(𝒰ᵢ, 𝒰ᵢ₊₁); the frontend checker's mirror of Univ, without cumulativity | published | PT23 Consistency | - | yes |
+| Frontend-Level-Polymorphism | ST14 | not checked: not vendored; the frontend checker's mirror of Level-Polymorphism, with constraints between levels stated by an `if` or inferred from the body | published-uncovered | - | - | yes |
 | Frontend-Data-Level | PLT25 | Section 4.1, the fields of an inductive definition in its universe; the frontend checker's mirror of Data-Form and Data-Ctor, for structs and unions | published | PLT25 Consistency | - | yes |
 | Frontend-Effect-Level | - | an effect's universe is the largest of its parameters' and its operations' types', and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
 
@@ -238,7 +242,7 @@ How the deviations differ from their sources:
 - **Positivity-Restricted.** A restriction of the schema, not an extension:
   no nested occurrences such as `List (D params)`.
 
-The two Frontend rows are the frontend checker's universe rules, which the
+The Frontend rows are the frontend checker's universe rules, which the
 kernel checks again for what it reads (Note [Declaration levels] in
 `crates/frontend/src/typing/unify/levels.rs`). Frontend-Data-Level mirrors
 the kernel's check of each constructor field against its type's universe,

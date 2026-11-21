@@ -1,0 +1,4 @@
+$ @mod LEVEL_UNBOUND
+
+# A level is bound in the signature's first `@ctx` (#567).
+$ size : @ctx {u: @l} -> (t: @Type v) -> @Int = 0  #~ error[TYPE_UNBOUND]: the level `v` is not bound

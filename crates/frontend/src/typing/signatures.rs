@@ -33,12 +33,12 @@ impl<'a> Checker<'a> {
     /// The variables a signature's `@ctx` fields bind, by name, each fresh and of
     /// its field's kind.
     pub(super) fn sig_tvars(&mut self, sig: Aol<Ty>) -> HashMap<StrId, Type> {
-        let mut tvars = HashMap::new();
+        let mut tvars = self.level_tvars(sig);
         let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return tvars };
         for f in self.ast.slice(fields).to_vec() {
             let t = match self.kind_of_ast(f.ty) {
                 Some(ParamKind::Nat) => self.unifier.fresh_nat(),
-                Some(ParamKind::Type) => self.leveled_var(f.ty),
+                Some(ParamKind::Type) => self.leveled_var(f.ty, &tvars),
                 Some(ParamKind::Row) => self.unifier.fresh(),
                 None => continue,
             };
@@ -47,11 +47,26 @@ impl<'a> Checker<'a> {
         tvars
     }
 
-    /// A fresh type variable ranging over the universe `universe` (`@Type`
-    /// or `@Type n`). See Note [Level constraints].
-    pub(super) fn leveled_var(&mut self, universe: Aol<Ty>) -> Type {
+    /// The levels a signature's leading `@ctx {u: @l}` binds, each a fresh
+    /// level variable, by name. See Note [Level parameters].
+    // Rule [Frontend-Level-Polymorphism]
+    pub(super) fn level_tvars(&mut self, sig: Aol<Ty>) -> HashMap<StrId, Type> {
+        let mut tvars = HashMap::new();
+        let Some(levels) = self.ast.level_params.get(sig).copied() else { return tvars };
+        for f in self.ast.slice(levels).to_vec() {
+            let l = self.unifier.fresh();
+            self.level_names.insert(l);
+            tvars.insert(f.name, l);
+        }
+        tvars
+    }
+
+    /// A fresh type variable ranging over the universe `universe` (`@Type`,
+    /// `@Type n` or `@Type u` for a level `tvars` binds).
+    /// See Note [Level constraints].
+    pub(super) fn leveled_var(&mut self, universe: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Type {
         let t = self.unifier.fresh();
-        let u = self.ty_of_ast(universe, &mut HashMap::new());
+        let u = self.ty_of_ast(universe, &mut tvars.clone());
         if let Some(l) = self.unifier.types.universe_level(self.unifier.resolve(u)) {
             self.unifier.set_var_level(t, l);
         }
@@ -60,6 +75,7 @@ impl<'a> Checker<'a> {
 
     /// The type of the type `ty` used as a value: the one universe it lives
     /// in. See Note [Level constraints].
+    // Rule [Frontend-Univ]
     pub(super) fn universe_holding(&mut self, ty: Type) -> Type {
         let own = self.unifier.level_of(ty);
         self.unifier.types.universe(own)
@@ -861,6 +877,14 @@ impl<'a> Checker<'a> {
                     let level = self.unifier.types.add(TypeNode::Level(m));
                     self.unifier.constrain_level(own, level, Some(span));
                 }
+                ParamLevel::Like(i) => {
+                    if let Some(&first) = args.get(i) {
+                        let (own, other) = (self.unifier.level_of(arg), self.unifier.level_of(first));
+                        if let Err(d) = self.unifier.unify(other, own, "in a type argument") {
+                            self.universe_errors.push(d.fill_span(span));
+                        }
+                    }
+                }
                 ParamLevel::Free { at_most: None } | ParamLevel::Other => {}
             }
         }
@@ -903,8 +927,10 @@ impl<'a> Checker<'a> {
         self.unifier.types.con(name)
     }
 
-    /// Elaborate the level of `@Type l`: a number, or a level plus one.
-    fn level_of_ast(&mut self, ty: Aol<Ty>) -> Type {
+    /// Elaborate the level of `@Type l`: a number, a level `tvars` binds, a
+    /// level plus a number, or `@max a b`. See Note [Level parameters].
+    fn level_of_ast(&mut self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Type {
+        let is_max = |c: &Self, t: Aol<Ty>| matches!(c.tnode(t), Ty::Con { module: None, name } if name.as_str() == "@max");
         match self.tnode(ty) {
             Ty::Nat(n) => match u32::try_from(*n) {
                 Ok(n) => self.unifier.types.add(TypeNode::Level(n)),
@@ -917,22 +943,64 @@ impl<'a> Checker<'a> {
                     self.unifier.fresh()
                 }
             },
-            Ty::SizeAdd(l, k) => {
-                let (l, k) = (*l, *k);
-                let l = self.level_of_ast(l);
-                match self.tnode(k) {
-                    Ty::Nat(k) if u32::try_from(*k).is_ok() => self.unifier.types.add(TypeNode::LevelAdd(l, *k as u32)),
+            Ty::Var(name) => {
+                let name = *name;
+                match tvars.get(&name) {
+                    Some(&l) if self.level_names.contains(&l) => l,
                     _ => {
-                        self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a level other than a number or a level plus a number"));
+                        let d = self.unbound_level(name, self.ty_span_or_none(ty), tvars);
+                        self.defer_type_error(d);
                         self.unifier.fresh()
                     }
                 }
             }
+            Ty::SizeAdd(l, k) => {
+                let (l, k) = (*l, *k);
+                let l = self.level_of_ast(l, tvars);
+                match self.tnode(k) {
+                    Ty::Nat(k) if u32::try_from(*k).is_ok() => self.unifier.types.add(TypeNode::LevelAdd(l, *k as u32)),
+                    _ => {
+                        self.defer_type_error(diag!(
+                            Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                            "a level is a number, a level name, `l + n` or `@max a b`"
+                        ));
+                        self.unifier.fresh()
+                    }
+                }
+            }
+            Ty::App(f, b) if matches!(self.tnode(*f), Ty::App(m, _) if is_max(self, *m)) => {
+                let (f, b) = (*f, *b);
+                let Ty::App(_, a) = *self.tnode(f) else { unreachable!("matched above") };
+                let (a, b) = (self.level_of_ast(a, tvars), self.level_of_ast(b, tvars));
+                self.unifier.types.add(TypeNode::LevelMax(a, b))
+            }
             _ => {
-                self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a level parameter"));
+                self.defer_type_error(diag!(
+                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    "a level is a number, a level name, `l + n` or `@max a b`"
+                ));
                 self.unifier.fresh()
             }
         }
+    }
+
+    /// The level `ty` writes, as in `@Type ty`.
+    pub(super) fn level_of_ty(&mut self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Type {
+        self.level_of_ast(ty, tvars)
+    }
+
+    /// `name` stands where a level does, and no `@ctx {name: @l}` binds it.
+    pub(super) fn unbound_level(&self, name: StrId, span: Span, tvars: &HashMap<StrId, Type>) -> Diagnostic {
+        let known: Vec<&str> = tvars.iter().filter(|(_, t)| self.level_names.contains(t)).map(|(n, _)| n.as_str()).collect();
+        let mut d = diag!(
+            Code::TypeUnbound, span, 0,
+            "the level `{name}` is not bound";
+            note: "a level is bound in the signature's first `@ctx`, as in `@ctx {{{name}: @l}} -> ...`"
+        );
+        if let Some(c) = utilities::error::closest(name.as_str(), known.iter().copied()) {
+            d = d.with_help(format!("did you mean `{c}`?"));
+        }
+        d
     }
 
     pub(super) fn ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
@@ -946,7 +1014,7 @@ impl<'a> Checker<'a> {
             // definition's scheme generalises. See Note [Universe levels].
             Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE => self.unifier.fresh_universe(),
             Ty::App(head, level) if matches!(self.tnode(*head), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {
-                let level = self.level_of_ast(*level);
+                let level = self.level_of_ast(*level, tvars);
                 self.unifier.types.universe(level)
             }
             Ty::Con { .. } => {
@@ -956,6 +1024,15 @@ impl<'a> Checker<'a> {
             Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
                 let name = *name;
                 self.nat_const(name, self.ast.ty_span(ty))
+            }
+            Ty::Var(name) if tvars.get(name).is_some_and(|t| self.level_names.contains(t)) => {
+                let name = *name;
+                self.defer_type_error(diag!(
+                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    "`{name}` is a level, which stands only in a universe";
+                    help: "write `@Type {name}` for the universe at level `{name}`"
+                ));
+                self.unifier.fresh()
             }
             Ty::Var(name) => {
                 let name = *name;
@@ -1018,7 +1095,7 @@ impl<'a> Checker<'a> {
                     (Some(name), Some(kind @ (ParamKind::Type | ParamKind::Nat))) => {
                         let v = match kind {
                             ParamKind::Nat => self.unifier.fresh_nat(),
-                            _ => self.leveled_var(from),
+                            _ => self.leveled_var(from, tvars),
                         };
                         tvars.insert(name, v);
                         let head = if kind == ParamKind::Nat { SIZE_OF } else { ty::TYPE_OF };

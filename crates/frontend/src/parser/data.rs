@@ -60,8 +60,12 @@ pub struct Ast {
     pub use_params: SecondaryMap<Ty, Slice<UseField>>,
     /// The level parameters of a signature's leading `@ctx {u: @l, ...} ->`,
     /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
-    /// `@l`. Only the kernel reads them so far (#406).
+    /// `@l`.
     pub level_params: SecondaryMap<Ty, Slice<UseField>>,
+    /// The `if` that closes a signature's leading `@ctx`, `{n: @l, m: @l if
+    /// n < m}`: the constraints on its levels, keyed like
+    /// [`Ast::level_params`].
+    pub level_constraints: SecondaryMap<Ty, Aol<Expr>>,
     /// The other `@ctx` fields of a signature, keyed like [`Ast::use_params`],
     /// in the order written: the types, sizes and rows its type variables are.
     pub ctx_params: SecondaryMap<Ty, Slice<UseField>>,

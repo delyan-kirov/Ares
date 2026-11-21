@@ -232,6 +232,7 @@ impl Lower<'_> {
                 if !self.ast.slice(*splices).is_empty() {
                     return Err(self.error(span, "a kernel union is written out, without `!` entries"));
                 }
+                self.only_levels(*sig)?;
                 let (ty, level_params) = (self.ty(*sig)?, self.level_params(*sig));
                 let ctors = self.ast.slice(*variants).iter().map(|v| self.constructor(v, span)).collect::<Result<_>>()?;
                 Ok(Item { name: name.as_str().into(), span, level_params, ty, body: ItemBody::Data(ctors) })
@@ -245,6 +246,9 @@ impl Lower<'_> {
 
     /// The kernel's `@ctx` binds levels only: a type is an explicit binder.
     fn only_levels(&self, sig: Aol<Ty>) -> Result<()> {
+        if let Some(cond) = self.ast.level_constraints.get(sig) {
+            return Err(self.error(self.expr_span(*cond), "the kernel takes no `if` on levels: a level parameter ranges over every level"));
+        }
         let Some(fields) = self.ast.ctx_params.get(sig) else { return Ok(()) };
         let f = self.ast.slice(*fields)[0];
         Err(self.error(f.span, format!("the kernel's `@ctx` binds levels only: bind `{}` as `({}: ...) ->`", f.name, f.name)))

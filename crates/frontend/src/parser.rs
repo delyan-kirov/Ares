@@ -975,7 +975,7 @@ impl<'a> Parser<'a> {
     /// type-level function (#535): its body read as a type is what the checker
     /// unfolds. Any other shape stays a definition.
     fn type_function(&mut self, name: StrId, sig: Aol<Ty>, body: Aol<Expr>) -> Result<Option<Item>> {
-        if self.ast.use_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() || self.ast.ctx_params.get(sig).is_some() {
+        if self.ast.use_params.get(sig).is_some() || self.ast.ctx_params.get(sig).is_some() {
             return Ok(None);
         }
         let mut arity = 0;
@@ -1024,11 +1024,15 @@ impl<'a> Parser<'a> {
         let mut ctx: Vec<UseField> = Vec::new();
         let mut fields: Vec<UseField> = Vec::new();
         let mut params: Vec<(usize, Option<(StrId, Span)>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
+        let mut level_cond = None;
         self.ctx_written = None;
         let result = loop {
             if self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace) {
                 let leading = params.is_empty() && ctx.is_empty() && levels.is_empty() && fields.is_empty();
-                self.parse_ctx_fields(params.len() as u32, leading, &mut levels, &mut ctx, &mut fields)?;
+                let cond = self.parse_ctx_fields(params.len() as u32, leading, &mut levels, &mut ctx, &mut fields)?;
+                if cond.is_some() {
+                    level_cond = cond;
+                }
                 self.binder_arrow("@ctx")?;
                 continue;
             }
@@ -1066,7 +1070,7 @@ impl<'a> Parser<'a> {
             to = self.arrow_ty(at, binder, from, effect, to);
         }
         let (Some(first), Some(last)) = (fields.first().copied(), fields.last().copied()) else {
-            self.record_ctx(to, levels, ctx);
+            self.record_ctx(to, levels, ctx, level_cond);
             return Ok((to, None));
         };
         let bundle = match fields.as_slice() {
@@ -1083,12 +1087,15 @@ impl<'a> Parser<'a> {
         let sig = self.stamp_ty(start, node);
         let fields = self.ast.make_slice(fields);
         self.ast.use_params.insert(sig, fields);
-        self.record_ctx(sig, levels, ctx);
+        self.record_ctx(sig, levels, ctx, level_cond);
         Ok((sig, Some(bundle)))
     }
 
     /// File a signature's `@ctx` levels and other fields under it.
-    fn record_ctx(&mut self, sig: Aol<Ty>, levels: Vec<UseField>, ctx: Vec<UseField>) {
+    fn record_ctx(&mut self, sig: Aol<Ty>, levels: Vec<UseField>, ctx: Vec<UseField>, cond: Option<Aol<Expr>>) {
+        if let Some(cond) = cond {
+            self.ast.level_constraints.insert(sig, cond);
+        }
         if !levels.is_empty() {
             let levels = self.ast.make_slice(levels);
             self.ast.level_params.insert(sig, levels);
@@ -1121,7 +1128,8 @@ impl<'a> Parser<'a> {
     /// The `{name: Type, ...}` of a `@ctx` parameter, from its keyword. A field
     /// of type `@l` is a level, bound only by the signature's first `@ctx`
     /// ahead of every parameter (`leading`); the others go in `ctx`. A name is
-    /// unique across the signature's `@ctx` and `@use` fields (`uses`).
+    /// unique across the signature's `@ctx` and `@use` fields (`uses`). The
+    /// fields may end in `if cond`, the constraints on the levels, returned.
     fn parse_ctx_fields(
         &mut self,
         before: u32,
@@ -1129,7 +1137,7 @@ impl<'a> Parser<'a> {
         levels: &mut Vec<UseField>,
         ctx: &mut Vec<UseField>,
         uses: &mut Vec<UseField>,
-    ) -> Result<()> {
+    ) -> Result<Option<Aol<Expr>>> {
         self.bump()?; // '@ctx'
         self.bump()?; // '{'
         if matches!(self.peek_kind()?, Kind::RBrace) {
@@ -1146,7 +1154,17 @@ impl<'a> Parser<'a> {
                     .with_help("a `@ctx` field is named, as in `@ctx {t: @Type}`"));
             }
             self.bump()?; // ':'
-            let ty = self.parse_type()?;
+            // `@l if ...`: the `if` ends the fields, never an argument of `@l`.
+            let ty = if self.at_intrinsic("l")? && matches!(self.peek_kind_at(1)?, Kind::If) {
+                let at = self.peek()?;
+                self.bump()?; // '@l'
+                let name = self.intern("@l");
+                let node = self.ty(Ty::Con { module: None, name });
+                self.ast.ty_spans.insert(node, at.span);
+                node
+            } else {
+                self.parse_type()?
+            };
             let span = Span::new(t.span.start, self.last_end);
             if levels.iter().chain(ctx.iter()).chain(uses.iter()).any(|f| f.name == name) {
                 return Err(Diagnostic::error(
@@ -1167,12 +1185,23 @@ impl<'a> Parser<'a> {
                 }
                 _ => ctx.push(field),
             }
+            if matches!(self.peek_kind()?, Kind::If) {
+                let at = self.peek()?;
+                if levels.is_empty() {
+                    return Err(Diagnostic::error(Code::UnexpectedToken, at.span, at.line, "an `if` in a `@ctx` constrains its levels, and this one binds none")
+                        .with_help("bind the levels it constrains, as in `@ctx {n: @l, m: @l if n < m}`"));
+                }
+                self.bump()?; // 'if'
+                let cond = self.parse_expr(0)?;
+                expect!(self, Kind::RBrace, "expected '}' after the `if` that ends the `@ctx` fields");
+                return Ok(Some(cond));
+            }
             if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;
             }
         }
         expect!(self, Kind::RBrace, "expected '}' to close the `@ctx` parameter");
-        Ok(())
+        Ok(None)
     }
 
     /// The `@ctx {..} ->` opening a constructor's or effect operation's type,
@@ -1463,7 +1492,7 @@ impl<'a> Parser<'a> {
             expect!(self, Kind::Colon, "expected ':' after the operation name");
             let ctx = self.parse_own_ctx("an effect operation")?;
             let ty = self.parse_type()?;
-            self.record_ctx(ty, Vec::new(), ctx);
+            self.record_ctx(ty, Vec::new(), ctx, None);
             ops.push(FieldDecl { name, ty });
             if !self.eat(|k| matches!(k, Kind::Comma))? {
                 break;

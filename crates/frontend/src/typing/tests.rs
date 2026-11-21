@@ -1494,6 +1494,45 @@ fn a_universe_has_a_level() {
     assert_eq!(type_of(any, "f"), "@Type -> @Int");
 }
 
+// Test [Frontend-Univ]
+#[test]
+fn a_universe_holds_the_types_one_level_below() {
+    let applies = |src: &str| assert_eq!(errors(&format!("$ @mod T\n{src}")), "", "{src}");
+    let blocked = |src: &str| {
+        let e = errors(&format!("$ @mod T\n{src}"));
+        assert!(e.contains("universe"), "{src}: got {e:?}");
+    };
+    applies("$ t : @Type 2 = @Type 1\n");
+    blocked("$ t : @Type 1 = @Type 1\n");
+    blocked("$ t : @Type 3 = @Type 1\n");
+}
+
+// Test [Frontend-Level-Polymorphism]
+#[test]
+fn a_signature_binds_its_levels() {
+    let id = "$ @mod T\n$ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \\x => x\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{id}{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("{id}{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ n : @Int = id @Int 3\n");
+    applies("$ n : @Int = id @ctx {.u = 1} @Int 3\n");
+    blocked("$ n : @Int = id @ctx {.u = 2} @Int 3\n", "universe level mismatch");
+    applies("$ g : @ctx {v: @l} -> (t: @Type v) -> t -> t = \\x => id @ctx {.u = v} t x\n");
+    blocked("$ g : @ctx {v: @l} -> (t: @Type v) -> t -> t = \\x => id @ctx {.u = w} t x\n", "the level `w` is not bound");
+    // The body may not fix a named level.
+    blocked("$ count : (t: @Type 1) -> @Int = 0\n$ f : @ctx {u: @l} -> (t: @Type u) -> @Int = count t\n", "needs `u` to be `1`");
+    // An `if` makes the constraints exact; without one they are inferred.
+    let need = "$ Pair : (a: @Type) -> (b: @Type) -> @Type = {a, b}\n$ need : @ctx {w: @l} -> (t: @Type w) -> (p: @Type w) -> @Int = 0\n";
+    let body = "(a: @Type u) -> (b: @Type v) -> @Int = need (Pair a b) a\n";
+    applies(&format!("{need}$ f : @ctx {{u: @l, v: @l if v <= u}} -> {body}"));
+    applies(&format!("{need}$ f : @ctx {{u: @l, v: @l}} -> {body}$ k : @Int = f (@Type 1) @Int\n"));
+    blocked(&format!("{need}$ f : @ctx {{u: @l, v: @l}} -> {body}$ k : @Int = f @Int (@Type 1)\n"), "universe");
+    blocked(&format!("{need}$ f : @ctx {{u: @l, v: @l if u <= v}} -> {body}"), "which its `if` does not entail");
+    blocked("$ f : @ctx {u: @l, v: @l if u < v && v < u} -> (t: @Type u) -> @Int = 0\n", "cannot all hold");
+}
+
 // Test [Frontend-Data-Level]
 #[test]
 fn a_declared_type_lives_in_the_universe_of_its_members() {

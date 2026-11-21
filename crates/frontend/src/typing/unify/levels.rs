@@ -160,6 +160,29 @@ impl Unifier {
     }
 }
 
+// Note [Level parameters]
+//
+// A signature's first `@ctx` may bind levels, `@ctx {u: @l} -> (t: @Type u)
+// -> t -> t` (#567). Each name is a level variable in the signature's
+// variable map (`Checker::level_tvars`), so `@Type u`, `@Type (u + 1)` and
+// `@Type (@max u v)` elaborate against it, and the scheme generalises it
+// like the level of a bare `@Type`. Unlike that one, a named level is the
+// signature's own: the body may not fix it (`check_sig_vars_rigid`). A use
+// leaves it to unification or gives it, `id @ctx {.u = 2}`.
+//
+// The constraints between named levels are inferred from the body, as for
+// bare universes, unless the `@ctx` ends in an `if`: `{u: @l, v: @l if v <=
+// u}`. Then they are exact. The body may need only what the `if` entails,
+// and the `if` goes with the scheme, so each use meets it. A declared type's
+// level names must each be the universe of a parameter,
+// `(a: @Type u) -> @Type u`, which turns them into its closed form.
+// See Note [Level constraints].
+// See Algorithm [Level entailment].
+// See Note [Declaration levels].
+//
+// Levels range over 1 and up. `@Type 0` holds propositions, and an `if` that
+// lets a level reach it (`n >= 0`) waits for them in the frontend.
+
 // ## Level constraints
 //
 // Note [Level constraints]
@@ -219,6 +242,8 @@ pub enum ParamLevel {
     /// `(t: @Type)`: a type at any level, up to `at_most` when the
     /// declaration's stated universe bounds it.
     Free { at_most: Option<u32> },
+    /// `(b: @Type u)` after `(a: @Type u)`: at the level of parameter `i`.
+    Like(usize),
     /// A size, row or index, which has no level of its own.
     Other,
 }
@@ -435,6 +460,11 @@ impl Unifier {
             .collect()
     }
 
+    /// The constraints added since `mark` that still wait.
+    pub fn pending_levels(&self, mark: usize) -> Vec<LevelLe> {
+        self.level_le[mark..].to_vec()
+    }
+
     fn drop_provable(&mut self, mark: usize) {
         let kept: Vec<LevelLe> = self.level_le[mark..]
             .iter()
@@ -579,4 +609,103 @@ impl Unifier {
             self.scheme_le_by_var.entry(v).or_default().push(at);
         }
     }
+}
+
+// ## Entailment
+//
+// A signature's `if` states constraints between its levels, and the body may
+// need only what they entail. Each hypothesis
+// `x + k <= y + j`, with a constant read as an offset from a zero node, is an
+// edge `x -> y` of weight `k - j`: `y` is at least `x + (k - j)`. Every
+// variable is at least 1, an edge from zero. The longest paths bound each
+// difference from below; a positive cycle means the hypotheses cannot all
+// hold. A goal `max(xs) <= max(ys)` holds when each term on the left is below
+// some term on the right by a path. A hypothesis with a `max` on its right is
+// a disjunction, which this ignores: entailment is sound and incomplete.
+// See Note [Level parameters].
+
+/// The difference closure of a set of level hypotheses.
+// Algorithm [Level entailment]
+pub struct LevelHyps {
+    /// The zero node, then each variable a hypothesis names.
+    nodes: Vec<Option<VarId>>,
+    /// `dist[x][y]`: the most `y - x` is known to be at least.
+    dist: Vec<Vec<Option<i64>>>,
+}
+
+impl LevelHyps {
+    /// Close `hyps`, each `(lhs, rhs)` for `lhs <= rhs`. `None` when they
+    /// cannot all hold.
+    pub fn new(hyps: &[(LevelNf, LevelNf)]) -> Option<LevelHyps> {
+        let mut nodes: Vec<Option<VarId>> = vec![None];
+        for (l, r) in hyps {
+            for (v, _) in l.vars.iter().chain(&r.vars) {
+                if !nodes.contains(&Some(*v)) {
+                    nodes.push(Some(*v));
+                }
+            }
+        }
+        let n = nodes.len();
+        let mut dist = vec![vec![None; n]; n];
+        for (i, row) in dist.iter_mut().enumerate() {
+            row[i] = Some(0);
+        }
+        for d in dist[0].iter_mut().skip(1) {
+            *d = Some(1);
+        }
+        let mut closed = LevelHyps { nodes, dist };
+        for (l, r) in hyps {
+            let rhs = terms(r);
+            let [(y, j)] = rhs.as_slice() else { continue };
+            for (x, k) in terms(l) {
+                let (xi, yi) = (closed.node(x), closed.node(*y));
+                let w = k as i64 - *j as i64;
+                if closed.dist[xi][yi].is_none_or(|d| d < w) {
+                    closed.dist[xi][yi] = Some(w);
+                }
+            }
+        }
+        for k in 0..n {
+            for i in 0..n {
+                for j in 0..n {
+                    if let (Some(a), Some(b)) = (closed.dist[i][k], closed.dist[k][j]) {
+                        if closed.dist[i][j].is_none_or(|d| d < a + b) {
+                            closed.dist[i][j] = Some(a + b);
+                        }
+                    }
+                }
+            }
+        }
+        (0..n).all(|i| closed.dist[i][i] == Some(0)).then_some(closed)
+    }
+
+    fn node(&self, v: Option<VarId>) -> usize {
+        self.nodes.iter().position(|x| *x == v).expect("a node of the hypotheses")
+    }
+
+    /// Whether the hypotheses entail `lhs <= rhs`.
+    pub fn entails(&self, lhs: &LevelNf, rhs: &LevelNf) -> bool {
+        let right = terms(rhs);
+        terms(lhs).into_iter().all(|(x, k)| {
+            right.iter().any(|(y, j)| {
+                if x == *y {
+                    return k <= *j;
+                }
+                let (Some(xi), Some(yi)) = (self.nodes.iter().position(|n| *n == x), self.nodes.iter().position(|n| *n == *y)) else {
+                    // A variable no hypothesis names is only at least 1.
+                    return x.is_none() && k <= j + 1;
+                };
+                self.dist[xi][yi].is_some_and(|d| d >= k as i64 - *j as i64)
+            })
+        })
+    }
+}
+
+/// A level's terms, each a variable (`None` for the constant) and its offset.
+fn terms(nf: &LevelNf) -> Vec<(Option<VarId>, u32)> {
+    let mut out: Vec<(Option<VarId>, u32)> = nf.vars.iter().map(|(v, k)| (Some(*v), *k)).collect();
+    if nf.konst > 0 || nf.vars.is_empty() {
+        out.push((None, nf.konst));
+    }
+    out
 }
