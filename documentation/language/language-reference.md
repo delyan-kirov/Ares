@@ -127,9 +127,9 @@ escaping, quoting. Three blessed CORE interfaces make up the protocol:
 
 ```ares-fragment
 # Declared in CORE, which alone may declare a blessed interface.
-$ @IInterp     : (b: @Type) -> (t: @Type) -> @Type = @struct interp: (b -> b) -> t,   # start a builder, finish it
-$ @IInterpText : (b: @Type) -> @Type = @struct text: b -> @Str -> b,    # append a literal piece
-$ @IInterpHole : (b: @Type) -> (h: @Type) -> @Type = @struct hole: b -> h -> b,       # append one hole
+$ @IInterp     : (b: @Type) -> (t: @Type) -> @Class = @struct interp: (b -> b) -> t,   # start a builder, finish it
+$ @IInterpText : (b: @Type) -> @Class = @struct text: b -> @Str -> b,    # append a literal piece
+$ @IInterpHole : (b: @Type) -> (h: @Type) -> @Class = @struct hole: b -> h -> b,       # append one hole
 ```
 
 `"a ?(x) b"` expected as `t` is `@IInterp`'s `interp` applied to a chain that
@@ -333,7 +333,7 @@ callers pass plain arguments.
 A definition's signature binds the parameters it names, so the body needs no
 lambda for them: a named parameter `(x: A)` binds `x`, a closed record
 `{x: A, y: B}` binds its fields, and `{}` binds nothing. This covers the
-leading run of such parameters (after any `@use`). The body's lambdas bind the
+leading run of such parameters (after any `@ctx`). The body's lambdas bind the
 parameters after that run, left to right, so which parameter a lambda binds
 is read off the signature alone. A record kept whole is a named parameter,
 `(r: {x: A, y: B})`.
@@ -349,9 +349,11 @@ The result type may not name the parameter yet: `(n: @Nat) -> @Tensor n @Int`
 is a dependent function type, which comes with dependent types (#406).
 
 ## 3.6 Type variables and `@ctx`
-A signature binds its type variables in a `@ctx` parameter, the record of what
-unification solves (#537): a type `t: @Type`, a size `n: @Nat` or an effect row
-`e: @Row`. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
+A signature binds its type variables in a `@ctx` parameter (#537): a type
+`t: @Type`, a size `n: @Nat` or an effect row `e: @Row`, each solved by
+unification. The same record names the instances the signature needs, fields
+whose type is a `@Class`, which instance search solves (7.4): the sort of a
+field's type decides how it is solved. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
 `(t: @Type)` parameter, or a global (3.10). A name nothing binds is a
 `TYPE_UNBOUND` error whose fix adds it to the signature's `@ctx`, with the kind
 its uses give it. A field the signature uses as a size is a `@Nat`.
@@ -363,11 +365,9 @@ $ const : @ctx {t: @Type, u: @Type} -> t -> u -> t = \x y => x
 
 A caller leaves `@ctx` fields to unification, or gives some by name with an
 explicit argument that mirrors the binder, `f @ctx {.t = @Int} x`; the others
-are still solved. Like `@use` (7.4), `@ctx` parameters stand anywhere on a
-global's signature, at least one field each, names unique across the
-signature, and never inside a parameter's type, an annotation, a local `let`'s
-type or a field type. An instance is a `@use` field and a type a `@ctx` one;
-writing either in the other binder is an error that says so. Inside the body,
+are still solved. `@ctx` parameters stand anywhere on a global's signature, at
+least one field each, names unique across the signature, and never inside a
+parameter's type, an annotation, a local `let`'s type or a field type. Inside the body,
 an annotation names the signature's variables, `\(x: a) => ...`.
 
 A `(t: @Type)` or `(n: @Nat)` parameter is bound explicitly instead: the
@@ -516,7 +516,7 @@ What `_` comes out as may use the signature's own type variables but no new
 one: `$ k : _ -> @Int = \x => 3` is a `TYPE_ANNOTATION_REQUIRED` error, since
 the signature would hide a type variable it never wrote. A type declaration
 (`@struct`, `@union`, an effect, a type-level function), a foreign or builtin
-signature and a signature with `@use` parameters have no body to solve one, so
+signature and a signature with instance fields have no body to solve one, so
 `_` there is an error too. A definition whose signature has `_` cannot recurse
 at another type, as one without a signature cannot.
 
@@ -1182,11 +1182,11 @@ parameter's field, a handler binder) cannot reuse the name of a global defined i
 the same module (`SHADOWED_GLOBAL`), so inside a module a global's name always
 means that global. Imported names may be shadowed locally.
 
-## 7.4 Interfaces and `@use` parameters
-An interface is an ordinary `@struct` whose fields are its operations; implementing
-it is defining a value of that type. A function that needs one declares a `@use`
-parameter, a record of named fields, each an instance it needs. Call sites do not
-write it: the compiler finds each field BY TYPE, taking the nearest binder in scope
+## 7.4 Interfaces and instance fields
+An interface is a `@struct` declared at the kind `@Class`, whose fields are its
+operations; implementing it is defining a value of that type, and every global
+whose type is a `@Class` is an instance. A function that needs one names it in its
+`@ctx`, a field whose type is the interface. Call sites do not write it: the compiler finds each field BY TYPE, taking the nearest binder in scope
 and otherwise the one instance in scope (two would be an error, since global scope
 is flat). The fields are in scope by name in the body, so the body's lambda starts
 at the first explicit parameter. It elaborates to a leading argument, so the
@@ -1195,54 +1195,59 @@ backends need no support.
 Simple:
 ```ares
 $ Ordering : @Type = @union LT: {}, EQ: {}, GT: {}
-$ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
+$ IOrder : (t: @Type) -> @Class = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
-$ max_of : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t = \x y =>
+$ max_of : @ctx {t: @Type, d: IOrder t} -> t -> t -> t = \x y =>
 	d.compare x y |> \ | Ordering.GT => x | _ => y
 $ biggest : @Int = max_of 3 7
 ```
 
-A signature may have any number of `@use` parameters, anywhere on its arrows, and
-each names one or more fields; a field's type must be a declared struct or union
-applied to its arguments, and field names are unique across the signature:
+A signature may have any number of `@ctx` parameters, anywhere on its arrows, and
+each names one or more fields; an instance field's type must be a `@Class`
+applied to its arguments (an ordinary record is never searched), and field names
+are unique across the signature:
 
 ```ares
-$ abs : @ctx {t: @Type} -> @use {o: IOrd t, s: ISub t, z: IZero t} -> t -> t = \x =>
+$ abs : @ctx {t: @Type, o: IOrd t, s: ISub t, z: IZero t} -> t -> t = \x =>
 	if o.lt x z.zero => s.sub z.zero x else x
-$ floor_at : @ctx {t: @Type} -> @use {o: IOrd t} -> t -> @use {z: IZero t} -> t -> t = \x y =>
+$ floor_at : @ctx {t: @Type, o: IOrd t} -> t -> @ctx {z: IZero t} -> t -> t = \x y =>
 	if o.lt x z.zero => y else x
 ```
 
 Calls inside the body find the fields by search, so they pass down without being
-written. An explicit `@use {.f = e}` argument names the fields it supplies (the
+written. An explicit `@ctx {.f = e}` argument names the fields it supplies (the
 rest are still searched) and goes where its parameter stands, before the explicit
 argument that follows it:
 
 ```ares
 $ Ordering : @Type = @union LT: {}, EQ: {}, GT: {}
-$ IOrder : (t: @Type) -> @Type = @struct compare: t -> t -> Ordering,
+$ IOrder : (t: @Type) -> @Class = @struct compare: t -> t -> Ordering,
 $ impl_IOrder_for_int : IOrder @Int = .{
 	.compare = \a b => if a < b => Ordering.LT else if a > b => Ordering.GT else Ordering.EQ,
 }
-$ max_of : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t = \x y =>
+$ max_of : @ctx {t: @Type, d: IOrder t} -> t -> t -> t = \x y =>
 	d.compare x y |> \ | Ordering.GT => x | _ => y
-$ max3 : @ctx {t: @Type} -> @use {d: IOrder t} -> t -> t -> t -> t = \x y z =>
+$ max3 : @ctx {t: @Type, d: IOrder t} -> t -> t -> t -> t = \x y z =>
 	max_of (max_of x y) z          # d satisfies max_of's requirement, so it passes down
 $ as_min : @Int =
 	let flip : IOrder @Int = .{ .compare = \a b => impl_IOrder_for_int.compare b a } in
-	max_of @use {.d = flip} 3 7
+	max_of @ctx {.d = flip} 3 7
 ```
 
-`@use` stands only on a global definition's own signature: not inside a
-parameter's type (`(@use {d: IOrd t} -> t) -> t`), an annotation, a field type, or
-(for now) a local `let`'s signature. `@use {}` is an error. `@ctx` binds what
-unification solves instead (3.6); an instance in `@ctx`, or a type in `@use`, is
-an error naming the other binder.
+An instance field stands only on a global definition's own signature: not inside a
+parameter's type (`(@ctx {d: IOrd t} -> t) -> t`), an annotation, a field type, or
+(for now) a local `let`'s signature, and not in a constructor's or effect
+operation's own `@ctx`. `@ctx {}` is an error.
 
 An instance may itself take a context, which resolution fills in recursively, so
-`IEq (@Vec t)` is built from `IEq t`. `CORE`'s operators are all ordinary functions
+`IEq (@Vec t)` is built from `IEq t`. Each instance field of an instance is
+smaller than the type it provides (the Paterson conditions: fewer constructors and
+variables, no variable more often), checked where the instance is declared, so
+the search always terminates. It never backtracks: exactly one candidate matches,
+and a requirement whose head is still an unsolved variable waits for inference
+rather than being guessed. `CORE`'s operators are all ordinary functions
 over such interfaces: `+ - * / %` over `IAdd`/`ISub`/`IMul`/`IDiv`/`IMod`, `^` over
 `IPow`, `== != < > <= >=` over `IEq`/`IOrd`, `++` over `ICat`, `::` over `ICons`, and
 `to_string` over `IToString`. A type joins any of them by defining an instance:
@@ -1686,7 +1691,7 @@ $ is55  : @Int -> Bool = \ | !fib 10 => true | _ => false   # pattern
 
 A type splice may stand at any type position: a signature, a struct field, a
 union payload, a type-level function's body, an effect operation, an effect-row argument, a
-`@use` field, or an annotation inside a body (`let x : T`, `\(x : T)`,
+`@ctx` field, or an annotation inside a body (`let x : T`, `\(x : T)`,
 `(e : T)`). Effect-row entries themselves can be spliced too, as `<!X>`; a
 `!` right after an operator lexes on its own, so `<!X>` is `<` then `!X`.
 
@@ -2001,8 +2006,8 @@ A quick index of the `@`-forms and where each is documented above.
 | `@struct` `@union` | type declarations | 6 |
 | `@Effect` | the kind of effects, ending an effect declaration's signature | 8.1 |
 | `@extern` | foreign binding, builtin declaration | 10 |
-| `@use` | instance (interface) parameter and explicit argument | 7.4 |
-| `@ctx` | parameters solved by unification, and explicit arguments for them | 3.6, 16 |
+| `@ctx` | parameters solved by unification or instance search, and explicit arguments for them | 3.6, 7.4, 16 |
+| `@Class` | the kind of an interface, whose values instance search finds | 7.4 |
 | `@Type` `@l` `@max` `@imax` | universes and levels | 16 |
 | `@axiom` | a postulate | 16 |
 | `@Top` `@tt` `@Bottom` `@Eq` `@refl` `@transp` `@cast` `@Quot` `@qin` `@qelim` | kernel primitives | 16 |
