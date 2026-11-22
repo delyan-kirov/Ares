@@ -12,6 +12,7 @@
 //!
 //! Entry point: [`Signature`].
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -97,6 +98,8 @@ pub struct Signature {
     globals: Vec<Global>,
     by_name: HashMap<Name, GlobalId>,
     datas: Vec<DataDecl>,
+    /// The globals read since [`Signature::recording`] started, if it has.
+    consulted: RefCell<Option<BTreeSet<GlobalId>>>,
 }
 
 impl Signature {
@@ -105,6 +108,7 @@ impl Signature {
     }
 
     pub fn global(&self, id: GlobalId) -> &Global {
+        self.consult(id);
         &self.globals[id as usize]
     }
 
@@ -125,8 +129,28 @@ impl Signature {
         self.globals.iter().map(|g| &*g.name)
     }
 
+    /// An inductive declaration; reading it reads its type former.
     pub fn data(&self, id: DataId) -> &DataDecl {
-        &self.datas[id as usize]
+        let decl = &self.datas[id as usize];
+        self.consult(decl.global);
+        decl
+    }
+
+    fn consult(&self, id: GlobalId) {
+        if let Some(seen) = self.consulted.borrow_mut().as_mut() {
+            seen.insert(id);
+        }
+    }
+
+    /// Run `f`, and return with its result every global it read through
+    /// [`Signature::global`] or [`Signature::data`].
+    /// See Note [The axiom report is complete].
+    pub(crate) fn recording<R>(&self, f: impl FnOnce() -> R) -> (R, BTreeSet<GlobalId>) {
+        let previous = self.consulted.replace(Some(BTreeSet::new()));
+        assert!(previous.is_none(), "recordings of the globals read do not nest");
+        let result = f();
+        let seen = self.consulted.take().expect("the recording is still on");
+        (result, seen)
     }
 
     pub fn data_mut(&mut self, id: DataId) -> &mut DataDecl {
@@ -157,22 +181,34 @@ impl Signature {
         id
     }
 
-    /// The globals global `id`'s type and body name.
+    /// The globals global `id`'s type and body name, and for a type former
+    /// the other globals its declaration gives.
     /// See Note [Axioms are read off the terms].
     fn uses(&self, id: GlobalId) -> BTreeSet<GlobalId> {
-        let global = self.global(id);
+        let global = &self.globals[id as usize];
         let mut out = BTreeSet::new();
         globals(&global.ty, &mut out);
-        if let GlobalKind::Definition(body) = &global.kind {
-            globals(body, &mut out);
+        match &global.kind {
+            GlobalKind::Definition(body) => globals(body, &mut out),
+            GlobalKind::Data(data) => out.extend(self.declared_with(*data)),
+            _ => {}
         }
         out
     }
 
-    // Algorithm [Transitive axioms]
-    /// The axioms global `id` depends on, itself included when it is one,
-    /// in declaration order.
-    pub fn axioms(&self, id: GlobalId) -> Vec<GlobalId> {
+    /// The constructors, projections and recursor of inductive type `data`:
+    /// the globals after its type former, up to its recursor.
+    fn declared_with(&self, data: DataId) -> impl Iterator<Item = GlobalId> + '_ {
+        let decl = &self.datas[data as usize];
+        let last = decl.recursor.min(self.next_global().saturating_sub(1));
+        (decl.global + 1..=last).take_while(move |g| match self.globals[*g as usize].kind {
+            GlobalKind::Constructor(d, _) | GlobalKind::Projection(d, ..) | GlobalKind::Recursor(d) => d == data,
+            _ => false,
+        })
+    }
+
+    /// The globals global `id` rests on, itself included.
+    pub fn rests_on(&self, id: GlobalId) -> BTreeSet<GlobalId> {
         let mut seen = BTreeSet::new();
         let mut stack = vec![id];
         while let Some(g) = stack.pop() {
@@ -180,7 +216,14 @@ impl Signature {
                 stack.extend(self.uses(g));
             }
         }
-        seen.into_iter().filter(|g| matches!(self.global(*g).kind, GlobalKind::Axiom)).collect()
+        seen
+    }
+
+    // Algorithm [Transitive axioms]
+    /// The axioms global `id` depends on, itself included when it is one,
+    /// in declaration order.
+    pub fn axioms(&self, id: GlobalId) -> Vec<GlobalId> {
+        self.rests_on(id).into_iter().filter(|g| matches!(self.globals[*g as usize].kind, GlobalKind::Axiom)).collect()
     }
 }
 
@@ -189,7 +232,48 @@ impl Signature {
 // A global rests on the globals its type and body name, and on the ones
 // those rest on. Proofs stay in the terms (they are only never evaluated), so
 // a global named only inside a proof still counts, which is the point: a
-// theorem proved from a postulate rests on it. An inductive type's
-// constructors carry its field types in their types, and its recursor names
-// the constructors.
+// theorem proved from a postulate rests on it.
+//
+// An inductive declaration is one declaration, as in Lean's `#print axioms`:
+// its type former rests on its constructors, projections and recursor, and
+// each of those names the type former, so all of them rest on the same
+// globals. The constructors carry the field types, so a type whose field is
+// a postulate rests on it, and so does every global that names the type.
 // See Note [Proofs evaluate to an irrelevant witness].
+
+// Note [The axiom report is complete]
+//
+// The claim: every global a derivation of global `g` reads is one `g` rests
+// on, so the axioms `g` rests on are all the axioms its derivation uses. The
+// derivation meant is the re-check, which checks `g` from its stored terms
+// alone (see the `recheck` module). The elaborator reads more (it resolves
+// names and suggests spellings), but what it builds is what is re-checked.
+//
+// Why it holds. Inside the kernel a global is a `GlobalId`, and an id comes
+// from one of three places:
+//
+// 1. a `Term::Global` in a term. The re-check of `g` starts from `g`'s type
+//    and body, whose globals `uses` reads; every other term it meets is the
+//    type or body of a global it read (evaluation unfolds a definition,
+//    inference reads a type), or is built from values of those;
+// 2. an inductive declaration read through `Signature::data`: its type
+//    former, constructors, recursor and the types of its fields, which the
+//    computation rules (Data-Iota, Eq-Ctor, Cast-Ctor) and the read-back of
+//    a value use. Reading a declaration reads its type former, which rests
+//    on all of them (See Note [Axioms are read off the terms]);
+// 3. `Signature::lookup` and `Signature::names`, which resolve a name. Only
+//    the elaborator calls them, never the re-check or the evaluator,
+//    conversion and computation rules it shares.
+//
+// A computation rule that needs a proof passes the irrelevant witness. The
+// proof it stands for is built from proofs already in the derivation and
+// from the projections of a declaration already read, so it names no global
+// the derivation did not read.
+//
+// How it is kept. `recheck` records every global it reads through
+// `Signature::global` and `Signature::data` while it checks each global,
+// and fails when one of them is not a global it rests on. So every script the
+// tests re-check, and every one `ares check` hands to the kernel, checks the
+// claim on that script. `tests/axioms.rs` checks that the modules the
+// re-check runs never resolve a name, which is the third case.
+// See Algorithm [Transitive axioms].
