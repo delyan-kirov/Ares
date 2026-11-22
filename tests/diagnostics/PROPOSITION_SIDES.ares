@@ -1,0 +1,4 @@
+$ @mod PROPOSITION_SIDES
+
+# The two sides of `a ~ b` are values of one kind.
+$ P : @Type 0 = @Int ~ 3  #~ error[TYPE_MISMATCH]: the sides of `~` are a type and a size

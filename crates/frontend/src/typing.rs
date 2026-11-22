@@ -35,6 +35,7 @@ mod imports;
 mod ctx_sizes;
 mod instances;
 mod patterns;
+mod propositions;
 pub mod resolved;
 mod signatures;
 pub mod types;
@@ -376,9 +377,15 @@ pub struct Checker<'a> {
     /// the splice site can resolve its names there.
     quotations: HashSet<Aol<Expr>>,
     /// Types written where a value stands (`f @Int`, `pair (@Int -> @Int)`),
-    /// typed by their kind. They carry nothing at run time, so lowering
-    /// erases each to `{}` (#535).
+    /// typed by their kind, and proofs (`@refl a`, `@transp ...`). They carry
+    /// nothing at run time, so lowering erases each to `{}` (#535, #539).
     type_terms: HashSet<Aol<Expr>>,
+    /// Each `@cast A B e x` along a proof, mapped to its `x`: the proof is
+    /// erased, so lowering emits `x` (#539).
+    proof_casts: HashMap<Aol<Expr>, Aol<Expr>>,
+    /// The value a `let` binds, as the checker evaluates it, by the local's
+    /// type: a `let` stays transparent in a proposition. See Note [Propositions].
+    let_statics: HashMap<Type, propositions::Static>,
     /// Argument sites promoted to a record: a bare scalar `1` or a positional
     /// `{1, 2}` passed where a record is expected, mapped to the target record's
     /// field names (in order). Lowering wraps the value into a name-keyed record.
@@ -702,6 +709,8 @@ impl<'a> Checker<'a> {
             splice_locals: Vec::new(),
             quotations: HashSet::new(),
             type_terms: HashSet::new(),
+            proof_casts: HashMap::new(),
+            let_statics: HashMap::new(),
             promotions: HashMap::new(),
             struct_lit_names: HashMap::new(),
             literal_hooks: HashMap::new(),
@@ -907,6 +916,14 @@ impl<'a> Checker<'a> {
                     "`{}` is a builtin and cannot be redefined", d.name;
                     note: "CORE declares it with `@extern \"ares\"`, and the compiler \
                            relies on its meaning"
+                ));
+                dups.push(i);
+            } else if d.name.as_str() == ty::PROP_EQ {
+                let span = d.name_span.or(self.ast.expr_span(d.body)).unwrap_or(Span::at(0));
+                self.errors.push(diag!(
+                    Code::DuplicateSymbol, span, 0,
+                    "`~` is the equality of propositions and cannot be redefined";
+                    note: "`a ~ b` is the proposition that `a` and `b` are equal, checked by the compiler"
                 ));
                 dups.push(i);
             } else if let Some(first) = types.get(&d.name) {

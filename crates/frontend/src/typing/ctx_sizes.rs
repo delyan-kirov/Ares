@@ -122,6 +122,10 @@ impl<'a> Checker<'a> {
     /// in scope, a declared type applied to types, a size literal or `_`.
     fn expr_as_type(&mut self, e: Aol<Expr>) -> Result<Type> {
         let span = self.ast.expr_span(e);
+        if self.is_proposition_shaped(e) {
+            let tvars = self.scoped_tvars.clone();
+            return self.proposition_of(e, &tvars);
+        }
         match *self.node(e) {
             Expr::Type(t) => {
                 let mut tvars = self.scoped_tvars.clone();

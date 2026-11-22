@@ -398,11 +398,15 @@ impl<'a> Desugarer<'a> {
         if self.is_type_term(e) {
             return self.unit();
         }
+        if let Some(&x) = self.resolved.proof_casts.get(&e) {
+            return self.expr(x);
+        }
         self.expr_core(e)
     }
 
-    /// A type in term position, or a type-level function applied to its
-    /// arguments there: either way a type, which lowers to `{}`.
+    /// A type or a proof in term position, or a type-level function applied
+    /// to its arguments there: none holds anything at run time, so each
+    /// lowers to `{}`.
     fn is_type_term(&self, e: Aol<Expr>) -> bool {
         match self.node(e) {
             _ if self.resolved.type_terms.contains(&e) => true,

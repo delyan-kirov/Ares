@@ -76,6 +76,9 @@ pub struct Resolved {
     /// Types in term position (from [`Checker::type_term_nodes`]); lowering
     /// erases each to `{}`.
     pub type_terms: HashSet<Aol<Expr>>,
+    /// Each `@cast A B e x` along an erased proof, mapped to its `x` (from
+    /// [`Checker::proof_cast_nodes`]); lowering emits `x`.
+    pub proof_casts: HashMap<Aol<Expr>, Aol<Expr>>,
     /// Argument sites promoted to a record, mapped to the target field names (from
     /// [`Checker::promotions`]); lowering wraps the value.
     pub promotions: HashMap<Aol<Expr>, Vec<StrId>>,
@@ -175,6 +178,7 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
         resolved.interp_quoted.extend(checker.interp_quoted_nodes().iter().copied());
         resolved.quotations.extend(checker.quotation_nodes().iter().copied());
         resolved.type_terms.extend(checker.type_term_nodes().iter().copied());
+        resolved.proof_casts.extend(checker.proof_cast_nodes().iter().map(|(&k, &v)| (k, v)));
         for (&site, names) in checker.promotions() {
             resolved.promotions.insert(site, names.clone());
         }
@@ -256,6 +260,11 @@ impl<'a> Checker<'a> {
     /// The types written in term position.
     pub fn type_term_nodes(&self) -> &HashSet<Aol<Expr>> {
         &self.type_terms
+    }
+
+    /// Each `@cast` along a proof, mapped to the value it moves.
+    pub fn proof_cast_nodes(&self) -> &HashMap<Aol<Expr>, Aol<Expr>> {
+        &self.proof_casts
     }
 
     /// Argument sites promoted to a record, mapped to the target field names;

@@ -15,6 +15,7 @@
 //! polynomial. Two theories ride on top of plain structural unification, each in
 //! its own module: [`rows`] (scoped-label rows for records and effects) and
 //! [`sizes`] (the `Nat` kind of tensor sizes, compared as polynomials).
+//! [`booleans`] folds the booleans a proposition compares before they meet.
 //!
 //! Input: pairs of [`Type`]s to make equal. Output: the variable bindings, or a
 //! mismatch diagnostic. Every mutation is logged, so [`Unifier::save`] and
@@ -23,6 +24,7 @@
 //! Entry points: [`Unifier::unify`], [`Unifier::generalize`],
 //! [`Unifier::instantiate`].
 
+pub mod booleans;
 pub mod levels;
 pub mod rows;
 pub mod sizes;
@@ -474,6 +476,12 @@ impl Unifier {
         let b = self.resolve(b);
         if a == self.types.error() || b == self.types.error() {
             return Ok(());
+        }
+        if self.bool_op(a).is_some() || self.bool_op(b).is_some() {
+            let (fa, fb) = (self.fold_bool(a), self.fold_bool(b));
+            if fa.is_some() || fb.is_some() {
+                return self.unify(fa.unwrap_or(a), fb.unwrap_or(b), where_);
+            }
         }
         let (na, nb) = match (self.whnf(a), self.whnf(b)) {
             (Whnf::Size(pa), Whnf::Size(pb)) => return self.unify_size(pa, pb, a, b, where_),

@@ -1715,3 +1715,135 @@ fn a_postponed_size_equation_wakes_when_a_variable_is_solved() {
     let open = format!("{drop}$ e : @Tensor 5 @Int -> @Int = \\x => let r = drop x in 0\n");
     assert!(errors(&open).contains("cannot solve the size equation `5 = a + b`"), "{}", errors(&open));
 }
+
+/// The type of `name` as `ares check` prints it, its variables named as its
+/// signature names them.
+fn decl_of(src: &str, name: &str) -> String {
+    with_checker(src, |checker, prog| {
+        checker.check_program(prog).unwrap_or_else(|e| panic!("{}", e.render(src, "test.ares")));
+        let values = checker.own_values();
+        let (n, t) = values.iter().find(|(n, _)| n.as_str() == name).expect("name present");
+        checker.show_decl(*n, *t)
+    })
+}
+
+/// What a proposition test checks: a module that must check, and one that
+/// must fail with an error containing `want`.
+fn proposition_cases(prelude: &str) -> (impl Fn(&str), impl Fn(&str, &str)) {
+    let (a, b) = (prelude.to_string(), prelude.to_string());
+    let applies = move |src: &str| assert_eq!(errors(&format!("$ @mod T\n{a}{src}")), "", "{src}");
+    let blocked = move |src: &str, want: &str| {
+        let e = errors(&format!("$ @mod T\n{b}{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    (applies, blocked)
+}
+
+// Test [Frontend-Eq-Form]
+#[test]
+fn an_equality_is_a_proposition() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ P : @Type 0 = 1 ~ 1\n");
+    applies("$ P : @Type 0 = @Int ~ @Str\n");
+    applies("$ P : (n: @Nat) -> @Type 0 = n + 1 ~ 1 + n\n");
+    blocked("$ P : @Type 1 = 1 ~ 1\n", "universe level mismatch");
+    blocked("$ P : @Type 0 = @Int ~ 3\n", "the sides of `~` are a type and a size");
+    blocked("$ P : @Type 0 = @Int ~ @Type 1\n", "universe level mismatch between the sides of `~`");
+    blocked("$ P : @Str -> @Int = \\s => let p : s ~ s = @refl s in 0\n", "a run-time value in a type");
+    // A bare `@Type` ranges over data, so a proposition is not one of its values.
+    blocked("$ id : (t: @Type) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n", "universe level mismatch in the universe of a type variable");
+    applies("$ id : (t: @Type 0) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n");
+    blocked("$ (~) : @Int -> @Int -> @Int = \\l r => l - r\n", "cannot be redefined");
+}
+
+// Test [Frontend-Prop-Impredicative]
+#[test]
+fn a_function_into_propositions_is_a_proposition() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ P : @Type 0 = @Type 1 -> 1 ~ 1\n");
+    applies("$ Q : @Type 1 = 1 ~ 1 -> @Int\n");
+    blocked("$ R : @Type 0 = @Int -> @Int\n", "universe level mismatch");
+}
+
+// Test [Frontend-Refl]
+#[test]
+fn refl_proves_what_computes_to_one_value() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ z : (n: @Nat) -> n + 0 ~ n = @refl n\n");
+    applies("$ c : (n: @Nat) -> (m: @Nat) -> n + m ~ m + n = @refl (n + m)\n");
+    applies("$ i : @Int ~ @Int = @refl @Int\n");
+    blocked("$ w : 1 ~ 2 = @refl 1\n", "`1` and `2` do not compute to one value");
+    blocked("$ w : (n: @Nat) -> (m: @Nat) -> n ~ m = @refl n\n", "needs `m` and `n` to be the same");
+    blocked("$ w : @Int ~ @Int = @refl\n", "`@refl` takes 1 argument(s), found 0");
+}
+
+// Test [Frontend-Transport]
+#[test]
+fn transport_moves_a_proof_along_an_equality() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ sym : (n: @Nat) -> (m: @Nat) -> n ~ m -> m ~ n = \\e => @transp n (\\k => k ~ n) (@refl n) m e\n");
+    applies(
+        "$ trans : (a: @Nat) -> (b: @Nat) -> (c: @Nat) -> a ~ b -> b ~ c -> a ~ c = \\e f => @transp b (\\k => a ~ k) e c f\n",
+    );
+    blocked(
+        "$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Int = \\e => @transp n (\\k => @Tensor k @Int) 0 m e\n",
+        "a `@transp` motive returns a proposition, but this one returns `@Tensor n @Int`",
+    );
+    blocked("$ t : (n: @Nat) -> n ~ 1 = @transp n (\\k => k ~ n) (@refl n) 1 (@refl n)\n", "the body of `t` needs `n` to be `1`");
+}
+
+// Test [Frontend-Cast]
+#[test]
+fn cast_moves_a_value_along_an_equality_of_types() {
+    let (applies, blocked) = proposition_cases("");
+    let retype = "$ retype : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Tensor n @Int -> @Tensor m @Int = \\e v =>
+    @cast (@Tensor n @Int) (@Tensor m @Int) (@transp n (\\k => @Tensor n @Int ~ @Tensor k @Int) (@refl (@Tensor n @Int)) m e) v
+";
+    applies(retype);
+    applies(&format!("{retype}$ t : @Tensor 3 @Int = retype 3 3 (@refl 3) [1, 2, 3]\n"));
+    blocked("$ c : @Str = @cast @Int @Str (@refl @Int) 3\n", "`@Int` and `@Str` do not compute to one value");
+    blocked("$ c : @Int = @cast 1 2 (@refl 1) 3\n", "`@cast` moves a value between types, but this is a size");
+    // One argument is still the integer cast.
+    applies("$ big : @Int64 = 300\n$ small : @Int32 = @cast big\n");
+}
+
+// Test [Frontend-Bool-Reflection]
+#[test]
+fn a_boolean_where_a_type_is_expected_is_true() {
+    let small = "$ small : (n: @Nat) -> n < 10 -> @Int = \\p => 1\n";
+    let (applies, blocked) = proposition_cases(small);
+    applies("$ k : @Int = small 3 (@refl true)\n");
+    blocked("$ k : @Int = small 30 (@refl true)\n", "`30 < 10` and `true` do not compute to one value");
+    applies("$ t : true = @refl true\n");
+    blocked("$ f : false = @refl true\n", "`false` and `true` do not compute to one value");
+    applies("$ Small : (n: @Nat) -> @Type 0 = n < 10\n");
+    let both = "$ both : (n: @Nat) -> n < 3 && n > 0 || n == 7 -> @Int = \\p => 1\n";
+    applies(&format!("{both}$ a : @Int = both 2 (@refl true)\n$ b : @Int = both 7 (@refl true)\n"));
+    blocked(&format!("{both}$ a : @Int = both 0 (@refl true)\n"), "and `true` do not compute to one value");
+    // A boolean prints as the type it stands for, its comparisons spelled
+    // through `<` and `==` as CORE defines them.
+    assert_eq!(decl_of(&format!("$ @mod T\n{small}"), "small"), "(n: @Nat) -> n < 10 -> @Int");
+    assert_eq!(decl_of(&format!("$ @mod T\n{both}"), "both"), "(n: @Nat) -> (n < 3 && 0 < n) || n == 7 -> @Int");
+    let negated = "$ g : (n: @Nat) -> not (n < 3 || n > 0) && n != 7 -> @Int = \\p => 1\n";
+    assert_eq!(decl_of(&format!("$ @mod T\n{negated}"), "g"), "(n: @Nat) -> not (n < 3 || 0 < n) && not (n == 7) -> @Int");
+}
+
+// Test [Frontend-Bool-Conversion]
+#[test]
+fn booleans_compare_after_folding() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ r : (n: @Nat) -> n == n = @refl true\n");
+    applies("$ r : (n: @Nat) -> not (n < n) = @refl true\n");
+    applies("$ r : (n: @Nat) -> (n < 4) ~ (n < 4) = @refl (n < 4)\n");
+    blocked("$ r : (n: @Nat) -> n < 4 = @refl true\n", "`n < 4` and `true` do not compute to one value");
+}
+
+// Test [Frontend-Let-Transparent]
+#[test]
+fn a_let_is_transparent_in_a_proposition() {
+    let (applies, blocked) = proposition_cases("");
+    applies("$ k : let n = 3 in n ~ 3 = @refl 3\n");
+    applies("$ a : @Int = let n = 4 in let p : n < 5 = @refl true in 0\n");
+    blocked("$ a : @Int = let n = 6 in let p : n < 5 = @refl true in 0\n", "`6 < 5` and `true` do not compute to one value");
+    blocked("$ a : @Int -> @Int = \\x => let n = x in let p : n ~ n = @refl n in 0\n", "a run-time value in a type");
+}

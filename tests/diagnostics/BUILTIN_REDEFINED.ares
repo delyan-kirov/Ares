@@ -3,3 +3,4 @@ $ @mod BUILTIN_REDEFINED
 # The parser rewrites `|>` before any lookup, so a redefinition would be ignored.
 $ (|>) : a -> (a -> b) -> b = \x f => f x  #~ error[DUPLICATE_SYMBOL]: `|>` is a builtin and cannot be redefined
 $ not : Bool -> Bool = \b => b  #~ error[DUPLICATE_SYMBOL]: `not` is a builtin and cannot be redefined
+$ (~) : @Int -> @Int -> @Int = \l r => l - r  #~ error[DUPLICATE_SYMBOL]: `~` is the equality of propositions and cannot be redefined
