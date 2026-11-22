@@ -125,9 +125,12 @@ $ impl_ICmp_for_bool : ICmp Bool = .{ .cmp = \a b => if a == b => 0 else if a =>
 
 # The instances and the named comparisons for `T`, over its generated `cmp_T`. The
 # named forms carry the type in their name (`lt_Coord`), since a module may derive
-# several types and one name holds one definition.
+# several types and one name holds one definition. As in CORE, every ordering is
+# `lt` read one way or the other (`a > b` is `b < a`, `a <= b` is `not (b < a)`),
+# so what holds of one holds of the others by computation.
 $ bool_ops : @Str -> @Str = \ty =>
     let c = "cmp_" ++ ty ++ " a b" in
+    let swapped = "cmp_" ++ ty ++ " b a" in
     let sig =
         \n => "$ " ++ n ++ "_" ++ ty ++ " : " ++ ty ++ " -> " ++ ty ++ " -> Bool = \\a b => "
     in
@@ -150,11 +153,11 @@ $ bool_ops : @Str -> @Str = \ty =>
         ++ " < 0\n"
         ++ sig "le"
         ++ "not ("
-        ++ c
-        ++ " > 0)\n"
+        ++ swapped
+        ++ " < 0)\n"
         ++ sig "gt"
-        ++ c
-        ++ " > 0\n"
+        ++ swapped
+        ++ " < 0\n"
         ++ sig "ge"
         ++ "not ("
         ++ c
