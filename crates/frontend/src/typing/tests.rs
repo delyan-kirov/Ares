@@ -1754,6 +1754,8 @@ fn an_equality_is_a_proposition() {
     blocked("$ id : (t: @Type) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n", "universe level mismatch in the universe of a type variable");
     applies("$ id : (t: @Type 0) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n");
     blocked("$ (~) : @Int -> @Int -> @Int = \\l r => l - r\n", "cannot be redefined");
+    // A proposition field is not a `@Class` to search for (#540).
+    blocked("$ f : @ctx {n: @Nat, p: n < 4} -> @Int = 1\n", "is a proposition, which `@ctx` does not prove yet");
 }
 
 // Test [Frontend-Prop-Impredicative]

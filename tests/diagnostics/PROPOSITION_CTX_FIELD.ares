@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_CTX_FIELD
+
+# A proposition in `@ctx` is proved from the hypotheses in scope (#540), not
+# searched for like a `@Class` instance.
+$ f : @ctx {n: @Nat, p: n < 4} -> @Int = 1  #~ error[UNSUPPORTED]: `@ctx` field `p` of `f` is a proposition, which `@ctx` does not prove yet
