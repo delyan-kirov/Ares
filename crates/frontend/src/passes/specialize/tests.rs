@@ -34,7 +34,7 @@ fn same(t: &mut Terms) -> Aol<Term> {
     lams(t, &["d", "x"], call)
 }
 
-/// A program of `globals`; `ctx` names the `@use` ones.
+/// A program of `globals`; `ctx` names the context-taking ones.
 fn prog(globals: Vec<(&str, fn(&mut Terms) -> Aol<Term>)>, ctx: &[&str]) -> CoreProgram {
     let mut p = CoreProgram::new(id("M"));
     for (name, build) in globals {

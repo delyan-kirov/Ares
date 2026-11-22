@@ -8,7 +8,7 @@ $ @mod META_TYPE
 #       data, so one source can specialize a binding's type by a build-time
 #       choice. A type splice works at every type position: declaration members
 #       (struct fields, union payloads, alias bodies, effect operations),
-#       effect-row entries and their arguments, `@use` fields, and the
+#       effect-row entries and their arguments, `@ctx` fields, and the
 #       annotations inside a body (`let x : T`, `\(x : T)`, `(e : T)`). The code
 #       is a quotation, a string literal expected as `@Code`; the splice site
 #       checks it parses as a type (or as row entries in `<!X>`).

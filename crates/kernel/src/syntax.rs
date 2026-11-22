@@ -210,7 +210,7 @@ impl Lower<'_> {
         match item {
             AstItem::Def { name, sig: Some(sig), body, .. } | AstItem::Alias { name, sig, body, .. } => {
                 if self.ast.use_params.get(*sig).is_some() {
-                    return Err(self.error(span, "a kernel global takes no `@use` parameter"));
+                    return Err(self.error(span, "a kernel global takes no instance field"));
                 }
                 let body = match self.ast.expr(*body) {
                     Expr::Var { module: None, name } if name.as_str() == "@axiom" => ItemBody::Axiom,

@@ -552,7 +552,12 @@ impl<'a> Walk<'a> {
                 self.expr(expr);
                 self.ty(ty);
             }
-            Expr::UseArg(fields) | Expr::CtxArg(fields) => self.fields(&self.ast.slice(fields).to_vec()),
+            Expr::CtxArg(fields) => {
+                for f in self.ast.slice(fields).to_vec() {
+                    let (FieldInit::Named { value, .. } | FieldInit::Positional(value)) = f;
+                    self.expr(self.ast.ctx_arg_values.get(value).copied().unwrap_or(value));
+                }
+            }
             Expr::Type(ty) => self.ty(ty),
         }
     }

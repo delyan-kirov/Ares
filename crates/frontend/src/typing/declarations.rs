@@ -450,6 +450,7 @@ impl<'a> Checker<'a> {
                             fields,
                             crepr,
                             c_union: *c_union,
+                            class: self.ast.classes.get(*sig).is_some(),
                         },
                     );
                     self.own_type_names.push(name);
@@ -876,7 +877,7 @@ impl<'a> Checker<'a> {
 
     /// A `_` stands where a definition's body can solve it. A type
     /// declaration has no body, so its types are written out; so is the
-    /// signature of a foreign or builtin definition, and of one with `@use`
+    /// signature of a foreign or builtin definition, and of one with instance fields
     /// parameters, which every use elaborates again.
     fn reject_declared_wildcards(&self, program: &Program) -> Result<()> {
         let ast = self.ast;
@@ -892,7 +893,7 @@ impl<'a> Checker<'a> {
                 Item::Def { sig: Some(sig), body, .. } if matches!(ast.expr(*body), Expr::Extern { .. } | Expr::Builtin) => {
                     (vec![*sig], "a foreign or builtin signature")
                 }
-                Item::Def { sig: Some(sig), ctx: Some(_), .. } => (vec![*sig], "a signature with `@use` parameters"),
+                Item::Def { sig: Some(sig), ctx: Some(_), .. } => (vec![*sig], "a signature with instance fields"),
                 _ => continue,
             };
             if let Some(span) = tys.into_iter().find_map(|t| first_wildcard(ast, t)) {
@@ -1189,7 +1190,7 @@ impl<'a> Checker<'a> {
             for op in self.ast.slice(*ops).iter() {
                 let op_name = op.name;
                 self.check_own_ctx(effect, op_name, &params, self.ast.ctx_params.get(op.ty).copied())?;
-                self.check_ctx_fields(op_name, op.ty);
+                self.check_ctx_fields(op.ty);
                 let scheme = self.op_scheme(effect, &params, op.ty)?;
                 op_schemes.insert(op_name, scheme);
                 per_op.entry(op_name).or_default().push(scheme);

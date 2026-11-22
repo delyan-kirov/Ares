@@ -22,7 +22,7 @@ pub type LazySlots = HashMap<(StrId, StrId, Option<StrId>), Vec<bool>>;
 /// three are consumed by lowering to build the extern value both engines call.
 pub type ExternSpec = (Vec<ExternArg>, Vec<StrId>, StrId);
 
-/// One resolved context (`@use`) value at a use site, ready for lowering to inject
+/// One resolved context (instance) value at a use site, ready for lowering to inject
 /// as a leading argument of the referenced function.
 #[derive(Clone, Debug)]
 pub enum CtxVal {
@@ -40,7 +40,7 @@ pub enum CtxVal {
     /// One component of a bundle already in scope, as `base.index`: a function that
     /// received several contexts as one tuple passes a single one onward.
     Proj(Box<CtxVal>, usize),
-    /// An explicit `@use {...}` argument; lowering lowers this AST node in place.
+    /// An explicit `@ctx {...}` instance field; lowering lowers this AST node in place.
     Expr(Aol<Expr>),
     /// A natural number, part of a `@ctx` size passed at run time.
     Nat(u64),
@@ -110,7 +110,7 @@ pub struct Resolved {
     /// [`Checker::tensor_patterns`]).
     pub tensor_patterns: HashMap<Aol<Pattern>, u64>,
     pub call_modules: HashMap<Aol<Expr>, StrId>,
-    /// Each use site of a `@use`-bearing function, mapped to the context value
+    /// Each use site of a context-taking function, mapped to the context value
     /// lowering injects ahead of the explicit arguments (from
     /// [`Checker::ctx_calls`]).
     pub ctx_args: HashMap<Aol<Expr>, CtxVal>,
@@ -159,7 +159,7 @@ pub struct Resolved {
 
 /// Gather every checker resolution lowering needs into one [`Resolved`]: `[..]`
 /// array/tensor nodes, resolved bare calls, literal/pattern
-/// hooks, context (`@use`) values, extern specs, C-repr layouts, ...
+/// hooks, context (instance) values, extern specs, C-repr layouts, ...
 ///
 /// Lowering `expect`s several of these to be present (a `::` pattern without its
 /// sequence-view hook panics), so every caller that checks a program and then

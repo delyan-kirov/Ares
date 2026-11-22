@@ -911,9 +911,15 @@ impl<'a> Parser<'a> {
             )
             .with_help(format!("write it on the signature's arrows: `({}: @Type) -> ... -> @Type`", f.name)));
         }
-        if self.ast.use_params.get(sig).is_some() {
-            return Err(self.unexpected(&at_tok, "a type declaration takes no `@use` parameter"));
+        if let Some(f) = self.ast.use_params.get(sig).map(|fs| self.ast.slice(*fs)[0]) {
+            return Err(Diagnostic::error(
+                Code::UnexpectedToken,
+                f.span,
+                at_tok.line,
+                format!("a type declaration takes no instance, as `{}` is", f.name),
+            ));
         }
+        self.class_universe(sig, kw, &at_tok)?;
         if kw != "effect" {
             self.bump()?; // the keyword
         }
@@ -949,6 +955,29 @@ impl<'a> Parser<'a> {
             }
         };
         Ok(Some(item))
+    }
+
+    /// A declaration whose signature ends in `@Class` is an interface: its
+    /// values are instances, found by search. Only a `@struct` is one, and
+    /// past the search it is a record, so its universe reads as `@Type`.
+    fn class_universe(&mut self, sig: Aol<Ty>, kw: &str, at_tok: &Token) -> Result<()> {
+        let mut cod = sig;
+        while let Ty::Arrow { to, .. } = self.ast.ty(cod) {
+            cod = *to;
+        }
+        if !matches!(self.ast.ty(cod), Ty::Con { module: None, name } if name.as_str() == "@Class") {
+            return Ok(());
+        }
+        let abi = self.peek_at(1)?;
+        if kw != "struct" || (matches!(abi.kind, Kind::At) && self.intrinsic_name(abi) == "extern") {
+            let span = self.ast.ty_span(cod).unwrap_or(at_tok.span);
+            return Err(Diagnostic::error(Code::UnexpectedToken, span, at_tok.line, "only a `@struct` is a `@Class`")
+                .with_note("a class's values are records of operations, which instance search finds by type"));
+        }
+        let universe = self.intern("@Type");
+        self.ast.replace_ty(cod, Ty::Con { module: None, name: universe });
+        self.ast.classes.insert(sig, ());
+        Ok(())
     }
 
     /// The binders of a type declaration's signature, one per arrow. A
@@ -1050,10 +1079,11 @@ impl<'a> Parser<'a> {
         Ok(Some(Item::Alias { name, params, ty, sig, body }))
     }
 
-    /// Parse a definition's type signature. `@use {f: T, ...} ->` parameters may
-    /// stand anywhere on its arrow spine. They are gathered into ONE leading
+    /// Parse a definition's type signature. `@ctx {f: T, ...} ->` parameters may
+    /// stand anywhere on its arrow spine. Their instance fields, those whose
+    /// type is no sort ([`Self::is_sort`]), are gathered into ONE leading
     /// context parameter (the field's type alone, or the tuple of several), which
-    /// is how the checker and both backends pass instances; the fields, with the
+    /// is how the checker and both backends pass instances; those fields, with the
     /// place each was written, go in [`Ast::use_params`] under the returned
     /// signature, whose first `from` is that context parameter.
     fn parse_signature(&mut self) -> Result<(Aol<Ty>, Option<Aol<Ty>>)> {
@@ -1084,12 +1114,6 @@ impl<'a> Parser<'a> {
                 let span = Span::new(kw.span.start, self.last_end);
                 expect!(self, Kind::Arrow, "expected '->' after the `@ctx` parameter");
                 self.ctx_written = Some(CtxWritten { kw, ty, span });
-                continue;
-            }
-            if self.at_intrinsic("use")? {
-                self.bump()?; // '@use'
-                self.parse_use_fields(params.len() as u32, &ctx, &mut fields)?;
-                self.binder_arrow("@use")?;
                 continue;
             }
             let at = self.here()?;
@@ -1144,7 +1168,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The `->` after a `@ctx` or `@use` parameter, which carries no effect row.
+    /// The `->` after a `@ctx` parameter, which carries no effect row.
     fn binder_arrow(&mut self, binder: &str) -> Result<()> {
         let t = self.peek()?;
         if !matches!(t.kind, Kind::Arrow) {
@@ -1165,9 +1189,10 @@ impl<'a> Parser<'a> {
 
     /// The `{name: Type, ...}` of a `@ctx` parameter, from its keyword. A field
     /// of type `@l` is a level, bound only by the signature's first `@ctx`
-    /// ahead of every parameter (`leading`); the others go in `ctx`. A name is
-    /// unique across the signature's `@ctx` and `@use` fields (`uses`). The
-    /// fields may end in `if cond`, the constraints on the levels, returned.
+    /// ahead of every parameter (`leading`); a field whose type is no sort is
+    /// an instance, found by search, and goes in `uses`; the others go in
+    /// `ctx`. A name is unique across the signature's fields. The fields may
+    /// end in `if cond`, the constraints on the levels, returned.
     fn parse_ctx_fields(
         &mut self,
         before: u32,
@@ -1221,6 +1246,7 @@ impl<'a> Parser<'a> {
                     }
                     levels.push(field);
                 }
+                _ if !self.is_sort(ty) => uses.push(UseField { ctx: false, ..field }),
                 _ => ctx.push(field),
             }
             if matches!(self.peek_kind()?, Kind::If) {
@@ -1255,6 +1281,10 @@ impl<'a> Parser<'a> {
             return Err(Diagnostic::error(Code::UnexpectedToken, l.span, 0, format!("{what} binds no level"))
                 .with_help(format!("bind `{}` in the declaration's signature", l.name)));
         }
+        if let Some(u) = uses.first() {
+            return Err(Diagnostic::error(Code::UnexpectedToken, u.span, 0, format!("{what} takes no instance"))
+                .with_note("its `@ctx` binds what unification solves: types, sizes and rows"));
+        }
         self.binder_arrow("@ctx")?;
         Ok(ctx)
     }
@@ -1269,57 +1299,21 @@ impl<'a> Parser<'a> {
         Err(self.unexpected(&t, "expected a type"))
     }
 
-    /// The `{name: Type, ...}` of a `@use` parameter, after the keyword. A field
-    /// name is unique across the whole signature, and there is at least one.
-    fn parse_use_fields(&mut self, before: u32, ctx: &[UseField], fields: &mut Vec<UseField>) -> Result<()> {
-        expect!(self, Kind::LBrace, "expected `{` after `@use`: its fields are named, as in `@use {d: IOrd t}`");
-        if matches!(self.peek_kind()?, Kind::RBrace) {
-            let t = self.peek()?;
-            return Err(self.unexpected(&t, "expected a `name: Type` field: a `@use` parameter names at least one"));
-        }
-        loop {
-            let t = self.peek()?;
-            let name = self.expect_word("expected a `name: Type` field in the `@use` parameter")?;
-            if !matches!(self.peek_kind()?, Kind::Colon) {
-                let at = self.peek()?;
-                return Err(self
-                    .unexpected(&at, "expected ':' after the `@use` field name")
-                    .with_help("a `@use` field is named, as in `@use {d: IOrd t}`"));
-            }
-            self.bump()?; // ':'
-            let ty = self.parse_type()?;
-            if fields.iter().chain(ctx).any(|f| f.name == name) {
-                return Err(Diagnostic::error(
-                    Code::DuplicateSymbol,
-                    t.span,
-                    t.line,
-                    format!("`{name}` is bound twice in this signature"),
-                ));
-            }
-            fields.push(UseField { name, ty, before, span: Span::new(t.span.start, self.last_end), ctx: false });
-            if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
-                break;
-            }
-        }
-        expect!(self, Kind::RBrace, "expected '}' to close the `@use` parameter");
-        Ok(())
-    }
-
     /// The error for `@ctx`, which dependent types (#406) will give its own meaning.
     fn ctx_reserved(&mut self) -> Result<Diagnostic> {
         let t = self.peek()?;
         Ok(Self::ctx_reserved_at(&t)
-            .with_help("an instance parameter is a named `@use` field: `@use {d: IOrd t} -> ...`, with `d` in scope in the body"))
+            .with_help("an instance parameter is a named `@ctx` field: `@ctx {d: IOrd t} -> ...`, with `d` in scope in the body"))
     }
 
     fn ctx_reserved_at(kw: &Token) -> Diagnostic {
         Diagnostic::error(Code::UnexpectedToken, kw.span, kw.line, "a `@ctx` parameter is a record of named fields")
-            .with_note("`@ctx` binds what unification solves, as in `@ctx {t: @Type}`; an instance is a `@use` field")
+            .with_note("each field is solved by its sort: `@ctx {t: @Type, d: IOrd t}` unifies `t` and searches for `d`")
     }
 
     /// `= body` after a definition's signature. A `@ctx T ->` parameter in that
     /// signature is reported here, with the body in hand: the rewrite to
-    /// `@use {d: T} ->` also drops the body's lambda parameter `d`, which the
+    /// `@ctx {d: T} ->` also drops the body's lambda parameter `d`, which the
     /// field now binds by name.
     fn parse_def_body(&mut self) -> Result<Aol<Expr>> {
         let Some(ctx) = self.ctx_written.take() else {
@@ -1336,7 +1330,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// The `@ctx` error with the edit to `@use`: the fields are named after the
+    /// The `@ctx` error with the edit to named fields: they are named after the
     /// lambda parameter that bound the context (a name, or a tuple of names for
     /// `@ctx {A, B}`), and that parameter is dropped from the body.
     fn ctx_use_fix(&self, ctx: CtxWritten, body: Aol<Expr>) -> Diagnostic {
@@ -1379,8 +1373,8 @@ impl<'a> Parser<'a> {
         };
         let unnamed = matches!(self.ast.pat(first.pat), Pattern::Wild);
         d.with_fix(
-            "make it a named `@use` parameter, in scope by name in the body",
-            vec![Edit::new(ctx.span, format!("@use {{{}}}", fields.join(", "))), Edit::new(drop, "")],
+            "name the instance in a `@ctx` field, in scope by name in the body",
+            vec![Edit::new(ctx.span, format!("@ctx {{{}}}", fields.join(", "))), Edit::new(drop, "")],
             if unnamed { Applicability::MaybeIncorrect } else { Applicability::MachineApplicable },
         )
     }
@@ -1401,13 +1395,13 @@ impl<'a> Parser<'a> {
             _ => format!("d: {written}"),
         };
         d.with_help(format!(
-            "an instance parameter is a named `@use` field: `@use {{{fields}}} -> ...`, with each field in scope \
+            "an instance parameter is a named `@ctx` field: `@ctx {{{fields}}} -> ...`, with each field in scope \
              by name in the body (drop the lambda parameter that bound `{written}`)"
         ))
     }
 
     /// The body of a definition, with the parameters its signature binds made
-    /// explicit: the `@use` fields, then the leading run of parameters that
+    /// explicit: the instance fields, then the leading run of parameters that
     /// bind by name ([`Self::named_binding`]). The written lambdas bind the rest,
     /// left to right, so which parameter a lambda binds is read off the
     /// signature alone (#437).
@@ -1483,7 +1477,7 @@ impl<'a> Parser<'a> {
         node
     }
 
-    /// The body of a definition whose signature declares `@use` fields: the
+    /// The body of a definition whose signature declares instance fields: the
     /// fields are bound by name, as the context parameter's pattern, ahead of the
     /// parameters the body's lambda declares (`\x y => e` becomes
     /// `\d x y => e`, and with several fields `\{a, b} x y => e`).
@@ -1501,6 +1495,20 @@ impl<'a> Parser<'a> {
             }
         };
         self.prepend_params(vec![LamParam { pat, sig: None }], body)
+    }
+
+    /// Whether a `@ctx` field's type is a sort, which unification solves:
+    /// `@Type`, `@Type n`, `@Nat`, `@Row`, `@Effect`, `@Class` or a level `@l`.
+    /// A field of any other type is an instance, found by search.
+    fn is_sort(&self, ty: Aol<Ty>) -> bool {
+        let sort = |t: &Ty| {
+            matches!(t, Ty::Con { module: None, name }
+                if matches!(name.as_str(), "@Type" | "@Nat" | "@Row" | "@Effect" | "@Class" | "@l"))
+        };
+        match self.ast.ty(ty) {
+            Ty::App(head, _) => sort(self.ast.ty(*head)),
+            t => sort(t),
+        }
     }
 
     /// Is the next token the `@ctx` keyword?
@@ -1685,9 +1693,6 @@ impl<'a> Parser<'a> {
         if self.at_ctx()? {
             return Err(self.ctx_reserved()?);
         }
-        if self.at_intrinsic("use")? {
-            return Err(self.use_param_misplaced()?);
-        }
         let e = self.parse_expr(0)?;
         self.to_ty(e)
     }
@@ -1700,9 +1705,9 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_type_arg(&mut self) -> Result<bool> {
-        // `@use` and `@ctx` open a signature's parameters, and a splice is a
-        // prefix operator, so none of them is an argument: `@Vec (!f a)`.
-        if self.at_ctx()? || self.at_intrinsic("use")? || self.at_splice()? {
+        // `@ctx` opens a signature's parameters, and a splice is a prefix
+        // operator, so neither is an argument: `@Vec (!f a)`.
+        if self.at_ctx()? || self.at_splice()? {
             return Ok(false);
         }
         Ok(matches!(
@@ -1711,7 +1716,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// `@use {d: T} ->` anywhere but on a definition's signature.
+    /// `@ctx {d: T} ->` anywhere but on a definition's signature.
     fn ctx_param_misplaced(&mut self) -> Result<Diagnostic> {
         let at = self.peek()?;
         Ok(Diagnostic::error(
@@ -1721,17 +1726,6 @@ impl<'a> Parser<'a> {
             "a `@ctx` parameter stands only on the arrows of a global's signature",
         )
         .with_note("or first in a constructor's or effect operation's type; not inside a parameter's type, an annotation, a local `let`'s type, or a field type"))
-    }
-
-    fn use_param_misplaced(&mut self) -> Result<Diagnostic> {
-        let at = self.peek()?;
-        Ok(Diagnostic::error(
-            Code::UnexpectedToken,
-            at.span,
-            at.line,
-            "a `@use` parameter stands only on the arrows of a definition's signature",
-        )
-        .with_note("not inside a parameter's type, an annotation, or a field type"))
     }
 
     /// The function type `from -> to` an arrow builds in an expression. A
@@ -2874,15 +2868,12 @@ impl<'a> Parser<'a> {
                 let arms = self.ast.make_slice(Vec::new());
                 Ok(self.match_lambda(arms, 1))
             }
-            "use" if matches!(self.peek_kind_at(1)?, Kind::LBrace)
-                && matches!(self.peek_kind_at(2)?, Kind::Word)
-                && matches!(self.peek_kind_at(3)?, Kind::Colon) =>
-            {
-                Err(self.use_param_misplaced()?)
-            }
-            "use" => self.parse_use_arg(),
             "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace) && matches!(self.peek_kind_at(2)?, Kind::Dot) => {
                 self.parse_ctx_arg()
+            }
+            "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace) && matches!(self.peek_kind_at(2)?, Kind::RBrace) => {
+                let t = self.peek_at(2)?;
+                Err(self.unexpected(&t, "expected a `.field = value`: a `@ctx` argument supplies at least one field"))
             }
             "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace)
                 && matches!(self.peek_kind_at(2)?, Kind::Word)
@@ -2893,7 +2884,7 @@ impl<'a> Parser<'a> {
             "ctx" => {
                 let t = self.peek()?;
                 Err(Self::ctx_reserved_at(&t).with_help(
-                    "an explicit instance is passed by its `@use` field's name: `f @use {.d = value} ...`",
+                    "an explicit instance is passed by its `@ctx` field's name: `f @ctx {.d = value} ...`",
                 ))
             }
             "Array" if matches!(self.peek_kind_at(1)?, Kind::Dot) => self.parse_array(),
@@ -2915,8 +2906,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `@ctx {.t = @Int, ...}`: values for some of the callee's `@ctx` fields,
-    /// by name, as a `@use` argument supplies instances.
+    /// `@ctx {.t = @Int, .d = rev_ord, ...}`: values for some of the callee's
+    /// `@ctx` fields, by name. A value that reads as a type stands as one,
+    /// with the expression it was written as kept in [`Ast::ctx_arg_values`]
+    /// for an instance field; any other stays an expression.
     fn parse_ctx_arg(&mut self) -> Result<Aol<Expr>> {
         let start = self.here()?;
         self.bump()?; // '@ctx'
@@ -2927,10 +2920,16 @@ impl<'a> Parser<'a> {
             let name = self.expect_word("expected a field name after '.'")?;
             expect!(self, Kind::Eq, "expected '=' after the field name");
             let at = self.here()?;
-            let value = self.parse_expr(0)?;
-            let ty = self.to_ty(value)?;
-            let value = self.expr(Expr::Type(ty));
-            let value = self.stamp(at, value);
+            let written = self.parse_expr(0)?;
+            let value = match self.to_ty(written) {
+                Ok(ty) => {
+                    let node = self.expr(Expr::Type(ty));
+                    let node = self.stamp(at, node);
+                    self.ast.ctx_arg_values.insert(node, written);
+                    node
+                }
+                Err(_) => written,
+            };
             inits.push(FieldInit::Named { name, value });
             if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;
@@ -2939,38 +2938,6 @@ impl<'a> Parser<'a> {
         expect!(self, Kind::RBrace, "expected '}' to close the `@ctx` argument");
         let inits = self.ast.make_slice(inits);
         let node = self.expr(Expr::CtxArg(inits));
-        Ok(self.stamp(start, node))
-    }
-
-    /// `@use {.f = e, ...}`: explicit values for some of the callee's `@use`
-    /// fields, by name. At least one.
-    fn parse_use_arg(&mut self) -> Result<Aol<Expr>> {
-        let start = self.here()?;
-        self.bump()?; // '@use'
-        expect!(self, Kind::LBrace, "expected `{` after `@use`, as in `f @use {.d = e} x`");
-        let mut inits = Vec::new();
-        loop {
-            let t = self.peek()?;
-            if !matches!(t.kind, Kind::Dot) {
-                let what = if inits.is_empty() {
-                    "expected a `.field = value`: a `@use` argument supplies at least one field"
-                } else {
-                    "expected a `.field = value`"
-                };
-                return Err(self.unexpected(&t, what));
-            }
-            self.bump()?; // '.'
-            let name = self.expect_word("expected a field name after '.'")?;
-            expect!(self, Kind::Eq, "expected '=' after the `@use` field name");
-            let value = self.parse_expr(0)?;
-            inits.push(FieldInit::Named { name, value });
-            if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
-                break;
-            }
-        }
-        expect!(self, Kind::RBrace, "expected '}' to close the `@use` argument");
-        let inits = self.ast.make_slice(inits);
-        let node = self.expr(Expr::UseArg(inits));
         Ok(self.stamp(start, node))
     }
 

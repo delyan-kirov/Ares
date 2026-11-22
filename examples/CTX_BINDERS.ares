@@ -17,7 +17,7 @@ $ twice : @ctx { a: @Type } -> (a -> a) -> a -> a = \f x => f (f x)
 $ apply : @ctx { a: @Type, b: @Type, e: @Row } -> (a -> <e> b) -> a -> <e> b = \f x => f x
 
 # `t` is fixed by the expected type, or passed by name.
-$ zero_of : @ctx { t: @Type } -> @use { z: IZero t } -> {} -> t = z.zero
+$ zero_of : @ctx { t: @Type, z: IZero t } -> {} -> t = z.zero
 $ zi : @Int = zero_of @ctx { .t = @Int } {}
 
 # A type parameter taken explicitly: the argument is a type, erased at run time.

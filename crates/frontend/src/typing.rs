@@ -10,7 +10,7 @@
 //!
 //! Inference is Algorithm W, bidirectional (`algorithm_w`), over the
 //! [`Unifier`] ([`unify`]). A name has one definition; polymorphism over types
-//! goes through interfaces, whose `@use` arguments are resolved by type
+//! goes through interfaces, whose instance arguments are resolved by type
 //! (`instances`). Matches are checked for exhaustiveness ([`usefulness`]).
 //! What desugaring needs from all this is in [`resolved`]. The other private
 //! modules each hold one concern of the [`Checker`]: `declarations`,
@@ -105,6 +105,8 @@ struct StructInfo {
     /// A C `union` (`@union @extern`): members share offset 0. Handled as a C-repr
     /// struct otherwise; only its layout and single-member construction differ.
     c_union: bool,
+    /// Declared at `@Class`: an interface, whose values instance search finds.
+    class: bool,
 }
 
 /// A declared union type: its parameters and then its indices, `kinds` what
@@ -221,9 +223,9 @@ pub struct Checker<'a> {
     resolved_calls: HashMap<Aol<Expr>, StrId>,
     /// The context parameter type of each context-bearing definition in this
     /// module, sharing its variables with the exposed type, so a printed signature
-    /// can show the `@use` fields.
+    /// can show the instance fields.
     decl_ctx: HashMap<StrId, Type>,
-    /// Top-level definitions whose signature opens with a `@use` context
+    /// Top-level definitions whose signature has instance fields in its `@ctx`
     /// parameter, by name, as the signature's AST handle (the context type is its
     /// first `from`). A use site plans the context from it and records the resolved
     /// value in [`Self::ctx_args`]; lowering injects it as a leading argument.
@@ -282,12 +284,13 @@ pub struct Checker<'a> {
     /// signature is kept as a type (not a variable set) because unification may
     /// point its variables at others, and zonking at resolution time follows that.
     current_sig: Option<Type>,
-    /// Explicit `@use {...}` arguments, keyed by the head reference site they apply
-    /// to. Consumed when that reference plans its context.
+    /// The instance fields of explicit `@ctx {...}` arguments, keyed by the head
+    /// reference site they apply to. Consumed when that reference plans its
+    /// context.
     ctx_override: HashMap<Aol<Expr>, Vec<UseOverride>>,
-    /// Every global whose type's head is a declared nominal type, keyed by that
-    /// head's name: the candidates a context requirement searches. Implementing an
-    /// interface is just defining a value of its type, so there is nothing to mark.
+    /// Every global whose type's head is a `@Class`, keyed by that head's name:
+    /// the candidates a context requirement searches. Implementing an interface
+    /// is just defining a value of its type, so there is nothing to mark.
     instances: HashMap<StrId, Vec<Inst>>,
     /// This module's own instances, re-exported to importers.
     own_instances: Vec<(StrId, Inst)>,
@@ -562,17 +565,18 @@ struct PendingCtx {
     /// Binders in scope at the use site that could satisfy the requirement. Captured
     /// there because the scopes are gone by the time the boundary resolves.
     locals: Vec<CtxLocal>,
-    /// The fields of a several-field bundle an explicit `@use` argument gave, by
+    /// The fields of a several-field bundle an explicit `@ctx` argument gave, by
     /// position in the bundle, already checked; the rest are searched.
     given: Vec<(usize, Aol<Expr>)>,
 }
 
-/// An explicit `@use {.f = e}` argument of a call, off the spine: its fields, and
-/// how many explicit arguments precede it.
-#[derive(Clone, Copy, Debug)]
+/// An explicit `@ctx {.f = e}` argument of a call, off the spine: its fields, or
+/// those of one kind (instances, or what unification solves), and how many
+/// explicit arguments precede it.
+#[derive(Clone, Debug)]
 pub(crate) struct UseOverride {
     pub(crate) at: u32,
-    pub(crate) inits: Slice<FieldInit>,
+    pub(crate) inits: Vec<FieldInit>,
     pub(crate) site: Aol<Expr>,
 }
 
@@ -941,15 +945,15 @@ impl<'a> Checker<'a> {
         // module resolves them regardless of source order.
         for d in &defs {
             let Some(ctx) = d.ctx else { continue };
-            let sig = d.sig.expect("a `@use` is parsed as part of a signature");
+            let sig = d.sig.expect("an instance field is parsed as part of a signature");
             self.check_ctx_head(d.name, ctx, sig)?;
             self.own_ctx.push((d.name, sig));
             self.qualified_ctx.insert((self.module_name, d.name), sig);
             self.global_ctx.insert(d.name, sig);
         }
 
-        // Index every global whose type's head is a declared nominal type: these are
-        // the candidates a context requirement searches.
+        // Index every global whose type's head is a `@Class`: these are the
+        // instances a context requirement searches.
         for d in &defs {
             let Some(sig) = d.sig else { continue };
             if self.ast.ctx_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() {
@@ -957,16 +961,17 @@ impl<'a> Checker<'a> {
                 self.qualified_ctx_sigs.insert((self.module_name, d.name), sig);
                 self.ctx_sigs.insert(d.name, sig);
             }
-            self.check_ctx_fields(d.name, sig);
+            self.check_ctx_fields(sig);
             let mut tvars = self.sig_tvars(sig);
             self.ty_reporting(sig, &mut tvars, Some(sig));
             let (exposed, ctx) = self.scheme_and_ctx(sig, d.ctx.is_some());
             let Some(head) = self.ctx_head(self.unifier.zonk(exposed)) else {
                 continue;
             };
-            if !self.is_nominal(head) {
+            if !self.is_class(head) {
                 continue;
             }
+            self.check_instance_terminates(d.name, sig, exposed, ctx);
             let bundle = self.instance_bundle(exposed, ctx);
             let inst = Inst {
                 name: d.name,
@@ -1472,32 +1477,37 @@ impl<'a> Checker<'a> {
     }
 
     /// The declared type of a global `name` in scope, as a user reads it (with any
-    /// `@use` fields). Inferring the name as an expression instead would have to
+    /// instance fields). Inferring the name as an expression instead would have to
     /// pick a type for its context, which is exactly what the declaration leaves
     /// open.
     pub(crate) fn show_name(&mut self, name: StrId) -> Option<String> {
         if let Some(sig) = self.global_ctx.get(&name).copied() {
             let (exposed, ctx) = self.scheme_and_ctx(sig, true);
             if let Some(ctx) = ctx {
-                return Some(self.show_with_uses(name, ctx, exposed));
+                let (fields, exposed) = self.show_with_uses(name, ctx, exposed);
+                return Some(format!("@ctx {{{}}} -> {exposed}", fields.join(", ")));
             }
         }
         self.lookup(name).map(|ty| self.show(ty))
     }
 
     /// How a definition's type reads to a user: its exposed arrow, prefixed with its
-    /// `@use` fields when it declares some. A printed type never hides the context
+    /// `@ctx` fields when it declares some. A printed type never hides the context
     /// a call site has to satisfy, which is the whole point of #213.
     pub fn show_decl(&self, name: StrId, ty: Type) -> String {
-        let ctx = self.show_ctx_binder(name);
-        let mut shown = match self.decl_ctx.get(&name) {
-            Some(ctx) => self.show_with_uses(name, *ctx, ty),
+        let (mut fields, cond) = self.show_ctx_binder(name);
+        let shown = match self.decl_ctx.get(&name) {
+            Some(ctx) => {
+                let (uses, shown) = self.show_with_uses(name, *ctx, ty);
+                fields.extend(uses);
+                shown
+            }
             None => self.unifier.show_all_named(&[ty], self.sig_names(name)).pop().expect("one rendering"),
         };
-        if let Some(ctx) = ctx {
-            shown = format!("{ctx} -> {shown}");
+        if fields.is_empty() {
+            return shown;
         }
-        shown
+        format!("@ctx {{{}{cond}}} -> {shown}", fields.join(", "))
     }
 
     /// A signature's `if` makes its levels exact: the body may fix none of
@@ -1610,10 +1620,11 @@ impl<'a> Checker<'a> {
         out
     }
 
-    /// `@ctx {u: @l, t: @Type u, ... if ...}` as `name`'s signature writes
-    /// it, its levels first, if it has one.
-    fn show_ctx_binder(&self, name: StrId) -> Option<String> {
-        let sig = *self.ctx_sigs.get(&name)?;
+    /// The fields `u: @l, t: @Type u, ...` of `name`'s `@ctx` that unification
+    /// solves, as its signature writes them, its levels first, and the ` if ...`
+    /// that constrains the levels, if any.
+    fn show_ctx_binder(&self, name: StrId) -> (Vec<String>, String) {
+        let Some(&sig) = self.ctx_sigs.get(&name) else { return (Vec::new(), String::new()) };
         let fields = [self.ast.level_params.get(sig), self.ast.ctx_params.get(sig)];
         let shown: Vec<String> = fields
             .into_iter()
@@ -1621,17 +1632,13 @@ impl<'a> Checker<'a> {
             .flat_map(|fs| self.ast.slice(*fs).iter())
             .map(|f| format!("{}: {}", f.name, self.ast.ty_source(f.ty).unwrap_or_default()))
             .collect();
-        if shown.is_empty() {
-            return None;
-        }
         let cond = self.ast.level_constraints.get(sig).and_then(|e| self.ast.level_constraint_source(*e, 0));
-        let cond = cond.map_or(String::new(), |c| format!(" if {c}"));
-        Some(format!("@ctx {{{}{cond}}}", shown.join(", ")))
+        (shown, cond.map_or(String::new(), |c| format!(" if {c}")))
     }
 
-    /// `@use {d: IOrd a, s: ISub a} -> a -> a`: the context `ctx` split into the
-    /// fields `name`'s signature declares, all of them first, then `exposed`.
-    fn show_with_uses(&self, name: StrId, ctx: Type, exposed: Type) -> String {
+    /// `d: IOrd a, s: ISub a` and `a -> a`: the context `ctx` split into the
+    /// instance fields `name`'s signature declares, and `exposed`.
+    fn show_with_uses(&self, name: StrId, ctx: Type, exposed: Type) -> (Vec<String>, String) {
         let sig = self.global_ctx.get(&name).copied();
         let fields: Vec<StrId> = match sig.and_then(|s| self.ast.use_params.get(s).copied()) {
             Some(fs) => self.ast.slice(fs).iter().map(|f| f.name).collect(),
@@ -1651,7 +1658,7 @@ impl<'a> Checker<'a> {
                 None => format!("d{i}: {}", shown[i]),
             })
             .collect();
-        format!("@use {{{}}} -> {}", named.join(", "), shown[n])
+        (named, shown[n].clone())
     }
 
     fn bind(&mut self, name: StrId, ty: Type) {
@@ -1725,7 +1732,7 @@ impl<'a> Checker<'a> {
         // The sized-tensor PRIMITIVES. `@`-sigil marks them as compiler intrinsics
         // (like `@Int64`), the minimal set the runtime provides; every nice name
         // (`index`, `length`, `dot`, `matmul`, `transpose`, `concat`) is a `library/LA`
-        // function built from these plus `@use`, not a builtin.
+        // function built from these plus instance fields, not a builtin.
         //
         // The sized-tensor primitives. `@Tensor n T` and `Vec T` share the runtime vector
         // rep but are DISTINCT types, so these carry their own tensor-typed
@@ -1801,7 +1808,7 @@ impl<'a> Checker<'a> {
             );
         }
         // The coarse kernels `LA.dot`/`LA.matmul` call, with the element arithmetic
-        // passed as plain functions (the `@use` methods):
+        // passed as plain functions (the instance methods):
         // `@tensor_dot : (a -> a -> a) -> (a -> a -> a) -> a -> @Tensor n a -> @Tensor n a -> a` and
         // `@tensor_matmul : (a -> a -> a) -> (a -> a -> a) -> a -> @Tensor m (@Tensor k a) -> @Tensor k (@Tensor n a) -> @Tensor m (@Tensor n a)`.
         {
@@ -2017,14 +2024,15 @@ fn free_globals(
                 }
             }
         }
-        Expr::UseArg(inits) => {
+        Expr::CtxArg(inits) => {
             for init in ast.slice(*inits) {
                 let (FieldInit::Named { value, .. } | FieldInit::Positional(value)) = init;
-                free_globals(ast, *value, globals, bound, out);
+                let value = ast.ctx_arg_values.get(*value).copied().unwrap_or(*value);
+                free_globals(ast, value, globals, bound, out);
             }
         }
         Expr::Ascribe { expr, .. } => free_globals(ast, *expr, globals, bound, out),
-        Expr::CtxArg(_) | Expr::Type(_) => {}
+        Expr::Type(_) => {}
     }
 }
 

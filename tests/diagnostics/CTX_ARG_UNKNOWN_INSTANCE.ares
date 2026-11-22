@@ -1,0 +1,7 @@
+$ @mod CTX_ARG_UNKNOWN_INSTANCE
+
+$ @import ARESxALGO
+
+# An explicit instance names a field of the callee's `@ctx`.
+$ same : @ctx {t: @Type, eq: IEq t} -> t -> Bool = \x => eq.eq x x
+$ r : Bool = same @ctx {.qe = impl_IEq_for_int} 1  #~ error[TYPE_MISMATCH]: `same` has no `@ctx` field `qe`

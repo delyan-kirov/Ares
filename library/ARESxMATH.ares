@@ -10,15 +10,15 @@ $ @mod ARES
 # One definition each, over any ordered type.
 $ @import ARESxALGO
 
-$ min : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> t = \a b => if d.lt b a => b else a
-$ max : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> t = \a b => if d.lt a b => b else a
+$ min : @ctx { t: @Type, d: IOrd t } -> t -> t -> t = \a b => if d.lt b a => b else a
+$ max : @ctx { t: @Type, d: IOrd t } -> t -> t -> t = \a b => if d.lt a b => b else a
 
 # `x` forced into [lo, hi].
-$ clamp : @ctx { t: @Type } -> @use { d: IOrd t } -> t -> t -> t -> t = \lo hi x =>
+$ clamp : @ctx { t: @Type, d: IOrd t } -> t -> t -> t -> t = \lo hi x =>
     max lo (min hi x)
 
 # The distance from zero, for any type that is ordered and can subtract.
-$ abs : @ctx { t: @Type } -> @use { o: IOrd t, s: ISub t, z: IZero t } -> t -> t = \x =>
+$ abs : @ctx { t: @Type, o: IOrd t, s: ISub t, z: IZero t } -> t -> t = \x =>
     if o.lt x z.zero => s.sub z.zero x else x
 
 # Three-way comparison: negative / 0 / positive.
@@ -34,7 +34,7 @@ $ gcd : @Int -> @Int -> @Int = \a b => if b == 0 => abs a else gcd b (a % b)
 # `pow` is the named spelling of `^`, over CORE's `IPow`: integer exponentiation is
 # repeated multiplication (a negative exponent yields 0, integer-division
 # semantics), the real one is libm's.
-$ pow : @ctx { t: @Type } -> @use { d: IPow t } -> t -> t -> t = \b e => d.raise b e
+$ pow : @ctx { t: @Type, d: IPow t } -> t -> t -> t = \b e => d.raise b e
 
 # ---- int <-> real conversions ----
 # `@cast` crosses only integer widths; these bridge the integer/real boundary
@@ -54,18 +54,18 @@ $ euler : Real = 2.718281828459045
 
 # ---- elementary functions, as interfaces ----
 # Over reals (here) and complex numbers (ARESxCPX) alike.
-$ ISqrt : (t: @Type) -> @Type = @struct sqrt: t -> t,
-$ sqrt : @ctx { t: @Type } -> @use { d: ISqrt t } -> t -> t = \x => d.sqrt x
-$ ISin : (t: @Type) -> @Type = @struct sin: t -> t,
-$ sin : @ctx { t: @Type } -> @use { d: ISin t } -> t -> t = \x => d.sin x
-$ ICos : (t: @Type) -> @Type = @struct cos: t -> t,
-$ cos : @ctx { t: @Type } -> @use { d: ICos t } -> t -> t = \x => d.cos x
-$ ITan : (t: @Type) -> @Type = @struct tan: t -> t,
-$ tan : @ctx { t: @Type } -> @use { d: ITan t } -> t -> t = \x => d.tan x
-$ IExp : (t: @Type) -> @Type = @struct exp: t -> t,
-$ exp : @ctx { t: @Type } -> @use { d: IExp t } -> t -> t = \x => d.exp x
-$ ILog : (t: @Type) -> @Type = @struct log: t -> t,
-$ log : @ctx { t: @Type } -> @use { d: ILog t } -> t -> t = \x => d.log x
+$ ISqrt : (t: @Type) -> @Class = @struct sqrt: t -> t,
+$ sqrt : @ctx { t: @Type, d: ISqrt t } -> t -> t = \x => d.sqrt x
+$ ISin : (t: @Type) -> @Class = @struct sin: t -> t,
+$ sin : @ctx { t: @Type, d: ISin t } -> t -> t = \x => d.sin x
+$ ICos : (t: @Type) -> @Class = @struct cos: t -> t,
+$ cos : @ctx { t: @Type, d: ICos t } -> t -> t = \x => d.cos x
+$ ITan : (t: @Type) -> @Class = @struct tan: t -> t,
+$ tan : @ctx { t: @Type, d: ITan t } -> t -> t = \x => d.tan x
+$ IExp : (t: @Type) -> @Class = @struct exp: t -> t,
+$ exp : @ctx { t: @Type, d: IExp t } -> t -> t = \x => d.exp x
+$ ILog : (t: @Type) -> @Class = @struct log: t -> t,
+$ log : @ctx { t: @Type, d: ILog t } -> t -> t = \x => d.log x
 
 $ impl_ISqrt_for_float64 : ISqrt Real = .{ .sqrt = \x => C.sqrt x }
 $ impl_ISin_for_float64 : ISin Real = .{ .sin = \x => C.sin x }

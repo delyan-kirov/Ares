@@ -1,13 +1,16 @@
-//! Context (`@use`) instance resolution.
+//! Context instance resolution.
 //!
-//! A definition whose signature opens with `@use` fields takes that
-//! argument implicitly. At each use the checker plans the requirement, then
+//! A definition whose signature's `@ctx` has instance fields, those whose type
+//! is a `@Class`, takes them as one argument, implicitly. At each use the checker plans the requirement, then
 //! resolves it at the enclosing definition's boundary, once inference has
 //! pinned the requirement's type variables. Resolution searches by type: first
 //! the context binders in scope, then a flat index of the instances (globals
-//! whose type's head is the requirement's nominal head). An instance may itself
-//! take a context, so resolution recurses, up to [`CTX_DEPTH`]. One candidate
-//! is chosen; none or several is an error naming the candidates.
+//! whose type's head is the requirement's `@Class`). An instance may itself
+//! take a context, so resolution recurses; the Paterson conditions make it
+//! terminate, with [`CTX_DEPTH`] as a backstop. One candidate is chosen,
+//! without backtracking; none or several is an error naming the candidates. A
+//! requirement whose head is not yet a constructor waits for inference to pin
+//! it, and is never guessed.
 //!
 //! The blessed interfaces (`@IStrLit`, `@ISeqView`, ...) resolve the same way:
 //! a literal, range or sequence pattern on a user type finds its instance by
@@ -22,8 +25,8 @@ use super::*;
 // ## Context signatures
 
 impl<'a> Checker<'a> {
-    /// Elaborate a signature into the type callers see and, when it opens with a
-    /// `@use` context parameter, that parameter's type. Both are generalized together (as
+    /// Elaborate a signature into the type callers see and, when it has
+    /// instance fields, the context parameter that carries them. Both are generalized together (as
     /// one tuple) so a variable they share becomes the same `Generic` in each.
     pub(super) fn scheme_and_ctx(&mut self, sig: Aol<Ty>, has_ctx: bool) -> (Type, Option<Type>) {
         self.unifier.enter_level();
@@ -33,7 +36,7 @@ impl<'a> Checker<'a> {
         let (ctx, exposed) = if has_ctx {
             match self.unifier.types.node(full) {
                 TypeNode::Arrow(from, to, _) => (Some(from), to),
-                // A `@use` signature is built as an arrow by the parser; an alias
+                // A context signature is built as an arrow by the parser; an alias
                 // could still hide one, in which case there is nothing to strip.
                 _ => (None, full),
             }
@@ -71,10 +74,11 @@ impl<'a> Checker<'a> {
         self.unifier.types.tuple(items)
     }
 
-    /// A `@use` field's type must be a declared nominal type applied to its
-    /// arguments. A bare variable or a base type would turn the search into "any
-    /// value of this type in scope", which is never what is meant, and the error
-    /// belongs at the declaration rather than at every call site.
+    /// An instance field's type must be a `@Class` applied to its arguments.
+    /// An ordinary record is never searched, and a bare variable or a base
+    /// type would turn the search into "any value of this type in scope", which
+    /// is never what is meant; the error belongs at the declaration rather than
+    /// at every call site.
     pub(super) fn check_ctx_head(&mut self, name: StrId, ctx: Aol<Ty>, sig: Aol<Ty>) -> Result<()> {
         let fields: Vec<UseField> = match self.ast.use_params.get(sig) {
             Some(fs) => self.ast.slice(*fs).to_vec(),
@@ -86,39 +90,115 @@ impl<'a> Checker<'a> {
         // A bundle of several contexts travels as a tuple; each component carries
         // the same requirement.
         let parts = match self.unifier.types.node(zonked) {
-            TypeNode::Tuple(items) => self.unifier.types.items(items).to_vec(),
+            TypeNode::Tuple(items) if fields.len() > 1 => self.unifier.types.items(items).to_vec(),
             _ => vec![zonked],
         };
         for (i, part) in parts.into_iter().enumerate() {
             // An unspliced `!` stands as a fresh variable until expansion.
-            if fields.get(i).is_some_and(|f| f.ctx || matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
+            if fields.get(i).is_some_and(|f| matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
                 continue;
             }
-            if let Some(f) = fields.get(i).filter(|f| self.kind_of_ast(f.ty).is_some()) {
-                let written = self.ast.ty_source(f.ty).unwrap_or_default();
-                return Err(diag!(
-                    Code::TypeMismatch, f.span, 0,
-                    "`@use` field `{}` of `{name}` is a `{written}`, which unification solves", f.name;
-                    note: "`@use` searches for instances; types, sizes and rows are `@ctx` fields";
-                    help: "make it a `@ctx` field: `@ctx {{{}: {written}}} -> ...`", f.name
-                ));
-            }
-            let ok = self.ctx_head(part).is_some_and(|h| self.is_nominal(h));
-            if !ok {
-                let (field, span) = match fields.get(i) {
-                    Some(f) => (format!("`{}`", f.name), self.ast.ty_span(f.ty).unwrap_or(f.span)),
-                    None => ("a field".to_string(), self.ast.ty_span(ctx).unwrap_or_else(|| Span::at(0))),
-                };
-                return Err(diag!(
-                    Code::TypeMismatch, span, 0,
-                    "`@use` field {field} of `{name}` must have a declared type, not `{}`",
-                    self.show(part)
-                )
-                .with_note("a context is found by its type, so it needs a named one")
-                .with_help("wrap it in a `@struct` whose fields are the operations"));
+            let (field, span, written) = match fields.get(i) {
+                Some(f) => (format!("`{}`", f.name), f.span, self.ast.ty_source(f.ty)),
+                None => ("a field".to_string(), self.ast.ty_span(ctx).unwrap_or_else(|| Span::at(0)), None),
+            };
+            match self.ctx_head(part) {
+                Some(h) if self.is_class(h) => {}
+                Some(h) if self.is_nominal(h) => {
+                    return Err(diag!(
+                        Code::TypeMismatch, span, 0,
+                        "`@ctx` field {field} of `{name}` is a `{}`, which instance search never looks for",
+                        written.unwrap_or_else(|| self.show(part));
+                        note: "a field is searched for when its type is a `@Class`; `{h}` is an ordinary record";
+                        help: "declare `{h}` at `@Class`, as in `$ {h} : (t: @Type) -> @Class = @struct ...`"
+                    ));
+                }
+                _ => return Err(dependent_only(Some(span), "a `@ctx` field that is a value")),
             }
         }
         Ok(())
+    }
+
+    /// An instance's own instance fields are each smaller than the type it
+    /// provides, the Paterson conditions: fewer constructors and variables,
+    /// and no variable more often. Search on them then always terminates, so
+    /// [`CTX_DEPTH`] is only a backstop.
+    pub(super) fn check_instance_terminates(&mut self, name: StrId, sig: Aol<Ty>, exposed: Type, ctx: Option<Type>) {
+        let Some(ctx) = ctx else { return };
+        let fields: Vec<UseField> = match self.ast.use_params.get(sig) {
+            Some(fs) => self.ast.slice(*fs).to_vec(),
+            None => return,
+        };
+        let (mut head_size, mut head_occ) = (0, HashMap::new());
+        self.paterson_measure(exposed, &mut head_size, &mut head_occ);
+        let provided = match self.ast.ty(sig) {
+            Ty::Arrow { to, .. } => self.ast.ty_source(*to),
+            _ => None,
+        };
+        let provided = provided.unwrap_or_else(|| self.show(self.unifier.zonk(exposed)));
+        let ctx = self.unifier.zonk(ctx);
+        let parts = match self.unifier.types.node(ctx) {
+            TypeNode::Tuple(items) if fields.len() > 1 => self.unifier.types.items(items).to_vec(),
+            _ => vec![ctx],
+        };
+        for (f, part) in fields.iter().zip(parts) {
+            let (mut size, mut occ) = (0, HashMap::new());
+            self.paterson_measure(part, &mut size, &mut occ);
+            let repeated = occ.iter().any(|(v, n)| *n > head_occ.get(v).copied().unwrap_or(0));
+            if size < head_size && !repeated {
+                continue;
+            }
+            let why = if repeated {
+                "a type variable occurs in it more often than in the instance's type"
+            } else {
+                "it has as many constructors and variables as the instance's type, or more"
+            };
+            self.errors.push(diag!(
+                Code::TypeMismatch, f.span, 0,
+                "the instance `{name}` needs `{}`, which is not smaller than the `{provided}` it provides",
+                self.ast.ty_source(f.ty).unwrap_or_else(|| self.show(part));
+                note: "{why}, so searching for it may not terminate";
+                help: "take `{}` apart into smaller requirements, or pass the instance explicitly", f.name
+            ));
+        }
+    }
+
+    /// The size of `ty` for the Paterson conditions, the constructors and
+    /// variables it is built from, and how often each variable occurs.
+    fn paterson_measure(&self, ty: Type, size: &mut usize, occ: &mut HashMap<VarId, usize>) {
+        let ty = self.unifier.resolve(ty);
+        let node = self.unifier.types.node(ty);
+        if !matches!(node, TypeNode::App(..)) {
+            *size += 1;
+        }
+        match node {
+            TypeNode::Var(v) => *occ.entry(v).or_default() += 1,
+            TypeNode::App(a, b) | TypeNode::NatAdd(a, b) | TypeNode::NatMul(a, b) | TypeNode::LevelMax(a, b) => {
+                self.paterson_measure(a, size, occ);
+                self.paterson_measure(b, size, occ);
+            }
+            TypeNode::LevelAdd(a, _) | TypeNode::Record(a) => self.paterson_measure(a, size, occ),
+            TypeNode::Arrow(a, b, c) => {
+                self.paterson_measure(a, size, occ);
+                self.paterson_measure(b, size, occ);
+                self.paterson_measure(c, size, occ);
+            }
+            TypeNode::RowField(_, a, b) | TypeNode::RowExtend(_, a, b) => {
+                self.paterson_measure(a, size, occ);
+                self.paterson_measure(b, size, occ);
+            }
+            TypeNode::Tuple(items) => {
+                for t in self.unifier.types.items(items).to_vec() {
+                    self.paterson_measure(t, size, occ);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether a type-constructor name is a declared `@Class`.
+    pub(super) fn is_class(&self, head: utilities::StrId) -> bool {
+        self.structs.get(&head).is_some_and(|s| s.class)
     }
 
     /// Whether a type-constructor name is a declared struct or union (as opposed to
@@ -132,13 +212,13 @@ impl<'a> Checker<'a> {
 
 impl<'a> Checker<'a> {
     /// Plan the context argument of `fname` at use `site`. The fields an explicit
-    /// `@use {.f = e}` names are checked and used as given; the rest, and the whole
+    /// `@ctx {.f = e}` names are checked and used as given; the rest, and the whole
     /// context when there is no such argument, are resolved at the enclosing
     /// definition's boundary, where the requirement's type variables are pinned
     /// (so `max_of 3 7` searches for a context over `@Int` rather than over a bare
     /// variable). The binders that could satisfy it are captured now, because the
     /// scopes are gone by then. `sig` is the callee's signature, which names its
-    /// `@use` fields.
+    /// instance fields.
     pub(super) fn plan_ctx(
         &mut self,
         site: Aol<Expr>,
@@ -174,17 +254,44 @@ impl<'a> Checker<'a> {
         Ok(())
     }
 
-    /// An explicit `@use` argument whose callee declares no `@use` parameter.
-    pub(super) fn use_without_fields(&self, head: Aol<Expr>, uses: &[UseOverride]) -> Diagnostic {
-        let span = self.ast.expr_span(uses[0].site).unwrap_or(Span::at(0));
-        let callee = match self.node(head) {
-            Expr::Var { name, .. } => format!("`{name}`"),
-            _ => "this function".to_string(),
+    /// Move the fields of explicit `@ctx` arguments `given` that name an
+    /// instance field of `uses`, the signature of a callee with some, to the
+    /// context `site` plans, each as its written expression. The rest, the
+    /// fields unification solves, are returned, or `None` when none is left.
+    pub(super) fn split_given(
+        &mut self,
+        site: Aol<Expr>,
+        uses: Option<Aol<Ty>>,
+        given: Option<Vec<UseOverride>>,
+    ) -> Option<Vec<UseOverride>> {
+        let given = given?;
+        let Some(fields) = uses.and_then(|s| self.ast.use_params.get(s).copied()) else {
+            return Some(given);
         };
-        diag!(
-            Code::TypeMismatch, span, 0,
-            "a `@use` argument, but {callee} declares no `@use` parameter"
-        )
+        let names: Vec<StrId> = self.ast.slice(fields).iter().map(|f| f.name).collect();
+        let (mut rest, mut found) = (Vec::new(), Vec::new());
+        for u in given {
+            let (mut ctx, mut inst) = (Vec::new(), Vec::new());
+            for init in u.inits {
+                match init {
+                    FieldInit::Named { name, value } if names.contains(&name) => {
+                        let value = self.ast.ctx_arg_values.get(value).copied().unwrap_or(value);
+                        inst.push(FieldInit::Named { name, value });
+                    }
+                    other => ctx.push(other),
+                }
+            }
+            if !inst.is_empty() {
+                found.push(UseOverride { at: u.at, inits: inst, site: u.site });
+            }
+            if !ctx.is_empty() {
+                rest.push(UseOverride { at: u.at, inits: ctx, site: u.site });
+            }
+        }
+        if !found.is_empty() {
+            self.ctx_override.insert(site, found);
+        }
+        (!rest.is_empty()).then_some(rest)
     }
 
     /// An explicit `@ctx` argument whose callee declares no `@ctx` field.
@@ -203,7 +310,7 @@ impl<'a> Checker<'a> {
     /// A reference to `name` with explicit `@ctx {.f = v}` arguments, or to
     /// one with `@Nat` fields: its signature `sig` elaborated afresh, each field
     /// given unified with its value; the fields left out are solved as usual.
-    /// `uses` tells a callee that also takes a `@use` bundle, planned here.
+    /// `uses` tells a callee that also takes instance fields, planned here.
     pub(super) fn infer_ctx_given(
         &mut self,
         site: Aol<Expr>,
@@ -239,11 +346,12 @@ impl<'a> Checker<'a> {
         }
         let mut seen: Vec<StrId> = Vec::new();
         for u in given {
-            for init in self.ast.slice(u.inits).to_vec() {
+            for init in u.inits.clone() {
                 let FieldInit::Named { name: f, value } = init else { continue };
                 let span = self.ast.expr_span(value).or(self.ast.expr_span(u.site)).unwrap_or(Span::at(0));
                 let Some(field) = fields.iter().find(|x| x.name == f).copied() else {
-                    let known: Vec<&str> = fields.iter().map(|x| x.name.as_str()).collect();
+                    let uses = self.ast.use_params.get(sig).map(|fs| self.ast.slice(*fs).to_vec()).unwrap_or_default();
+                    let known: Vec<&str> = fields.iter().chain(&uses).map(|x| x.name.as_str()).collect();
                     let mut d = diag!(Code::TypeMismatch, span, 0, "`{name}` has no `@ctx` field `{f}`");
                     if let Some(c) = utilities::error::closest(f.as_str(), known.iter().copied()) {
                         d = d.with_help(format!("did you mean `{c}`?"));
@@ -271,7 +379,10 @@ impl<'a> Checker<'a> {
                         .map_err(|d| d.fill_span(span))?;
                     continue;
                 }
-                let Expr::Type(t) = *self.node(value) else { continue };
+                let Expr::Type(t) = *self.node(value) else {
+                    let what = self.kind_of_ast(field.ty).map_or("@Type", ParamKind::written);
+                    return Err(diag!(Code::TypeMismatch, span, 0, "`@ctx` field `{f}` of `{name}` takes a `{what}`, not a value"));
+                };
                 let mut scoped = self.scoped_tvars.clone();
                 let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
                 let vt = match self.kind_of_ast(field.ty) {
@@ -331,7 +442,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The components of a several-field `@use` bundle, or nothing for a
+    /// The components of a several-field instance bundle, or nothing for a
     /// one-field one (whose context is the field itself).
     fn bundle_items(&mut self, req: Type) -> Vec<Type> {
         let z = self.unifier.zonk(req);
@@ -341,8 +452,8 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Match the fields of explicit `@use` arguments to `fname`'s `@use`
-    /// parameters by name, check each value against its field's type, and return
+    /// Match the instance fields of explicit `@ctx` arguments to `fname`'s
+    /// by name, check each value against its field's type, and return
     /// `(position in the bundle, value)` for each. A field must be given where its
     /// parameter stands: after exactly the explicit arguments declared before it.
     fn use_given(
@@ -359,26 +470,26 @@ impl<'a> Checker<'a> {
         let parts = self.bundle_items(req);
         let mut out: Vec<(usize, Aol<Expr>)> = Vec::new();
         for u in uses {
-            for init in self.ast.slice(u.inits).to_vec() {
+            for init in u.inits.clone() {
                 let FieldInit::Named { name, value } = init else { continue };
                 let span = self.ast.expr_span(value).or(self.ast.expr_span(u.site)).unwrap_or(Span::at(0));
                 let Some(i) = fields.iter().position(|f| f.name == name) else {
                     let known: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
                     let mut d = diag!(
                         Code::TypeMismatch, span, 0,
-                        "`{fname}` has no `@use` field `{name}`"
+                        "`{fname}` has no `@ctx` field `{name}`"
                     );
                     if let Some(c) = utilities::error::closest(name.as_str(), known.iter().copied()) {
                         d = d.with_help(format!("did you mean `{c}`?"));
                     } else if known.is_empty() {
-                        d = d.with_note(format!("`{fname}` declares no `@use` parameter"));
+                        d = d.with_note(format!("`{fname}` declares no `@ctx` parameter"));
                     }
                     return Err(d);
                 };
                 if out.iter().any(|g| g.0 == i) {
                     return Err(diag!(
                         Code::DuplicateSymbol, span, 0,
-                        "`@use` field `{name}` of `{fname}` is given twice"
+                        "`@ctx` field `{name}` of `{fname}` is given twice"
                     ));
                 }
                 let field = fields[i];
@@ -386,9 +497,9 @@ impl<'a> Checker<'a> {
                     let site = self.ast.expr_span(u.site).unwrap_or(span);
                     return Err(diag!(
                         Code::TypeMismatch, site, 0,
-                        "`@use` field `{name}` of `{fname}` goes after {} explicit argument(s), not {}",
+                        "`@ctx` field `{name}` of `{fname}` goes after {} explicit argument(s), not {}",
                         field.before, u.at;
-                        note: "an explicit `@use` argument precedes the explicit argument that follows its parameter"
+                        note: "an explicit `@ctx` argument precedes the explicit argument that follows its parameter"
                     ));
                 }
                 let want = if parts.is_empty() { req } else { parts[i] };
@@ -435,7 +546,7 @@ impl<'a> Checker<'a> {
             .skip(1)
             .flat_map(|(d, s)| s.iter().map(move |(n, t)| (d, *n, *t)))
             .collect();
-        // A bundle requirement (a callee with several `@use` fields) is resolved
+        // A bundle requirement (a callee with several instance fields) is resolved
         // component by component, so each component's head is wanted. So is every
         // head an instance of those needs as its own context, which resolving the
         // instance searches for next (`IFilter (Set t)` needs `IOrd t`).
@@ -489,7 +600,7 @@ impl<'a> Checker<'a> {
 
     // Note [Ctx resolution fixpoint]
     //
-    // A `@use` requirement is resolved by its type, but at the use site that
+    // An instance requirement is resolved by its type, but at the use site that
     // type is usually still a variable: in `max_of 3 7` the requirement is
     // `IOrd a` until something says what `a` is. So a use only plans the
     // requirement (`plan_ctx`), and resolution waits for the definition
@@ -599,7 +710,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// A several-field `@use` bundle some of whose fields an explicit argument
+    /// A several-field instance bundle some of whose fields an explicit argument
     /// gave: those are used as written, the rest are searched.
     fn resolve_partly_given(
         &mut self,
@@ -878,7 +989,7 @@ impl<'a> Checker<'a> {
             self.show(req)
         )
         .with_help(
-            "annotate the call so its type is known, or declare a `@use` field of that type \
+            "annotate the call so its type is known, or declare a `@ctx` field of that type \
              on the enclosing definition so the context is passed in",
         )
     }
@@ -899,20 +1010,20 @@ impl<'a> Checker<'a> {
         ))
     }
 
-    /// A call of `fname` passing `value` as its `@use` field for `req`. An
-    /// operator is written in its function form, `(+) @use {.d = v} a b`, since
+    /// A call of `fname` passing `value` as its `@ctx` field for `req`. An
+    /// operator is written in its function form, `(+) @ctx {.d = v} a b`, since
     /// the infix form has no place for an explicit argument.
     fn explicit_use_call(&self, fname: StrId, req: Type, value: &str) -> String {
         let field = self.use_field_hint(fname, req);
         let name = fname.as_str();
         if name.bytes().next().is_some_and(crate::lexer::data::is_operator_char) {
-            format!("({name}) @use {{.{field} = {value}}} a b")
+            format!("({name}) @ctx {{.{field} = {value}}} a b")
         } else {
-            format!("{name} @use {{.{field} = {value}}} ...")
+            format!("{name} @ctx {{.{field} = {value}}} ...")
         }
     }
 
-    /// The name of `fname`'s `@use` field whose type has `req`'s head, for a
+    /// The name of `fname`'s instance field whose type has `req`'s head, for a
     /// diagnostic's suggested explicit argument; `field` when it cannot tell.
     fn use_field_hint(&self, fname: StrId, req: Type) -> String {
         let sig = self.global_ctx.get(&fname).copied();

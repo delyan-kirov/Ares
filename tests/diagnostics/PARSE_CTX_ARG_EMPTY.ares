@@ -1,0 +1,4 @@
+$ @mod PARSE_CTX_ARG_EMPTY
+
+$ same : @ctx {t: @Type, d: IEq t} -> t -> Bool = \x => d.eq x x
+$ r : Bool = same @ctx {} 1  #~ error[UNEXPECTED_TOKEN]: a `@ctx` argument supplies at least one field

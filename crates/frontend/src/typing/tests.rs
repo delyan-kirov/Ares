@@ -84,7 +84,7 @@ $ P : @Type = @struct @extern \"C\" v: P,
 $ x : @Int = 1",
         // a blessed interface declared outside CORE
         "$ @mod M
-$ @IRange : (a: @Type) -> (b: @Type) -> @Type = @struct range: a -> a -> b,
+$ @IRange : (a: @Type) -> (b: @Type) -> @Class = @struct range: a -> a -> b,
 $ x : @Int = 1",
     ];
     for src in cases {
@@ -281,8 +281,8 @@ fn a_name_defined_twice_is_an_error() {
 #[test]
 fn an_interface_covers_several_types() {
     let src = "$ @mod M\n\
-                   $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                   $ bump : @ctx {t: @Type} -> @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
+                   $ IBump : (t: @Type) -> @Class = @struct bump: t -> t,\n\
+                   $ bump : @ctx {t: @Type, d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x + 1 }\n\
                    $ bump_str : IBump @Str = .{ .bump = \\x => x ++ \"!\" }\n\
                    $ a : @Int = bump 3\n\
@@ -318,8 +318,8 @@ fn sized_literal_arithmetic_takes_the_result_type() {
 #[test]
 fn a_type_with_no_instance_is_reported() {
     let src = "$ @mod M\n\
-                   $ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                   $ bump : @ctx {t: @Type} -> @use {d: IBump t} -> t -> t = \\x => d.bump x\n\
+                   $ IBump : (t: @Type) -> @Class = @struct bump: t -> t,\n\
+                   $ bump : @ctx {t: @Type, d: IBump t} -> t -> t = \\x => d.bump x\n\
                    $ bump_int : IBump @Int = .{ .bump = \\x => x }\n\
                    $ bad = bump 1.0";
     assert!(errors(src).contains("no value of type `IBump @Float64`"), "{}", errors(src));
@@ -335,16 +335,16 @@ fn an_operator_suggests_its_function_form_for_an_explicit_instance() {
     };
     let m = "$ @mod M\n$ Money : @Type = @struct c: @Int,\n";
     let missing = helps(&format!("{m}$ m : Money = Money.{{1}} + Money.{{2}}"));
-    assert!(missing.contains("`(+) @use {.d = value} a b`"), "{missing}");
+    assert!(missing.contains("`(+) @ctx {.d = value} a b`"), "{missing}");
     let several = helps(&format!(
         "{m}$ add_a : IAdd Money = .{{ .add = \\a b => a }}\n\
          $ add_b : IAdd Money = .{{ .add = \\a b => b }}\n\
          $ m : Money = Money.{{1}} + Money.{{2}}"
     ));
-    assert!(several.contains("`(+) @use {.d = add_a} a b`"), "{several}");
-    let named = "$ @mod M\n$ IBump : (t: @Type) -> @Type = @struct bump: t -> t,\n\
-                 $ bump : @ctx {t: @Type} -> @use {b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
-    assert!(helps(named).contains("`bump @use {.b = value} ...`"), "{}", helps(named));
+    assert!(several.contains("`(+) @ctx {.d = add_a} a b`"), "{several}");
+    let named = "$ @mod M\n$ IBump : (t: @Type) -> @Class = @struct bump: t -> t,\n\
+                 $ bump : @ctx {t: @Type, b: IBump t} -> t -> t = \\x => b.bump x\n$ y : @Float64 = bump 1.0";
+    assert!(helps(named).contains("`bump @ctx {.b = value} ...`"), "{}", helps(named));
 }
 
 #[test]
@@ -940,7 +940,7 @@ fn equality_needs_an_instance() {
 /// undeclared one has nothing to resolve, and says so instead of inventing a type.
 #[test]
 fn generic_comparison_declares_its_context() {
-    let src = "$ @mod M\n$ eq : @ctx {a: @Type} -> @use {d: IEq a} -> a -> a -> Bool = \\x y => d.eq x y";
+    let src = "$ @mod M\n$ eq : @ctx {a: @Type, d: IEq a} -> a -> a -> Bool = \\x y => d.eq x y";
     assert_eq!(errors(src), "");
     assert_eq!(type_of(src, "eq"), "a -> a -> Bool");
 

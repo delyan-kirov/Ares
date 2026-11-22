@@ -1,0 +1,5 @@
+$ @mod CTX_INSTANCE_IN_OWN_CTX
+
+# A constructor's `@ctx` binds what unification solves: it takes no instance.
+$ Tagged : (t: @Type) -> @Type = @union
+    Tag: @ctx {d: IEq t} -> t -> Tagged t,  #~ error[UNEXPECTED_TOKEN]: a constructor takes no instance

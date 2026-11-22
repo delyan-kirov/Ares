@@ -1192,13 +1192,6 @@ impl<'a> Checker<'a> {
                 Ok(t)
             }
 
-            // A `@use {...}` reaching inference on its own is misplaced: it is only
-            // meaningful as an argument of a call, which `infer_app` takes off the
-            // spine before the head is inferred.
-            Expr::UseArg(_) => Err(diag!(
-                Code::TypeMismatch, self.ast.expr_span(e).unwrap_or(Span::at(0)), 0,
-                "a `@use {{...}}` argument stands only among a call's arguments"
-            )),
             Expr::CtxArg(_) => Err(diag!(
                 Code::TypeMismatch, self.ast.expr_span(e).unwrap_or(Span::at(0)), 0,
                 "a `@ctx {{...}}` argument stands only among a call's arguments"
@@ -1462,23 +1455,22 @@ impl<'a> Checker<'a> {
         args_rev.reverse();
         let args = args_rev;
 
-        // Explicit `@use {.f = e}` arguments come off the spine and are registered
+        // Explicit `@ctx {.f = e}` arguments come off the spine and are registered
         // against the head's reference site, which is where the context is planned.
         // Each remembers how many explicit arguments precede it, which must be
         // where its fields' parameters stand.
-        let (mut uses, mut ctxs) = (Vec::new(), Vec::new());
+        let mut ctxs = Vec::new();
         let mut explicit = Vec::with_capacity(args.len());
         for a in args {
             match self.node(a) {
-                Expr::UseArg(inits) => uses.push(UseOverride { at: explicit.len() as u32, inits: *inits, site: a }),
-                Expr::CtxArg(inits) => ctxs.push(UseOverride { at: explicit.len() as u32, inits: *inits, site: a }),
+                Expr::CtxArg(inits) => {
+                    let inits = self.ast.slice(*inits).to_vec();
+                    ctxs.push(UseOverride { at: explicit.len() as u32, inits, site: a });
+                }
                 _ => explicit.push(a),
             }
         }
         let args = explicit;
-        if !uses.is_empty() {
-            self.ctx_override.insert(head, uses);
-        }
         if !ctxs.is_empty() {
             self.ctx_given.insert(head, ctxs);
         }
@@ -1525,10 +1517,7 @@ impl<'a> Checker<'a> {
         }
 
         let tf = self.infer(head)?;
-        if let Some(uses) = self.ctx_override.remove(&head) {
-            return Err(self.use_without_fields(head, &uses));
-        }
-        if let Some(given) = self.ctx_given.remove(&head) {
+        if let Some(given) = self.ctx_override.remove(&head).or_else(|| self.ctx_given.remove(&head)) {
             return Err(self.ctx_without_fields(head, &given));
         }
         self.apply_args(head, tf, &args, expected)
@@ -1651,7 +1640,7 @@ impl<'a> Checker<'a> {
     // use, as with GHC's MonoLocalBinds and OutsideIn(X). A local used at two
     // types is a mismatch at the second use. Generalizing a local would quantify
     // over metavariables the enclosing definition is still solving (a postponed
-    // size equation, a pending `@use`), which is why GHC gave it up; with
+    // size equation, a pending instance), which is why GHC gave it up; with
     // dependent types the binder a polymorphic local needs is written, not
     // inferred. A global's signature names its variables, so its quantifiers
     // are written already.
@@ -1743,11 +1732,12 @@ impl<'a> Checker<'a> {
                     "`{m}.{name}` is private to module `{m}` and cannot be used from another module"
                 ));
             }
-            // A qualified reference to a `@use`-bearing function plans its context
+            // A qualified reference to a context-taking function plans its context
             // just like a bare one, so `LA.dot u v` injects its dictionary rather
             // than staying an under-applied function.
             let given = self.ctx_given.remove(&site);
             let sig = self.qualified_ctx_sigs.get(&(m, name)).copied();
+            let given = self.split_given(site, self.qualified_ctx.get(&(m, name)).copied(), given);
             if given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty()) {
                 let uses = self.qualified_ctx.contains_key(&(m, name));
                 return self.infer_ctx_given(site, name, sig, uses, false, &given.unwrap_or_default());
@@ -1783,13 +1773,14 @@ impl<'a> Checker<'a> {
                 self.resolved_calls.insert(site, m);
             }
         }
-        // A reference to a `@use`-bearing global (not shadowed by a local of the
+        // A reference to a context-taking global (not shadowed by a local of the
         // same name): instantiate its signature and requirement type with one shared
         // variable map and plan the context. The returned type is the plain arrow, so
         // callers apply only the explicit parameters.
         if !self.shadowed_locally(name) {
             let given = self.ctx_given.remove(&site);
             let sig = self.ctx_sigs.get(&name).copied();
+            let given = self.split_given(site, self.global_ctx.get(&name).copied(), given);
             let ambiguous = !self.local_defs.contains(&name) && self.ambiguous_imports.contains_key(&name);
             if !ambiguous && (given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty())) {
                 let uses = self.global_ctx.contains_key(&name);
@@ -2080,7 +2071,7 @@ impl<'a> Checker<'a> {
 
         // Pin the instantiated parameters to the expected type BEFORE checking the
         // fields, so a field's declared type (e.g. `a`) is the actual parameter
-        // variable rather than a fresh placeholder. This lets a value-position `@use`
+        // variable rather than a fresh placeholder. This lets a value-position context
         // dictionary in a field resolve by type (`.fst = blank` picks `blank : a`).
         if let Some(exp) = expected {
             self.unifier.unify_expected(result, exp, "against the expected type")?;

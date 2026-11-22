@@ -1,0 +1,7 @@
+$ @mod INSTANCE_NOT_SMALLER
+
+# An instance's own requirements are smaller than the type it provides, so the
+# search for them terminates (the Paterson conditions).
+$ IShow : (t: @Type) -> @Class = @struct show: t -> @Str,
+$ Box : (t: @Type) -> @Type = @struct item: t,
+$ show_box : @ctx {t: @Type, d: IShow (Box t)} -> IShow (Box t) = .{ .show = \b => d.show b }  #~ error[TYPE_MISMATCH]: the instance `show_box` needs `IShow (Box t)`, which is not smaller than the `IShow (Box t)` it provides

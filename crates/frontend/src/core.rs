@@ -31,7 +31,7 @@ pub struct CoreProgram {
     /// struct values across the `@extern` boundary. Same across every module (the
     /// resolver aggregates them); the IR lowering merges duplicates by name.
     pub crepr_layouts: Vec<(StrId, utilities::CLayout)>,
-    /// The globals that declare `@use` fields, which is the leading lambda
+    /// The globals that declare instance fields, which is the leading lambda
     /// of their body. Bare names in a module's own program, `MOD.name` keys once
     /// [`crate::ir::lower_modules`] has merged the modules. Read by
     /// [`crate::passes::specialize`].

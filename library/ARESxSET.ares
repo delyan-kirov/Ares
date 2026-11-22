@@ -22,14 +22,14 @@ $ Set : (t: @Type) -> @Type = @struct
 # `is_empty`, `has`, `remove`, `from_list`, `to_list` (ascending), `fold` (`f
 # acc x`, ascending), `filter` and `merge` (the union).
 
-$ add : @ctx { t: @Type } -> @use { o: IOrd t } -> t -> Set t -> Set t = \x s =>
+$ add : @ctx { t: @Type, o: IOrd t } -> t -> Set t -> Set t = \x s =>
     Set.{ .m = insert x {} s.m }
 
-$ inter : @ctx { t: @Type } -> @use { o: IOrd t } -> Set t -> Set t -> Set t = \b a =>
+$ inter : @ctx { t: @Type, o: IOrd t } -> Set t -> Set t -> Set t = \b a =>
     filter (\x => has x b) a
 
 # Elements of `a` not in `b`.
-$ diff : @ctx { t: @Type } -> @use { o: IOrd t } -> Set t -> Set t -> Set t = \b a =>
+$ diff : @ctx { t: @Type, o: IOrd t } -> Set t -> Set t -> Set t = \b a =>
     filter (\x => not (has x b)) a
 
 # ---- the collection interfaces ----
@@ -37,17 +37,17 @@ $ diff : @ctx { t: @Type } -> @use { o: IOrd t } -> Set t -> Set t -> Set t = \b
 $ impl_INew_for_Set : @ctx { t: @Type } -> INew (Set t) = .{ .new = \u => Set.{ .m = new {} } }
 $ impl_ILen_for_Set : @ctx { t: @Type } -> ILen (Set t) = .{ .len = \s => len s.m }
 $ impl_IEmpty_for_Set : @ctx { t: @Type } -> IEmpty (Set t) = .{ .is_empty = \s => is_empty s.m }
-$ impl_IHas_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IHas (Set t) t =
+$ impl_IHas_for_Set : @ctx { t: @Type, o: IOrd t } -> IHas (Set t) t =
     .{ .has = \s x => has x s.m }
-$ impl_IRemove_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IRemove (Set t) t =
+$ impl_IRemove_for_Set : @ctx { t: @Type, o: IOrd t } -> IRemove (Set t) t =
     .{ .remove = \s x => Set.{ .m = remove x s.m } }
-$ impl_IFromList_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IFromList (Set t) (@Vec t) =
+$ impl_IFromList_for_Set : @ctx { t: @Type, o: IOrd t } -> IFromList (Set t) (@Vec t) =
     .{ .from_list = \xs => foldl (\s x => add x s) Set.{ .m = new {} } xs }
 $ impl_IToList_for_Set : @ctx { t: @Type } -> IToList (Set t) (@Vec t) =
     .{ .to_list = \s => keys s.m }
 $ impl_IFold_for_Set : @ctx { t: @Type, a: @Type } -> IFold (Set t) a (a -> t -> a) =
     .{ .fold = \f acc s => fold (\a k u => f a k) acc s.m }
-$ impl_IFilter_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IFilter (Set t) (t -> Bool) =
+$ impl_IFilter_for_Set : @ctx { t: @Type, o: IOrd t } -> IFilter (Set t) (t -> Bool) =
     .{ .filter = \p s => Set.{ .m = filter (\k u => p k) s.m } }
-$ impl_IMerge_for_Set : @ctx { t: @Type } -> @use { o: IOrd t } -> IMerge (Set t) =
+$ impl_IMerge_for_Set : @ctx { t: @Type, o: IOrd t } -> IMerge (Set t) =
     .{ .merge = \a b => Set.{ .m = merge b.m a.m } }

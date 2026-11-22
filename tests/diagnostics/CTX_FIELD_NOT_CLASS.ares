@@ -1,0 +1,5 @@
+$ @mod CTX_FIELD_NOT_CLASS
+
+# Only a `@Class` is searched for: an ordinary record in a `@ctx` is an error.
+$ Show : (t: @Type) -> @Type = @struct show: t -> @Str,
+$ show : @ctx {t: @Type, d: Show t} -> t -> @Str = \x => d.show x  #~ error[TYPE_MISMATCH]: `@ctx` field `d` of `show` is a `Show t`, which instance search never looks for
