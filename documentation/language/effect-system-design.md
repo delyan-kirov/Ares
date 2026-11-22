@@ -718,7 +718,7 @@ Status legend: [X] done, [~] in progress, [ ] planned.
     Go-style surface; desugars to the internal `%finally` intrinsic). `initially`
     and the stored-then-dropped case remain unaddressed.
   - Effect **surface syntax** **DECIDED 2026-06-27**; see section 12 and the
-    language reference (documentation/language/language-reference.md section 8). `@effect` declaration; `do ... is k ... is ... else
+    language reference (documentation/language/language-reference.md section 8). Effect declaration (`@Effect` kind, #574); `do ... is k ... is ... else
     ...`; no `perform` (call the operation), no `resume` (apply the first-class `k`);
     unit `{}`.
   - **Named handlers** vs pure effect-label dispatch; `mask`.
@@ -767,8 +767,8 @@ The M2 (untyped) surface. The current implemented surface is in the language
 reference (documentation/language/language-reference.md section 8). Chosen to reuse Ares's existing grammar and spend as few keywords as possible;
 the result is **closest to Flix**.
 
-- **Declaration.** `$ Eff : @Effect = op : A -> B, ...` an `@effect` annotation
-  parallel to `@struct` / `@union`. Effect = TypeName, operations = lowercase
+- **Declaration.** `$ Eff : @Effect = op : A -> B, ...`, the kind `@Effect`
+  saying the body lists operations, as `@struct` / `@union` introduce theirs. Effect = TypeName, operations = lowercase
   vars. Each op is `arg-type -> resume-type`; every op takes exactly one argument
   and names one result. The new **unit** type/value `{}` (empty record, added to
   the language for this) spells "no argument" / "no result".
@@ -791,7 +791,7 @@ the result is **closest to Flix**.
   `Eff.op a`), which no pattern does, so the parser tells the two apart without a
   marker (#232 replaced the earlier `else x => e`). Handlers are deep (section 3).
 
-Net new keywords: `@effect`, `do`, `is`; all
+Net new keywords: `do`, `is` (and the kind `@Effect`); all
 contextual. `is` is borrowed from Koka and reserved as the slot for a future
 `fun` (tail-resumptive, no-capture) clause kind see section 6.
 

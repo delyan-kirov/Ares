@@ -101,7 +101,7 @@ not imported has no instance, so import the parts whose types you use.
 
 `@IO` is the one builtin effect, the outside world, and every IO function and
 `C` binding that touches it is `<@IO>`. A finer effect (a GPU, a log) is an
-ordinary `@effect` whose handler discharges into `@IO`.
+ordinary effect (`$ Gpu : @Effect = ...`) whose handler discharges into `@IO`.
 
 ### The map
 
