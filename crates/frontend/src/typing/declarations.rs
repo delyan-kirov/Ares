@@ -77,6 +77,9 @@ impl<'a> Checker<'a> {
         let mut cur = sig;
         while let Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
             let Some(kind) = self.kind_of_ast(*from) else {
+                if self.is_effect_kind(*from) {
+                    return Err(label_variable(self.ast.ty_span(*from)));
+                }
                 return Err(dependent_only(self.ast.ty_span(*from), "a type parameter that is a value"));
             };
             kinds.push(kind);
@@ -108,6 +111,11 @@ impl<'a> Checker<'a> {
             t if named(t, "@Row") => Some(ParamKind::Row),
             _ => None,
         }
+    }
+
+    /// Whether a binder's written type is `@Effect`: it stands for one effect.
+    pub(super) fn is_effect_kind(&self, ty: Aol<Ty>) -> bool {
+        matches!(self.ast.ty(ty), Ty::Con { module: None, name } if name.as_str() == "@Effect")
     }
 
     /// The names of a type declaration's binders, an unnamed index called
@@ -1774,4 +1782,13 @@ struct LevelDecl {
     members: Vec<(Vec<Aol<Ty>>, Option<Slice<UseField>>)>,
     effect: bool,
     span: Span,
+}
+
+/// A binder of kind `@Effect`, a variable standing for one effect of a row.
+pub(super) fn label_variable(span: Option<Span>) -> Diagnostic {
+    diag!(
+        Code::Unsupported, span.unwrap_or(Span::at(0)), 0,
+        "a variable of kind `@Effect` is not supported yet";
+        note: "a row holds named effects; a row variable stands for any others, as in `@ctx {{e: @Row}} -> ... -> <A | e> B`"
+    )
 }

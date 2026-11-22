@@ -781,6 +781,24 @@ fn effect_operation_names_must_be_lowercase() {
 }
 
 #[test]
+fn effect_declared_by_its_kind() {
+    let ops = |src: &str| {
+        let p = prog(src);
+        let items = p.ast.slice(p.program.items).to_vec();
+        match items.last() {
+            Some(Item::Effect { ops, params, .. }) => (p.ast.slice(*ops).len(), p.ast.slice(*params).len()),
+            _ => panic!("expected an effect"),
+        }
+    };
+    assert_eq!(ops("$ @mod M\n$ E : @Effect = {}"), (0, 0));
+    assert_eq!(ops("$ @mod M\n$ E : @Effect = get : {} -> @Int, put : @Int -> {},"), (2, 0));
+    assert_eq!(ops("$ @mod M\n$ E : (s: @Type) -> (e: @Row) -> @Effect =\n    get : {} -> s,"), (1, 2));
+    assert!(parse("$ @mod M\n$ E : @Type = @effect get : {} -> @Int").is_err());
+    assert!(parse("$ @mod M\n$ E : @Type = get : {} -> @Int").is_err());
+    assert!(parse("$ @mod M\n$ e : @Effect = get : {} -> @Int").is_err());
+}
+
+#[test]
 fn negative_literal_patterns() {
     let p = prog("$ @mod M\n$ f = \\ | -1 => 0 | -5 ... -2 => 1 | -1.5 => 2 | 3 ... => 3");
     let Expr::Lambda { body, .. } = p.ast.expr(only_def_body(&p)) else {

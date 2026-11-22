@@ -1,0 +1,4 @@
+$ @mod PARSE_EFFECT_BODY
+
+# An effect's body is its operations, or `{}` for none.
+$ Nothing : @Effect = 3  #~ error[UNEXPECTED_TOKEN]: expected an effect's operations

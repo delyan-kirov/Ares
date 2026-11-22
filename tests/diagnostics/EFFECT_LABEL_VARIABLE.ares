@@ -1,0 +1,4 @@
+$ @mod EFFECT_LABEL_VARIABLE
+
+# A variable standing for one effect waits for label variables in rows.
+$ f : @ctx {l: @Effect, e: @Row} -> ({} -> <e> @Int) -> <e> @Int = \g => g {}  #~ error[UNSUPPORTED]: a variable of kind `@Effect` is not supported yet

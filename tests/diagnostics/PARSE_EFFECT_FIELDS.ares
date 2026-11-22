@@ -1,0 +1,4 @@
+$ @mod PARSE_EFFECT_FIELDS
+
+# A list of operations is an effect's body, under the kind `@Effect`.
+$ State : @Type = get : {} -> @Int, put : @Int -> {}  #~ error[UNEXPECTED_TOKEN]: a list of `name : Type` operations declares an effect

@@ -1334,6 +1334,7 @@ $ safeDiv : @Int -> @Int -> @Int = \a b =>
 
 Generator (resume once per yield, summing results):
 ```ares
+$ Yield : @Effect = yield : @Int -> {},
 $ sumGen : ({} -> <Yield> {}) -> @Int = \gen =>
 	do gen {}
 	is k | Yield.yield v => v + k {}
@@ -1347,6 +1348,7 @@ before use, which is what coroutines need. Handlers are deep (a resumed
 computation is still governed by the same handler).
 
 ```ares
+$ Yield : @Effect = yield : @Int -> {},
 $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task }
 $ spawn : ({} -> <Yield> {}) -> Task = \t =>
 	do t {}
@@ -1358,6 +1360,7 @@ Resuming more than once runs the rest of the computation once per resume, each o
 its own copy, which is what nondeterminism and backtracking are:
 
 ```ares
+$ Amb : @Effect = flip : {} -> Bool,
 $ sum_all : ({} -> <Amb> @Int) -> @Int = \body =>
 	do body {}
 	is k | Amb.flip u => k true + k false        # both branches

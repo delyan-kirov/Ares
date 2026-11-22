@@ -251,6 +251,10 @@ impl<'a> Checker<'a> {
             if self.kind_of_ast(f.ty).is_some() {
                 continue;
             }
+            if self.is_effect_kind(f.ty) {
+                self.errors.push(label_variable(Some(f.span)));
+                continue;
+            }
             let written = self.ast.ty_source(f.ty).unwrap_or_else(|| "T".into());
             let mut head = f.ty;
             while let Ty::App(h, _) = self.tnode(head) {
@@ -648,11 +652,14 @@ impl<'a> Checker<'a> {
     /// Elaborate an effect row: each entry's label extended onto the tail. The
     /// tail is the written one together with one per `!X` entry still waiting to
     /// be spliced (all one row variable), or the closed row when there is none.
+    /// Each label is an effect, of kind `@Effect`; a `foreign` row, one an
+    /// import's declarations wrote, may name effects this module does not see.
     pub(super) fn row_of_ast(
         &mut self,
         entries: Slice<RowEntry>,
         tail: Option<StrId>,
         span: Option<Span>,
+        foreign: bool,
         tvars: &mut HashMap<StrId, Type>,
     ) -> Type {
         let ast = self.ast;
@@ -680,6 +687,12 @@ impl<'a> Checker<'a> {
                 ));
                 continue;
             }
+            if !foreign {
+                if let Some(d) = self.not_an_effect(name, entry.span) {
+                    self.defer_type_error(d);
+                    continue;
+                }
+            }
             let args = self.effect_label_args(name, ast.slice(entry.args), entry.span, tvars);
             labels.push((name, args));
         }
@@ -698,6 +711,28 @@ impl<'a> Checker<'a> {
             row = self.unifier.types.row_extend_args(label, args, row);
         }
         row
+    }
+
+    /// Why the row label `name` is not an effect: it is a type, or nothing
+    /// declared here or imported. `None` for an effect.
+    fn not_an_effect(&self, name: StrId, span: Span) -> Option<Diagnostic> {
+        let own = self.effect_self.is_some_and(|(e, _)| e == name);
+        if own || self.effect_arity.contains_key(&name) || BUILTIN_EFFECTS.contains(&name.as_str()) {
+            return None;
+        }
+        if self.is_known_type(name) {
+            return Some(diag!(
+                Code::TypeMismatch, span, 0,
+                "`{name}` is a type, not an effect";
+                note: "an effect row holds effects, whose kind is `@Effect`, not `@Type`"
+            ));
+        }
+        let d = diag!(Code::TypeUnbound, span, 0, "unknown effect `{name}`");
+        let known = self.effect_arity.keys().map(|k| k.as_str()).chain(BUILTIN_EFFECTS.iter().copied());
+        Some(match utilities::error::closest(name.as_str(), known) {
+            Some(n) => d.with_fix(format!("did you mean `{n}`?"), vec![Edit::new(span, n)], Applicability::MaybeIncorrect),
+            None => d.with_note("an effect is declared `$ Name : @Effect = op : Type, ...` here or in an imported module"),
+        })
     }
 
     /// The type arguments of effect label `name` written with `args`. Omitted
@@ -917,7 +952,14 @@ impl<'a> Checker<'a> {
         };
         let name = *name;
         if !self.is_known_type(name) && self.unknown_type.is_none() {
-            let mut d = self.unknown_type(name);
+            let mut d = match self.effect_arity.contains_key(&name) || BUILTIN_EFFECTS.contains(&name.as_str()) {
+                true => diag!(
+                    Code::TypeMismatch, Span::at(0), 0,
+                    "`{name}` is an effect, not a type";
+                    note: "an effect has kind `@Effect` and labels an effect row, as in `A -> <{name}> B`"
+                ),
+                false => self.unknown_type(name),
+            };
             if let Some(span) = self.ast.ty_span(ty) {
                 d = d.fill_span(span);
             }
@@ -1111,7 +1153,10 @@ impl<'a> Checker<'a> {
                 };
                 // An unannotated arrow is pure.
                 let eff = match effect {
-                    Some(row) => self.row_of_ast(row.entries, row.tail, row.tail_span, tvars),
+                    Some(row) => {
+                        let foreign = self.foreign_tys.contains(&ty);
+                        self.row_of_ast(row.entries, row.tail, row.tail_span, foreign, tvars)
+                    }
                     None => self.unifier.types.row_empty(),
                 };
                 let f = match singleton {
