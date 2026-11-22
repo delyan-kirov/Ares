@@ -564,8 +564,10 @@ $ f32_to_f64 : @Float32 -> @Float64 = @extern "C" "arx_f2d" ""
 $ f64_to_f32 : @Float64 -> @Float32 = @extern "C" "arx_d2f" ""
 
 # Comparison, as interfaces. `IEq` is equality and `IOrd` is ordering, each with a
-# single operation, so `!=` is `eq` negated and `>` `<=` `>=` are `<` read the
-# other way round: a type needs only `eq` to compare and only `lt` to be ordered.
+# single operation, so `!=` is `==` negated and `>` `<=` `>=` are `<` read the
+# other way round, written through them so that what holds of one holds of the
+# others by computation: a type needs only `eq` to compare and only `lt` to be
+# ordered.
 # Signed integers order with `@ilt`, @Nat and the sized nats with `@ult` (a Nat
 # past the signed range would otherwise order wrong), floats with `@flt`, strings
 # lexicographically with `@slt`.
@@ -578,11 +580,11 @@ $ IEq : (t: @Type) -> @Class = @struct eq: t -> t -> Bool,
 $ IOrd : (t: @Type) -> @Class = @struct lt: t -> t -> Bool,
 
 $ (==) : @ctx { t: @Type, d: IEq t } -> t -> t -> Bool = \a b => d.eq a b
-$ (!=) : @ctx { t: @Type, d: IEq t } -> t -> t -> Bool = \a b => not (d.eq a b)
+$ (!=) : @ctx { t: @Type, d: IEq t } -> t -> t -> Bool = \a b => not (a == b)
 $ (<) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => d.lt a b
-$ (>) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => d.lt b a
-$ (<=) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => not (d.lt b a)
-$ (>=) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => not (d.lt a b)
+$ (>) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => b < a
+$ (<=) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => not (b < a)
+$ (>=) : @ctx { t: @Type, d: IOrd t } -> t -> t -> Bool = \a b => not (a < b)
 
 $ impl_IEq_for_int : IEq @Int = .{ .eq = \a b => @ieq a b }
 $ impl_IOrd_for_int : IOrd @Int = .{ .lt = \a b => @ilt a b }
