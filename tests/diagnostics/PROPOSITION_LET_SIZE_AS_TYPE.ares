@@ -1,0 +1,4 @@
+$ @mod PROPOSITION_LET_SIZE_AS_TYPE
+
+# A `let` of a size sizes a tensor, but is not a type of its own.
+$ a : @Int = let n = 3 in let x : n = 4 in 0  #~ error[TYPE_MISMATCH]: a size stands where a type is expected

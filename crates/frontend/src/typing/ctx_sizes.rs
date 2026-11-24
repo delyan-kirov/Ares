@@ -142,6 +142,10 @@ impl<'a> Checker<'a> {
                     _ => Err(dependent_only(span, "a level other than a number")),
                 }
             }
+            Expr::Var { module: None, name } if self.let_bound(name, &self.scoped_tvars).is_some() => {
+                let s = self.let_bound(name, &self.scoped_tvars).expect("guarded");
+                self.as_proposition(s, span)
+            }
             Expr::Var { module: None, name } if self.scoped_tvars.contains_key(&name) => Ok(self.scoped_tvars[&name]),
             Expr::Var { name, .. } if self.is_known_type(name) => Ok(self.unifier.types.con(name)),
             Expr::App(f, x) => {

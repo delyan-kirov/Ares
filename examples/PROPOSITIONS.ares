@@ -1,0 +1,43 @@
+$ @mod PROPOSITIONS
+
+# \file PROPOSITIONS.ares
+# \info Propositions `a ~ b` and their proofs (#539, #596). A `let` of a
+#       type, a size or a boolean stays transparent, so an annotation may
+#       name it, and a `@transp` motive may be a type-level function by name.
+
+$ @import ARESxALGO
+$ @import ARESxLA
+
+$ Pos : (n: @Nat) -> @Type 0 = 0 < n
+$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b
+
+# A motive by name, or applied to all its arguments but the last.
+$ pos_along : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> Pos m = \q p => @transp n Pos p m q
+$ lt_along : (n: @Nat) -> (m: @Nat) -> n ~ m -> 2 < n -> Lt 2 m = \q p => @transp n (Lt 2) p m q
+
+$ three : Pos 3 = pos_along 3 3 (@refl 3) (@refl true)
+
+# A `let` of a type names it in the annotations of its body.
+$ bump : @Int -> @Int = \y =>
+    let t = @Int in
+    let inc = \(x: t) => x + 1 in
+    let z : t = inc y in
+    z
+
+$ twice : @Int -> @Int = \y =>
+    let endo = @Int -> @Int in
+    let f : endo = \x => x * 2 in
+    f y
+
+# A `let` of a size sizes a tensor, and one of a boolean is a proposition.
+$ total : @Int =
+    let n = 3 in
+    let v : @Tensor n @Int = [1, 2, 3] in
+    let small = n < 4 in
+    let p : small = @refl true in
+    v.[0] + v.[1] + v.[2]
+
+$ test : @Int =
+    (if bump 4 == 5 => 0 else 1) + (if twice 4 == 8 => 0 else 2) + (if total == 6 => 0 else 4)
+
+$ !assert (test == 0) "PROPOSITIONS: a check failed"

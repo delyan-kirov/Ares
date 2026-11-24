@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_LET_RUNTIME_TYPE
+
+# A `let` is transparent in a type only when the checker evaluates its
+# value; `t` holds a parameter, known only at run time.
+$ f : @Int -> @Int = \y => let t = y in let x : t = 4 in 0  #~ error[UNSUPPORTED]: a run-time value in a type
