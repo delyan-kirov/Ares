@@ -43,7 +43,7 @@ The hashes live in the ledger only, where the test checks them.
 | SLK24 | Sirman, Lennon-Bertrand, Krishnaswami. Implementing a Type Theory with Observational Equality, Using NbE. TYPES 2024 | CC-BY 4.0 |
 | SLK24code | Sirman's implementation, `src/Conversion.hs` and `src/Eval.hs` | BSD-3-Clause |
 | smalltt | Kovács, smalltt `README.md` (glued evaluation) | MIT |
-| Lean4 | also `quot.cpp`, `inductive.cpp`, `type_checker.cpp`, `Init/Prelude.lean`, `Init/Core.lean` | Apache-2.0 |
+| Lean4 | also `quot.cpp`, `inductive.cpp`, `type_checker.cpp`, `Init/Prelude.lean`, `Init/Core.lean`, `Lean/Util/CollectAxioms.lean` | Apache-2.0 |
 | Rocq | Rocq kernel, `kernel/uGraph.ml` | LGPL-2.1 |
 | GCST19 | Gilbert, Cockx, Sozeau, Tabareau. Definitional Proof-Irrelevance without K. POPL 2019 | CC-BY-NC-SA 4.0 |
 | nanoda | nanoda_lib, a Lean 4 kernel in Rust: `src/level.rs`, `src/tc.rs` | Apache-2.0 |

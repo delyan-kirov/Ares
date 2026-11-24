@@ -49,11 +49,22 @@ impl fmt::Display for RecheckError {
 
 type Result<T> = std::result::Result<T, String>;
 
-/// Re-check every global of `sig`, in order.
+/// Re-check every global of `sig`, in order, each reading only the globals
+/// it rests on.
+/// See Note [The axiom report is complete].
 pub fn recheck(sig: &Signature) -> std::result::Result<(), RecheckError> {
     for id in 0..sig.len() as GlobalId {
         let checker = Rechecker { sig, current: id };
-        checker.global(id).map_err(|message| RecheckError {
+        let (checked, read) = sig.recording(|| checker.global(id));
+        let unreported = || {
+            let rests_on = sig.rests_on(id);
+            let missed: Vec<String> = read.difference(&rests_on).map(|g| format!("`{}`", sig.global(*g).name)).collect();
+            if missed.is_empty() {
+                return Ok(());
+            }
+            Err(format!("reads {}, which its axiom report does not follow", missed.join(", ")))
+        };
+        checked.and_then(|()| unreported()).map_err(|message| RecheckError {
             global: sig.global(id).name.to_string(),
             message,
         })?;

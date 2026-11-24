@@ -83,6 +83,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Lean4-type-checker | The Lean 4 kernel, src/kernel/type_checker.cpp, commit 84c7f508f95c62aaa5049cf220f7279d3fcfde1a | https://github.com/leanprover/lean4/blob/84c7f508f95c62aaa5049cf220f7279d3fcfde1a/src/kernel/type_checker.cpp | Lean4/type_checker.cpp | 8bfd17c68b0abf76efdaa8c5ad250e7b9f5c87f35ca59a570df7acbcfea7785d | Apache-2.0 |
 | Lean4-Prelude | Lean 4, src/Init/Prelude.lean, commit 84c7f508f95c62aaa5049cf220f7279d3fcfde1a | https://github.com/leanprover/lean4/blob/84c7f508f95c62aaa5049cf220f7279d3fcfde1a/src/Init/Prelude.lean | Lean4/Prelude.lean | fa2c883cf69beadc203c1d9c33a72b750bf11959d9f460d7c2febfb390c63acd | Apache-2.0 |
 | Lean4-Core | Lean 4, src/Init/Core.lean, commit 84c7f508f95c62aaa5049cf220f7279d3fcfde1a | https://github.com/leanprover/lean4/blob/84c7f508f95c62aaa5049cf220f7279d3fcfde1a/src/Init/Core.lean | Lean4/Core.lean | c59ce725905c3878be557a5569ccbda9fa7affedfb28b2b930429eb245c1263c | Apache-2.0 |
+| Lean4-CollectAxioms | Lean 4, src/Lean/Util/CollectAxioms.lean (`#print axioms`), commit 84c7f508f95c62aaa5049cf220f7279d3fcfde1a | https://github.com/leanprover/lean4/blob/84c7f508f95c62aaa5049cf220f7279d3fcfde1a/src/Lean/Util/CollectAxioms.lean | Lean4/CollectAxioms.lean | b39bd22253a76816ee6d24284e69674d0b491be343fd71f9ee9376833d1485f6 | Apache-2.0 |
 | Rocq-uGraph | The Rocq kernel, kernel/uGraph.ml, commit dd62e3cfb7999a10b091000ec33b5c8a185b2326 | https://github.com/rocq-prover/rocq/blob/dd62e3cfb7999a10b091000ec33b5c8a185b2326/kernel/uGraph.ml | Rocq/uGraph.ml | 6bf3f594e16ca686f7144ff946f983cd264de6b299b71c32fc6a6de24d97425f | LGPL-2.1 |
 | nanoda-level | nanoda_lib, an independent Lean 4 type checker in Rust, src/level.rs, commit 0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929 | https://github.com/ammkrn/nanoda_lib/blob/0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929/src/level.rs | nanoda/level.rs | a1afb0638fd9f427c6e7693ea44498b9775bd619bb6fff3bdc44dc52f1d587ad | Apache-2.0 |
 | nanoda-tc | nanoda_lib, an independent Lean 4 type checker in Rust, src/tc.rs, commit 0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929 | https://github.com/ammkrn/nanoda_lib/blob/0da9f98feadd3a0a2ef4b3dbcf52a298a6fef929/src/tc.rs | nanoda/tc.rs | 1c74274ec2d979796f2dfa73e93d63db54cbb4ac388d283fda28e472dcd96781 | Apache-2.0 |
@@ -136,7 +137,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Glued evaluation | smalltt | README.md, Glued evaluation and Approximate conversion checking: top-level definitions unfold lazily, and one head on both sides compares spines first, unfolding when they differ | published-uncovered | - | yes |
 | Level comparison by case split | nanoda-level | level.rs:158-173, leq_imax_by_cases, the same split on a parameter being zero or not; soundness is Lean Level comparison soundness | published-uncovered | #479 | yes |
 | Recursor generation | Dyb94 | not checked: not vendored | published-uncovered | - | yes |
-| Transitive axioms | - | - | conjecture | #480 | yes |
+| Transitive axioms | Lean4-CollectAxioms | CollectAxioms.lean:37-72, `collect`: an axiom, the globals in a constant's type and value, and an inductive type's constructors (line 66); the kernel adds a type's projections and recursor to its constructors | published-uncovered | - | yes |
 | Level entailment | Flo62 | not checked: not vendored; longest paths over difference constraints between levels, for the frontend's `if` | published-uncovered | - | yes |
 | Local argument synthesis | PTu00 | not checked: not vendored | published-uncovered | - | yes |
 
@@ -160,8 +161,13 @@ type arguments. It changes no rule: the application is then checked again
 with the solutions, each solution by the re-checker and each argument by
 conversion, so a wrong guess can only reject a script.
 Transitive axioms is graph reachability over the globals each global's type
-and body name, proofs included; it is a conjecture only in that nothing proves
-those edges complete.
+and body name, proofs included, with an inductive type resting on the other
+globals its declaration gives, as Lean's `#print axioms` does. That the edges
+are complete (#480) is argued in Note [The axiom report is complete], in
+`crates/kernel/src/signature.rs`, and checked rather than proved: `recheck`
+fails when re-checking a global reads a global it does not rest on, so
+every re-checked script tests it, and `crates/kernel/tests/axioms.rs` checks
+that the re-check never resolves a name.
 
 ## Rules
 
