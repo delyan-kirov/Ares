@@ -571,9 +571,69 @@ $ Pair : @ctx {u: @l} -> (a: @Type u) -> (b: @Type u) -> @Type u = @struct fst: 
 $ Kinds : @Type 2 = @struct small: @Type 1,
 ```
 
-Levels range over 1 and up. `@Type 0`, the universe of propositions, and an
-`if` that lets a level reach it (`u >= 0`) come with propositions in the
-frontend (#406); the kernel already has them (16).
+Levels range over 1 and up, so a bare `@Type` and a level name range over
+data. `@Type 0` is the universe of propositions (3.13), written as a number;
+an `if` that lets a level reach it (`u >= 0`) waits for #406, and the kernel
+already has it (16).
+
+## 3.13 Propositions and equality `~`
+`a ~ b` is the proposition that `a` and `b` are equal. It is a type in
+`@Type 0`, the universe of propositions, and a value of it is a proof. The
+checker compares the two sides by computing them, so a proposition here
+compares values it can compute while it checks a type: sizes (`n + 1`, a
+`@Nat` constant), types (`@Int`, `@Tensor n a`) and booleans built from
+comparisons of sizes with `not`, `&&` and `||`. A value known only at run
+time (a parameter of type `@Int`) cannot stand in a proposition yet.
+
+A function type whose result is a proposition is a proposition, whatever
+its parameter: `(n: @Nat) -> n + 0 ~ n` is in `@Type 0`. A bare `@Type`
+ranges over data, so a proposition is passed where a `(t: @Type 0)` is
+expected, not a `(t: @Type)`.
+
+Three forms build proofs:
+
+- `@refl a` proves `a ~ a`, and so any `a ~ b` whose sides compute to one
+  value: `n + 0 ~ n`, `n + m ~ m + n` (sizes compare as polynomials).
+- `@transp t B u t2 e` moves a proof `u` of `B t` to `B t2` along
+  `e : t ~ t2`, where the motive `B` is a lambda `\z => P` returning a
+  proposition.
+- `@cast A B e x` moves `x : A` to `B` along `e : A ~ B`. With one argument,
+  `@cast x` is the integer cast (4.11).
+
+```ares
+$ zero_r : (n: @Nat) -> n + 0 ~ n = @refl n
+$ sym : (n: @Nat) -> (m: @Nat) -> n ~ m -> m ~ n = \e => @transp n (\k => k ~ n) (@refl n) m e
+$ retype : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Tensor n @Int -> @Tensor m @Int = \e v =>
+    @cast (@Tensor n @Int) (@Tensor m @Int) (@transp n (\k => @Tensor n @Int ~ @Tensor k @Int) (@refl (@Tensor n @Int)) m e) v
+```
+
+Booleans come first: `<`, `>`, `<=`, `>=`, `==` and `!=` stay `Bool`
+functions (4.4), and a `Bool` used where a type is expected is the
+proposition `b ~ true`. So a precondition is a comparison in the signature,
+and a caller whose arguments make it compute to `true` proves it with
+`@refl true`. There is no separate spelling such as Idris's `So b`: a
+`Bool` is never a type, so the reading is unambiguous, and `b ~ true` says
+the same thing explicitly. Every ordering is `<` read one way or the other
+(`a > b` is `b < a`, `a <= b` is `not (b < a)`), as CORE defines them, so a
+type prints its comparisons through `<` and `==`.
+
+```ares
+$ small : (n: @Nat) -> n < 10 -> @Int = \p => 1
+$ seven : @Int = small 7 (@refl true)
+$ Small : (n: @Nat) -> @Type 0 = n < 10
+```
+
+A `let` stays transparent: after `let n = 3`, the checker knows `n` is `3` in
+the propositions of the body.
+
+```ares
+$ ok : @Int = let n = 4 in let p : n < 5 = @refl true in 0
+```
+
+Proofs are erased: a proof is `{}` at run time and `@cast A B e x` is `x`, so
+a proof costs nothing. The checker does not check yet that a proof
+terminates (#546). A relation that cannot be decided, such as equality of
+reals, is a proposition of its own name rather than a `Bool`.
 
 ---
 
@@ -2089,8 +2149,8 @@ import). A brief map:
 Ares is becoming dependently typed, with observational equality (issue #406).
 The parser already reads the whole language: types are expressions, so any
 term may stand in a type position and a function type may stand in a term. The
-compiler's checker does not take types as terms yet; it rejects these forms
-(`UNSUPPORTED`). What checks them today is the observational kernel
+compiler's checker takes only some of them yet (types as values, sizes, and
+the propositions of 3.13); it rejects the rest (`UNSUPPORTED`). What checks them today is the observational kernel
 (`crates/kernel`, see `documentation/type-theory/kernel.md`), for modules in a
 project whose `BUILD.ares` sets `@option "check.checker" "kernel"`. There
 `ares check` and the language server hand the module to the kernel, which

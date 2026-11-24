@@ -1,0 +1,4 @@
+$ @mod PROPOSITION_MOTIVE
+
+# `@transp` moves a proof; a value of a type moves with `@cast`.
+$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Int = \e => @transp n (\k => @Tensor k @Int) 0 m e  #~ error[TYPE_MISMATCH]: a `@transp` motive returns a proposition

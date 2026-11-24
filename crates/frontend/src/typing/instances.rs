@@ -102,6 +102,15 @@ impl<'a> Checker<'a> {
                 Some(f) => (format!("`{}`", f.name), f.span, self.ast.ty_source(f.ty)),
                 None => ("a field".to_string(), self.ast.ty_span(ctx).unwrap_or_else(|| Span::at(0)), None),
             };
+            // A proposition field is proved, not searched for: that is #540.
+            if self.unifier.types.prop_eq_sides(self.unifier.resolve(part)).is_some() {
+                return Err(diag!(
+                    Code::Unsupported, span, 0,
+                    "`@ctx` field {field} of `{name}` is a proposition, which `@ctx` does not prove yet";
+                    note: "instance search looks only for `@Class` values; propositions in `@ctx` come with #540";
+                    help: "take the proof as a parameter after the `@ctx`, and pass one such as `@refl true`"
+                ));
+            }
             match self.ctx_head(part) {
                 Some(h) if self.is_class(h) => {}
                 Some(h) if self.is_nominal(h) => {

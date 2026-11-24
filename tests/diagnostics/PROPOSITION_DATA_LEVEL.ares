@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_DATA_LEVEL
+
+# A bare `@Type` ranges over data, at level 1 and up; a proposition is in `@Type 0`.
+$ id : (t: @Type) -> t -> t = \x => x
+$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)  #~ error[TYPE_MISMATCH]: universe level mismatch in the universe of a type variable: expected a level of 1 or more, found 0

@@ -1058,10 +1058,24 @@ impl<'a> Checker<'a> {
                 ));
                 self.unifier.fresh()
             }
+            // Rule [Frontend-Bool-Reflection]
+            Ty::Var(name) if !tvars.contains_key(name) && matches!(name.as_str(), ty::TRUE | ty::FALSE) => {
+                let b = self.unifier.types.bool_lit(name.as_str() == ty::TRUE);
+                let t = self.unifier.types.bool_lit(true);
+                self.unifier.types.prop_eq(b, t)
+            }
             Ty::Var(name) => {
                 let name = *name;
                 self.free_name(name, self.ast.ty_span(ty), tvars, ParamKind::Type)
             }
+            Ty::App(..) if self.is_negation(ty, tvars) => match self.negation_of(ty, tvars) {
+                Ok(t) => t,
+                Err(d) => {
+                    self.defer_type_error(d);
+                    let (a, b) = (self.unifier.fresh(), self.unifier.fresh());
+                    self.unifier.types.prop_eq(a, b)
+                }
+            },
             Ty::App(head, size) if matches!(self.tnode(*head), Ty::Con { module: None, name } if *name == SIZE_OF) => {
                 let size = self.size_ty_of_ast(*size, tvars);
                 let head = self.unifier.types.con(StrId::intern(SIZE_OF));
@@ -1104,6 +1118,24 @@ impl<'a> Checker<'a> {
                 let t = self.unifier.fresh();
                 self.wildcards.push((self.ast.ty_span(ty).unwrap_or(Span::at(0)), t));
                 t
+            }
+            // A proposition, or a boolean standing for `b ~ true`.
+            Ty::Term(e) if self.is_proposition_shaped(*e) => {
+                let e = *e;
+                match self.proposition_of(e, tvars) {
+                    Ok(t) => t,
+                    Err(d) => {
+                        let d = match self.ast.ty_span(ty) {
+                            Some(span) => d.fill_span(span),
+                            None => d,
+                        };
+                        self.defer_type_error(d);
+                        // A proposition still, so the error is not followed
+                        // by one about its universe.
+                        let (a, b) = (self.unifier.fresh(), self.unifier.fresh());
+                        self.unifier.types.prop_eq(a, b)
+                    }
+                }
             }
             Ty::Term(e) => {
                 if self.unknown_type.is_none() {

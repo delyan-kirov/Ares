@@ -1508,3 +1508,21 @@ fn unboxed_division_by_zero_faults() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("division by zero"));
 }
+
+#[test]
+fn proofs_are_erased_in_both_engines() {
+    // A proof parameter, a `@transp` and a `@cast` leave only the value they
+    // carry: the tensor comes back unchanged, its type moved along `n ~ m`.
+    let src = "$ @mod M
+$ retype : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Tensor n @Int -> @Tensor m @Int = \\e v =>
+    @cast (@Tensor n @Int) (@Tensor m @Int) (@transp n (\\k => @Tensor n @Int ~ @Tensor k @Int) (@refl (@Tensor n @Int)) m e) v
+$ small : (n: @Nat) -> n < 10 -> @Nat = \\p => n
+$ t : @Tensor 3 @Int = retype 3 (1 + 2) (@refl 3) [4, 5, 6]
+$ a : @Int = @tensor_index t 1 + @tensor_index t 2
+$ b : @Nat = small 7 (@refl true)
+";
+    assert_eq!(interp_show(src, "a"), "11");
+    assert_matches(src, "a");
+    assert_eq!(interp_show(src, "b"), "7");
+    assert_matches(src, "b");
+}

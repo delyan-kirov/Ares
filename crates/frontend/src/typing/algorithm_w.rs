@@ -571,6 +571,11 @@ impl<'a> Checker<'a> {
             // `Real`/`Real64`. The runtime value stays a `Real` and is narrowed to
             // the field/parameter width at the `@extern` boundary.
             Expr::Real(_) if self.is_float_type(expected) => Ok(()),
+            // A proof checks against the proposition it should prove.
+            Expr::App(..) if self.proof_call(e).is_some() => {
+                let got = self.app(e, Some(expected))?;
+                self.unifier.unify_expected(got, expected, "against the expected type")
+            }
             // `@cast x` reinterprets an integer operand at the expected width. It is
             // type-directed: the target integer type comes from the checking context.
             Expr::App(f, arg) if self.is_cast_head(*f) => {
@@ -856,6 +861,11 @@ impl<'a> Checker<'a> {
             Expr::Var { module: None, name } if name.as_str() == "_" => {
                 Err(dependent_only(self.ast.expr_span(e), "a value left to elaboration `_`"))
             }
+            // A proof form with no arguments: report its arity.
+            Expr::Var { module: None, .. } if self.proof_head(e, 0).is_some() => {
+                let form = self.proof_head(e, 0).expect("guarded");
+                self.proof_form(e, form, &[], None)
+            }
             Expr::Var { module, name } => {
                 let module = module.map(|m| m);
                 let name = *name;
@@ -893,6 +903,13 @@ impl<'a> Checker<'a> {
                 match op.as_str() {
                     "|>" if self.is_lambda(rhs) => return self.infer_applied_lambda(rhs, lhs),
                     "<|" if self.is_lambda(lhs) => return self.infer_applied_lambda(lhs, rhs),
+                    // A proposition where a value stands is a type, erased.
+                    "~" => {
+                        let tvars = self.scoped_tvars.clone();
+                        let prop = self.proposition_of(e, &tvars)?;
+                        self.type_terms.insert(e);
+                        return Ok(self.universe_holding(prop));
+                    }
                     _ => {}
                 }
                 // An operator that takes a context (`(+)` over `IArith t`) plans it
@@ -1476,6 +1493,10 @@ impl<'a> Checker<'a> {
         }
         let args = args;
 
+        if let Some(form) = self.proof_head(head, args.len()) {
+            return self.proof_form(e, form, &args, expected);
+        }
+
         // `@cast` is type-directed: its result width comes from the checking context,
         // handled in `check`. Reaching it here means it has no expected type.
         if self.is_cast_head(head) {
@@ -1676,6 +1697,7 @@ impl<'a> Checker<'a> {
         if let Some(decl) = &declared {
             self.unifier
                 .unify(*decl, value_ty, "in a recursive 'let' binding")?;
+            self.let_static(b.value, *decl);
         }
         if declared.is_none() {
             self.type_pattern(b.pat, value_ty)?;
@@ -2672,7 +2694,32 @@ pub(super) fn sig_var_sites(
             sig_var_sites(ast, *size, span, out, tails);
             sig_var_sites(ast, *elem, span, out, tails);
         }
-        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) | Ty::Term(_) => {}
+        // A proposition names the signature's variables as terms.
+        Ty::Term(e) => term_var_sites(ast, *e, span, out),
+        Ty::Con { .. } | Ty::Nat(_) | Ty::Unit | Ty::MetaE(..) => {}
+    }
+}
+
+/// The names a term written in a signature mentions, as [`sig_var_sites`]
+/// collects them.
+fn term_var_sites(ast: &Ast, e: Aol<Expr>, outer: Span, out: &mut Vec<(StrId, Span)>) {
+    let span = ast.expr_span(e).unwrap_or(outer);
+    match ast.expr(e) {
+        Expr::Var { module: None, name } => {
+            if !out.iter().any(|(n, _)| n == name) {
+                out.push((*name, span));
+            }
+        }
+        Expr::App(a, b) | Expr::BinOp { lhs: a, rhs: b, .. } => {
+            term_var_sites(ast, *a, span, out);
+            term_var_sites(ast, *b, span, out);
+        }
+        Expr::If { cond, then, alt } => {
+            for x in [*cond, *then, *alt] {
+                term_var_sites(ast, x, span, out);
+            }
+        }
+        _ => {}
     }
 }
 

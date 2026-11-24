@@ -1,0 +1,6 @@
+$ @mod PROPOSITION_REFL
+
+# `@refl a` proves `a ~ a`; the sides of `n < 10` (a boolean, read as
+# `n < 10 ~ true`) compute to different values at 30.
+$ small : (n: @Nat) -> n < 10 -> @Int = \p => 1
+$ a : @Int = small 30 (@refl true)  #~ error[TYPE_MISMATCH]: `@refl` proves a value equal to itself, but `30 < 10` and `true` do not compute to one value

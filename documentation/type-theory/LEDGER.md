@@ -228,6 +228,14 @@ that the re-check never resolves a name.
 | Frontend-Level-Polymorphism | ST14 | not checked: not vendored; the frontend checker's mirror of Level-Polymorphism, with constraints between levels stated by an `if` or inferred from the body | published-uncovered | - | - | yes |
 | Frontend-Data-Level | PLT25 | Section 4.1, the fields of an inductive definition in its universe; the frontend checker's mirror of Data-Form and Data-Ctor, for structs and unions | published | PLT25 Consistency | - | yes |
 | Frontend-Effect-Level | - | an effect, of kind `@Effect` and in no universe, has the level of the largest of its parameters' and its operations' types, and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
+| Frontend-Eq-Form | PT23 | Fig. 2, ∼-Form in Ω; the frontend checker's mirror of Eq-Form, for sides that are sizes, booleans or types, of one sort, two types at one level | published | PT23 Consistency | - | yes |
+| Frontend-Prop-Impredicative | PT23 | Fig. 2, Π-Form with ℛ(s, Ω) = Ω; a function type whose result is a proposition is a proposition | published | PT23 Consistency | - | yes |
+| Frontend-Refl | PT22 | Fig. 2, Refl; the frontend checker's mirror, with its conversion (unification, sizes as polynomials, booleans folded) | published | PT22 Normalisation | - | yes |
+| Frontend-Transport | PT22 | Fig. 2, Transport-Ω, with a non-dependent motive `\z => B` into propositions, checked at both ends | published | PT22 Normalisation | - | yes |
+| Frontend-Cast | PT22 | Fig. 2, Cast; erased, so the cast value is the value | published | PT22 Normalisation | - | yes |
+| Frontend-Let-Transparent | PT22 | Fig. 4, β-red; the frontend checker's mirror of Let, for a `let` of a size or a boolean | published | PT22 Normalisation | - | yes |
+| Frontend-Bool-Reflection | - | a boolean `b` where a type is expected is `b ~ true`, as SSReflect's `is_true` coercion; notation over Frontend-Eq-Form at `Bool` | conjecture | - | #406 | yes |
+| Frontend-Bool-Conversion | - | booleans in types compared after folding: comparisons of constant sizes or of a size with itself, and the connectives `not`, `&&` and disjunction of constants | conjecture | - | #406 | yes |
 
 How the deviations differ from their sources:
 
@@ -258,6 +266,16 @@ field in `@Type u + 1`. Frontend-Effect-Level has no source: no effect system
 in the survey (`survey/9-effects.md`) gives effects universes. It reads an
 effect as the signature of its free monad, so an operation generic in a type
 makes the effect large.
+
+The proposition rows (#539) are the frontend checker's equality. Its sides
+are the values the checker evaluates while it checks a type: sizes (modular
+naturals, compared as polynomials over Z/2^64, as tensor sizes always were),
+types, and booleans built from comparisons of sizes. A proof is erased, so
+erasing it is sound only for proofs that terminate; the frontend does not
+check termination yet (#546). Frontend-Bool-Reflection and
+Frontend-Bool-Conversion have no source in the ledger: the first is notation,
+the second evaluation of closed booleans and the two laws `n < n = false` and
+`n == n = true`, which hold in Z/2^64.
 
 Positivity-Branching admits a recursive field `(a: A) -> D params ys`, whose
 induction hypothesis is `(a: A) -> P ys (f a)`. PLT25's model covers it, but

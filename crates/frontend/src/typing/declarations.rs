@@ -580,7 +580,7 @@ impl<'a> Checker<'a> {
             }
             let result = self.ty_of_ast(cur, &mut tvars.clone());
             let body = self.ty_of_ast(ty, &mut tvars);
-            self.unknown_type = saved;
+            let body_error = std::mem::replace(&mut self.unknown_type, saved);
             let span = self.ast.ty_span(ty).or(at.name).unwrap_or(at.full);
             let equated = match self.unifier.types.universe_level(self.unifier.resolve(result)) {
                 Some(r) => {
@@ -592,6 +592,9 @@ impl<'a> Checker<'a> {
             let settled = self.unifier.settle_levels(mark, &HashSet::new());
             self.unifier.forget_levels(mark);
             self.unifier.leave_level();
+            if let Some(d) = body_error {
+                return Err(d);
+            }
             if let Some(d) = self.universe_errors.drain(..).next() {
                 return Err(d);
             }

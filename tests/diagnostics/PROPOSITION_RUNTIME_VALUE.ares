@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_RUNTIME_VALUE
+
+# A proposition compares values the checker evaluates; a parameter of type
+# `@Int` is known only at run time.
+$ f : @Int -> @Int = \x => let p : x ~ x = @refl x in 0  #~ error[UNSUPPORTED]: a run-time value in a type

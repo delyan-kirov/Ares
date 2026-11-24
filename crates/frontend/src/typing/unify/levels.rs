@@ -125,6 +125,15 @@ impl Unifier {
         }
         for (lone, other, other_ty) in [(&na, &nb, b), (&nb, &na, a)] {
             match (lone.konst, lone.vars.as_slice()) {
+                (0, &[(_, 0)]) if other.ground() == Some(0) => {
+                    return Err(Diagnostic::error(
+                        Code::TypeMismatch,
+                        Span::at(0),
+                        0,
+                        format!("universe level mismatch {where_}: expected a level of 1 or more, found 0"),
+                    )
+                    .with_note("`@Type 0` holds the propositions, and a bare `@Type` or a level variable ranges over data"));
+                }
                 (0, &[(v, 0)]) if !other.vars.iter().any(|(w, _)| *w == v) => {
                     return self.bind(v, other_ty);
                 }
@@ -330,6 +339,10 @@ impl Unifier {
         if let Some(l) = self.types.universe_level(ty) {
             return self.types.add(TypeNode::LevelAdd(l, 1));
         }
+        // Rule [Frontend-Eq-Form]
+        if self.types.prop_eq_sides(ty).is_some() {
+            return self.types.add(TypeNode::Level(0));
+        }
         let parts: Vec<Type> = match self.types.node(ty) {
             TypeNode::Var(id) if self.is_nat_var(id) => return one,
             TypeNode::Var(id) => {
@@ -358,7 +371,12 @@ impl Unifier {
             }
             // Rule [Frontend-Effect-Level]
             TypeNode::Arrow(from, to, eff) => {
-                let mut levels = vec![self.level_of(from), self.level_of(to)];
+                // Rule [Frontend-Prop-Impredicative]
+                let to_level = self.level_of(to);
+                if self.normalize_level(to_level).ground() == Some(0) {
+                    return to_level;
+                }
+                let mut levels = vec![self.level_of(from), to_level];
                 self.row_levels(eff, &mut levels);
                 return levels.into_iter().fold(one, |acc, l| self.types.add(TypeNode::LevelMax(acc, l)));
             }
@@ -378,7 +396,8 @@ impl Unifier {
         levels.into_iter().fold(one, |acc, l| self.types.add(TypeNode::LevelMax(acc, l)))
     }
 
-    fn is_size(&self, ty: Type) -> bool {
+    /// Whether `ty` is a size: a number, a sum or product, or a size variable.
+    pub fn is_size(&self, ty: Type) -> bool {
         match self.head(ty) {
             TypeNode::Nat(_) | TypeNode::NatAdd(..) | TypeNode::NatMul(..) => true,
             TypeNode::Var(id) => self.is_nat_var(id),

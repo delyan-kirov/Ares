@@ -334,6 +334,89 @@ impl Types {
         }
         acc
     }
+
+    /// The proposition `a ~ b`. See Note [Propositions].
+    pub fn prop_eq(&self, a: Type, b: Type) -> Type {
+        let head = self.app(self.con(PROP_EQ), a);
+        self.app(head, b)
+    }
+
+    /// A boolean constant in a type, `true` or `false`.
+    pub fn bool_lit(&self, b: bool) -> Type {
+        self.con(if b { TRUE } else { FALSE })
+    }
+
+    /// A boolean operation in a type, `op` applied to `args`.
+    pub fn bool_op(&self, op: BoolOp, args: &[Type]) -> Type {
+        assert_eq!(args.len(), op.arity(), "`{}` takes {} operands", op.name(), op.arity());
+        args.iter().fold(self.con(op.name()), |f, &a| self.app(f, a))
+    }
+
+    /// The sides of `a ~ b`, if `ty` is one (read raw: `ty` is resolved).
+    pub fn prop_eq_sides(&self, ty: Type) -> Option<(Type, Type)> {
+        let TypeNode::App(head, b) = self.node(ty) else { return None };
+        let TypeNode::App(eq, a) = self.node(head) else { return None };
+        matches!(self.node(eq), TypeNode::Con(c) if self.name(c) == PROP_EQ).then_some((a, b))
+    }
+}
+
+// Note [Propositions]
+//
+// `a ~ b` is a type in `@Type 0`, the universe of propositions (#539). The
+// checker keeps it as the application `(~) a b` of a constructor no source
+// can name, so every walker that rebuilds, zonks or instantiates a type
+// handles it unchanged, and two propositions unify side by side: `a ~ b`
+// and `c ~ d` are one proposition when `a` is `c` and `b` is `d` by
+// conversion. A side is a value the checker evaluates: a size, a type, or a
+// boolean built from size comparisons, `not`, `&&` and `||`, kept the same
+// way, as the constants `true`/`false` and applications of the operators of
+// [`BoolOp`]. Unification folds a boolean before it compares it
+// (`Unifier::fold_bool`), so `3 < 4` and `true` are one value. A `Bool` used
+// where a type is expected is the proposition `b ~ true` (boolean
+// reflection). Proofs are erased: a proof is `{}` at run time.
+
+/// The proposition constructor, the `~` of `a ~ b`.
+pub const PROP_EQ: &str = "~";
+/// The boolean constants a type can hold.
+pub const TRUE: &str = "true";
+pub const FALSE: &str = "false";
+
+/// The boolean operations a type can hold. Every comparison of sizes is
+/// spelled through `<` and `==`, as CORE defines them: `a > b` is `b < a`,
+/// `a <= b` is `not (b < a)`, `a >= b` is `not (a < b)` and `a != b` is
+/// `not (a == b)`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BoolOp {
+    Lt,
+    Eq,
+    Not,
+    And,
+    Or,
+}
+
+impl BoolOp {
+    const ALL: [BoolOp; 5] = [BoolOp::Lt, BoolOp::Eq, BoolOp::Not, BoolOp::And, BoolOp::Or];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BoolOp::Lt => "<",
+            BoolOp::Eq => "==",
+            BoolOp::Not => "not",
+            BoolOp::And => "&&",
+            BoolOp::Or => "||",
+        }
+    }
+
+    pub fn arity(self) -> usize {
+        match self {
+            BoolOp::Not => 1,
+            _ => 2,
+        }
+    }
+
+    pub fn named(name: &str) -> Option<BoolOp> {
+        BoolOp::ALL.into_iter().find(|op| op.name() == name)
+    }
 }
 
 // Built-in constructor names, kept as constants so use sites don't stringly-type.
@@ -406,6 +489,20 @@ pub fn display(
     namer: &mut dyn FnMut(VarId) -> String,
     levels: &LevelView,
 ) -> String {
+    /// An operand of `&&` or `||`: a comparison needs no parentheses there,
+    /// the other one of the two does.
+    fn go_logical(
+        types: &Types,
+        ty: Type,
+        op: &str,
+        namer: &mut dyn FnMut(VarId) -> String,
+        levels: &LevelView,
+        out: &mut String,
+    ) {
+        let other = matches!(operator_spine(types, ty), Some((o, _)) if matches!(o, "&&" | "||") && o != op);
+        go(types, ty, namer, levels, out, if other { 2 } else { 1 });
+    }
+
     fn go(
         types: &Types,
         ty: Type,
@@ -457,6 +554,35 @@ pub fn display(
                     && !levels.shows(types, arg) =>
             {
                 out.push_str(UNIVERSE)
+            }
+            TypeNode::App(..) if operator_spine(types, ty).is_some() => {
+                let (op, args) = operator_spine(types, ty).expect("guarded");
+                match args.as_slice() {
+                    // A boolean that stands for a type shows as written,
+                    // without its `~ true`.
+                    [b, t] if op == PROP_EQ
+                        && matches!(types.node(*t), TypeNode::Con(c) if types.name(c) == TRUE)
+                        && matches!(operator_spine(types, *b), Some((o, _)) if BoolOp::named(o).is_some()) =>
+                    {
+                        go(types, *b, namer, levels, out, prec)
+                    }
+                    [x] => paren(out, prec > 1, |out| {
+                        out.push_str(op);
+                        out.push(' ');
+                        go(types, *x, namer, levels, out, 4);
+                    }),
+                    [a, b] if matches!(op, "&&" | "||") => paren(out, prec > 1, |out| {
+                        go_logical(types, *a, op, namer, levels, out);
+                        out.push_str(&format!(" {op} "));
+                        go_logical(types, *b, op, namer, levels, out);
+                    }),
+                    [a, b] => paren(out, prec > 1, |out| {
+                        go(types, *a, namer, levels, out, 2);
+                        out.push_str(&format!(" {op} "));
+                        go(types, *b, namer, levels, out, 2);
+                    }),
+                    _ => unreachable!("an operator takes one or two operands"),
+                }
             }
             TypeNode::App(head, arg) => {
                 if let Some((size, elem)) = tensor_spine_raw(types, ty) {
@@ -619,6 +745,26 @@ fn tensor_spine_raw(types: &Types, ty: Type) -> Option<(Type, Type)> {
         }
     }
     None
+}
+
+/// The operator and operands of `a ~ b` or a boolean operation, for
+/// printing them as written. See Note [Propositions].
+fn operator_spine(types: &Types, ty: Type) -> Option<(&'static str, Vec<Type>)> {
+    let mut args = Vec::new();
+    let mut cur = ty;
+    while let TypeNode::App(head, arg) = types.node(cur) {
+        args.push(arg);
+        cur = head;
+    }
+    args.reverse();
+    let TypeNode::Con(name) = types.node(cur) else { return None };
+    let op = types.name(name);
+    let arity = match BoolOp::named(op) {
+        Some(b) => b.arity(),
+        None if op == PROP_EQ => 2,
+        None => return None,
+    };
+    (args.len() == arity).then_some((op, args))
 }
 
 /// A raw dump of a type (variables shown as `?id`); [`display`] gives nicer
