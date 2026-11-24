@@ -190,6 +190,24 @@ fn eq_data_stuck() {
     blocked(&format!("$ inj : (a: @Type 1) -> (b: @Type 1) -> List @ctx {{.u = 0}} a ~ List @ctx {{.u = 0}} b -> a ~ b = \\e => e\n"), "expected `a ~ b`, found `List @ctx {.u = 0} a ~ List @ctx {.u = 0} b`");
 }
 
+// Test [Bool-Reflection]
+#[test]
+fn bool_reflection() {
+    // The kernel prelude's `Bool`, which `<` returns: this script's own
+    // `Bool` shadows the name.
+    let small = "$ small : (n: @Nat) -> n < 10 -> @Nat = \\p => n\n";
+    applies(&format!("{small}$ k : @Nat = small 3 (@refl true)\n"));
+    blocked(&format!("{small}$ k : @Nat = small 30 (@refl true)\n"), "expected `@Bottom`, found `@Top`");
+    let sig = applies("$ Small : (n: @Nat) -> @Type 0 = n < 10\n$ both : (n: @Nat) -> n < 3 && n > 0 || n == 7 -> @Nat = \\p => n\n");
+    assert_eq!(kernel::type_of(&sig, "both").unwrap(), "(n: @Nat) -> (n < 3 && n > 0) || n == 7 -> @Nat");
+    // A motive whose body is a boolean returns its proposition.
+    applies("$ r : (n: @Nat) -> n == n = @Nat.elim (\\k => k == k) (@refl true) (\\k ih => ih) n\n");
+    blocked("$ r : (n: @Nat) -> n < 4 = @refl true\n", "expected `n < 4`, found `@Top`");
+    blocked("$ S : (n: @Nat) -> @Type 1 = n < 10\n", "expected `@Type 1`, found `@Type 0`");
+    // A script's own boolean type is data, not notation.
+    blocked("$ b : Bool.True = @tt\n", "expected a type, found a value of type `Bool`");
+}
+
 // Test [Refl]
 #[test]
 fn refl() {

@@ -215,6 +215,7 @@ that the re-check never resolves a name.
 | Cast-Quot | PT22 | Section 4.1, cast of π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Cast-Refl | PLT25 | Fig. 3, Cast-Refl, a conversion rule | published | PLT25 Decidability, Puj22 Cast-Refl decidability, Lean Consistency | - | yes |
 | Proof-Witness | PT22, AC20 | PT22 Fig. 2, the proof terms of Refl, Transport-Ω and every other proof, which the kernel keeps but never evaluates; AC20 Section 2, the loops that evaluating them would cause | deviation | Lean Consistency | - | yes |
+| Bool-Reflection | - | a value of the prelude's `Bool` where a type is expected is `b ~ true`, as SSReflect's `is_true` coercion; written out as Eq-Form at `Bool`, so the re-check and the computation rules never see it | conjecture | - | #406 | yes |
 | Data-Form | Dyb94, PLT25 | PLT25 Section 4.1, inductive definitions without indices, outside Ω (with indices, see Data-Ford); Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ford | PLT25 | Section 4.2, Fordism: indices as parameters with one equality field per index, and a cast in each branch of a match; index types restricted to depend on the parameters only | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ctor | Dyb94, PLT25 | PLT25 Section 4.1; Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
@@ -285,6 +286,17 @@ check termination yet (#546). Frontend-Bool-Reflection and
 Frontend-Bool-Conversion have no source in the ledger: the first is notation,
 the second evaluation of closed booleans and the two laws `n < n = false` and
 `n == n = true`, which hold in Z/2^64.
+
+Bool-Reflection is the kernel's side of Frontend-Bool-Reflection (#595), and
+notation in the same way: the checker writes the equality out, so the
+elaborated term is an ordinary equality at the `Bool` of the kernel's prelude
+(`crates/kernel/src/prelude.rs`). The prelude adds no rule. Its `Bool`, its
+unary `@Nat` and the comparisons on it are ordinary globals the kernel checks
+before every script, defined by their recursors, so `3 < 10` computes by
+Data-Iota. Frontend-Bool-Conversion's two laws are not conversions in the
+kernel: there `n < n ~ false` and `n == n ~ true` are lemmas, proved by
+induction over `n`. The kernel's naturals are unbounded where the frontend's
+sizes are modular, so the two agree only where no size wraps past 2^64.
 
 Positivity-Branching admits a recursive field `(a: A) -> D params ys`, whose
 induction hypothesis is `(a: A) -> P ys (f a)`. PLT25's model covers it, but

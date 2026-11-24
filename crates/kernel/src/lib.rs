@@ -16,7 +16,8 @@
 //! * [`observational`] is the computation of equality and cast.
 //! * [`conversion`] decides definitional equality.
 //! * [`syntax`] lowers a parsed module to the kernel's input and [`check`]
-//!   elaborates it by bidirectional type checking.
+//!   elaborates it by bidirectional type checking, after [`prelude`]'s
+//!   booleans and naturals.
 //! * [`mod@recheck`] checks an elaborated signature again from its terms alone.
 //!
 //! Entry point: [`check_script`].
@@ -27,6 +28,7 @@ pub mod inductive;
 pub mod level;
 pub mod nbe;
 pub mod observational;
+pub mod prelude;
 pub mod recheck;
 pub mod signature;
 pub mod syntax;

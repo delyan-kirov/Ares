@@ -150,6 +150,7 @@ impl Printer<'_> {
             }
         };
         match t {
+            Term::App(..) | Term::Global(..) if self.numeral(out, prec, t) => {}
             Term::Var(ix) => out.push_str(&self.name_at(*ix)),
             Term::Global(id, levels) => {
                 let global = self.sig.global(*id);
@@ -191,6 +192,7 @@ impl Printer<'_> {
                 self.bind(name, |p| p.print(out, Precedence::Top, body));
                 close(out, Precedence::Arrow);
             }
+            Term::App(..) if self.infix(out, prec, t) => {}
             Term::App(..) if self.constructor(out, prec, t) => {}
             Term::App(f, a) => {
                 open(out, Precedence::App);
@@ -226,6 +228,9 @@ impl Printer<'_> {
                 self.print(out, Precedence::Atom, e);
                 out.push_str(if matches!(t, Term::Fst(_)) { ".0" } else { ".1" });
             }
+            // A boolean in a type, `b ~ true`, prints as `b`.
+            // See Note [Booleans as propositions].
+            Term::Eq(_, ty, b, t) if self.is_true(ty, t) => self.print(out, prec, b),
             Term::Eq(_, _, a, b) => {
                 open(out, Precedence::Product);
                 self.print(out, Precedence::App, a);
@@ -333,6 +338,86 @@ impl Printer<'_> {
         self.print(out, Precedence::Top, rest);
         self.names.truncate(self.names.len() - pushed);
         out.push('}');
+    }
+
+    /// Whether `ty` is the prelude's `Bool` and `t` its `true`.
+    fn is_true(&self, ty: &Term, t: &Term) -> bool {
+        let Some(b) = self.sig.builtins() else { return false };
+        matches!(ty, Term::Global(id, _) if *id == b.bool)
+            && matches!(t, Term::Global(id, _) if *id == b.true_value || *id == b.true_ctor)
+    }
+
+    /// A chain of the prelude's `@Nat.Succ` over `@Nat.Zero`, written as its
+    /// numeral, or over another term `t`, written `t + k`. Reports whether
+    /// `t` is one.
+    fn numeral(&mut self, out: &mut String, prec: Precedence, t: &Term) -> bool {
+        let Some(b) = self.sig.builtins() else { return false };
+        let mut count = 0u64;
+        let mut rest = t;
+        while let Term::App(f, a) = rest {
+            if !matches!(&**f, Term::Global(id, _) if *id == b.succ) {
+                break;
+            }
+            count += 1;
+            rest = a;
+        }
+        match rest {
+            Term::Global(id, _) if *id == b.zero => out.push_str(&count.to_string()),
+            _ if count == 0 => return false,
+            _ => {
+                if prec > Precedence::Product {
+                    out.push('(');
+                }
+                self.print(out, Precedence::App, rest);
+                out.push_str(&format!(" + {count}"));
+                if prec > Precedence::Product {
+                    out.push(')');
+                }
+            }
+        }
+        true
+    }
+
+    /// A global named by an operator, such as the prelude's `<`, applied to
+    /// two arguments: its name and the two sides.
+    fn infix_parts<'t>(&self, t: &'t Term) -> Option<(Name, &'t Term, &'t Term)> {
+        let Term::App(f, rhs) = t else { return None };
+        let Term::App(op, lhs) = &**f else { return None };
+        let Term::Global(id, levels) = &**op else { return None };
+        let name = &self.sig.global(*id).name;
+        let symbolic = !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^".contains(c));
+        (levels.is_empty() && symbolic).then(|| (name.clone(), &**lhs, &**rhs))
+    }
+
+    /// Writes an operator application `a < b`, a side in parentheses unless
+    /// its own operator binds tighter. `&&` and `||` bind alike, so a mix of
+    /// them is parenthesised. Reports whether `t` is one.
+    fn infix(&mut self, out: &mut String, prec: Precedence, t: &Term) -> bool {
+        let Some((name, lhs, rhs)) = self.infix_parts(t) else { return false };
+        let binds = |op: &str| match op {
+            "&&" | "||" => 1,
+            "+" | "-" => 3,
+            "*" | "/" | "%" => 4,
+            _ => 2,
+        };
+        if prec > Precedence::Product {
+            out.push('(');
+        }
+        for (i, side) in [lhs, rhs].into_iter().enumerate() {
+            if i == 1 {
+                out.push_str(&format!(" {name} "));
+            }
+            match self.infix_parts(side) {
+                Some((inner, ..)) if binds(&inner) > binds(&name) => {
+                    self.infix(out, Precedence::Product, side);
+                }
+                _ => self.print(out, Precedence::App, side),
+            }
+        }
+        if prec > Precedence::Product {
+            out.push(')');
+        }
+        true
     }
 
     /// A constructor applied to its parameters and every field, written

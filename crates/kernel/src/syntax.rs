@@ -28,6 +28,12 @@
 //! `{a, b}` is a pair, or the type of pairs where a type is expected, and
 //! `{x: A, y: B x}` a dependent pair type; `.0` and `.1` project.
 //!
+//! A numeral is a `@Nat` of the [`crate::prelude`], at most [`MAX_NUMERAL`];
+//! `@Nat` is the prelude's type and `@Nat.elim` its recursor. Any other
+//! binary operator `a op b` is the global named `op` applied to both sides,
+//! and `a && b`, `a || b` (which the parser reads as an `if`) are the
+//! globals `&&` and `||`.
+//!
 //! Input: source text. Output: [`Item`]s of named, unresolved [`Raw`] terms.
 //!
 //! Entry point: [`parse_script`].
@@ -77,6 +83,8 @@ pub enum RawKind {
     },
     /// `_`, an argument the checker infers.
     Hole,
+    /// A numeral, a `@Nat`.
+    Nat(u64),
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +141,14 @@ pub const PRIMITIVES: &[(&str, Primitive, usize)] = &[
     ("@qin", Primitive::QIn, 1),
     ("@qelim", Primitive::QElim, 4),
 ];
+
+/// The types of the kernel's prelude spelled with `@`, as the frontend
+/// spells its builtin types. See [`crate::prelude`].
+pub const BUILTIN_TYPES: &[&str] = &["@Nat"];
+
+/// The largest numeral a script may write: a numeral is its unary
+/// constructor chain, which evaluation and the re-check walk by recursion.
+pub const MAX_NUMERAL: u64 = 100;
 
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -312,9 +328,9 @@ impl Lower<'_> {
                 }
                 return Ok(acc);
             }
-            Ty::Nat(_) | Ty::SizeAdd(..) | Ty::SizeMul(..) => {
-                return Err(self.error(span, "a number stands only for a level, as in `@Type 1`"))
-            }
+            Ty::Nat(n) => return self.numeral(*n, span),
+            Ty::SizeAdd(a, b) => return Ok(self.operator("+", self.ty(*a)?, self.ty(*b)?, span)),
+            Ty::SizeMul(a, b) => return Ok(self.operator("*", self.ty(*a)?, self.ty(*b)?, span)),
             Ty::Record { .. } | Ty::Unit | Ty::Sized { .. } | Ty::MetaE(_) => {
                 return Err(self.error(span, "not a type of the kernel"))
             }
@@ -367,8 +383,18 @@ impl Lower<'_> {
                 "~" => RawKind::Eq(Box::new(self.expr(*lhs)?), Box::new(self.expr(*rhs)?)),
                 "|>" => return self.apply(*rhs, *lhs, span),
                 "<|" => return self.apply(*lhs, *rhs, span),
-                other => return Err(self.error(span, format!("`{other}` is not an operator of the kernel"))),
+                other => return Ok(self.operator(other, self.expr(*lhs)?, self.expr(*rhs)?, span)),
             },
+            // `a && b` and `a || b`, which the parser reads as an `if`.
+            Expr::If { cond, then, alt } if matches!(self.ast.expr(*alt), Expr::Bool(false)) => {
+                return Ok(self.operator("&&", self.expr(*cond)?, self.expr(*then)?, span))
+            }
+            Expr::If { cond, then, alt } if matches!(self.ast.expr(*then), Expr::Bool(true)) => {
+                return Ok(self.operator("||", self.expr(*cond)?, self.expr(*alt)?, span))
+            }
+            Expr::If { .. } => {
+                return Err(self.error(span, "a kernel term eliminates a boolean with its recursor, `Bool.elim`, not an `if`"))
+            }
             Expr::Lambda { params, body } => return self.lambda(self.ast.slice(*params), *body, span),
             Expr::Let { binding, body } => {
                 let name = self.binder(binding.pat)?;
@@ -379,6 +405,10 @@ impl Lower<'_> {
             Expr::Tuple(items) => {
                 let items: Vec<Raw> = self.ast.slice(*items).iter().map(|t| self.expr(*t)).collect::<Result<_>>()?;
                 return self.tuple(items, span);
+            }
+            Expr::Field { record, name } if self.is_builtin_type(*record) => {
+                let Expr::Var { name: ty, .. } = self.ast.expr(*record) else { unreachable!("a builtin type is a name") };
+                RawKind::Var(format!("{ty}.{name}").into(), Vec::new())
             }
             Expr::Field { record, name } => match name.as_str() {
                 "0" => RawKind::Fst(Box::new(self.expr(*record)?)),
@@ -397,10 +427,31 @@ impl Lower<'_> {
                     .collect::<Result<_>>()?;
                 RawKind::Ctor { data: ty.map(|t| t.as_str().into()), tag: tag.as_str().into(), fields }
             }
-            Expr::Int(_) => return Err(self.error(span, "a number stands only for a level, as in `@Type 1`")),
+            Expr::Int(n) => match u64::try_from(*n) {
+                Ok(n) => return self.numeral(n, span),
+                Err(_) => return Err(self.error(span, "a `@Nat` is not negative")),
+            },
             _ => return Err(self.error(span, "not a term of the kernel")),
         };
         Ok(raw(kind, span))
+    }
+
+    /// `lhs op rhs`: the global named `op` applied to both sides.
+    fn operator(&self, op: &str, lhs: Raw, rhs: Raw, span: Span) -> Raw {
+        let head = raw(RawKind::Var(op.into(), Vec::new()), span);
+        raw(RawKind::App(Box::new(raw(RawKind::App(Box::new(head), Box::new(lhs)), span)), Box::new(rhs)), span)
+    }
+
+    fn numeral(&self, n: u64, span: Span) -> Result<Raw> {
+        if n > MAX_NUMERAL {
+            return Err(self.error(span, format!("a kernel numeral is unary, so at most {MAX_NUMERAL}")));
+        }
+        Ok(raw(RawKind::Nat(n), span))
+    }
+
+    /// Whether `e` names a type of the kernel's prelude, such as `@Nat`.
+    fn is_builtin_type(&self, e: Aol<Expr>) -> bool {
+        matches!(self.ast.expr(e), Expr::Var { module: None, name } if BUILTIN_TYPES.contains(&name.as_str()))
     }
 
     /// `f x` written with a pipe. `x |> @absurd` is the primitive itself, at
@@ -424,6 +475,9 @@ impl Lower<'_> {
     fn name(&self, name: &str, span: Span) -> Result<Raw> {
         if name == "_" {
             return Ok(raw(RawKind::Hole, span));
+        }
+        if BUILTIN_TYPES.contains(&name) {
+            return Ok(raw(RawKind::Var(name.into(), Vec::new()), span));
         }
         if name.starts_with('@') {
             return self.spine(Head::Name(utilities::StrId::intern(name), span), Vec::new(), span);
@@ -503,7 +557,7 @@ impl Lower<'_> {
                         return Err(self.error(span, format!("`{text}` takes {arity} argument(s)")));
                     }
                     raw(RawKind::Prim(prim, args), span)
-                } else if text.starts_with('@') {
+                } else if text.starts_with('@') && !BUILTIN_TYPES.contains(&text) {
                     return Err(error(self.src, Code::UnknownSymbol, name_span, format!("unknown primitive `{text}`")));
                 } else if text == "_" {
                     raw(RawKind::Hole, name_span)

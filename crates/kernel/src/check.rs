@@ -32,9 +32,16 @@ use crate::signature::{ConstructorDecl, DataDecl, DataId, Global, GlobalId, Glob
 use crate::syntax::{error, parse_script, Item, ItemBody, LevelArg, Primitive, Raw, RawConstructor, RawKind, RawLevel};
 use crate::term::{mentions, mentions_global, Binding, Name, Term, TermDisplay};
 
-/// Check every global of a script.
+/// Check every global of a script, after the prelude's.
 pub fn check_script(src: &str) -> Result<Signature> {
-    let mut checker = Checker { src, sig: Signature::new() };
+    let mut sig = Signature::new();
+    crate::prelude::load(&mut sig, |sig, item| {
+        let mut checker = Checker { src: crate::prelude::SOURCE, sig: std::mem::take(sig) };
+        let checked = checker.check_item(item);
+        *sig = checker.sig;
+        checked
+    });
+    let mut checker = Checker { src, sig };
     for item in parse_script(src)? {
         checker.check_item(&item)?;
     }
@@ -92,7 +99,7 @@ impl Checker<'_> {
     }
 
     fn check_item(&mut self, item: &Item) -> Result<()> {
-        if self.sig.lookup(&item.name).is_some() {
+        if self.sig.lookup(&item.name).is_some_and(|id| !self.sig.is_prelude(id)) {
             return Err(self.error(Code::DuplicateSymbol, item.span, format!("`{}` is already defined", item.name)));
         }
         let mut level_names: Vec<Name> = Vec::new();
@@ -130,7 +137,7 @@ impl Checker<'_> {
 impl Checker<'_> {
     /// Reject a name a declaration would introduce twice.
     fn fresh_global(&self, name: &str, span: Span, taken: &[Name]) -> Result<()> {
-        if self.sig.lookup(name).is_some() || taken.iter().any(|t| &**t == name) {
+        if self.sig.lookup(name).is_some_and(|id| !self.sig.is_prelude(id)) || taken.iter().any(|t| &**t == name) {
             return Err(self.error(Code::DuplicateSymbol, span, format!("`{name}` is already defined")));
         }
         Ok(())
@@ -576,12 +583,29 @@ impl Checker<'_> {
         let (t, ty) = self.infer(ctx, raw)?;
         match ty.force(&self.sig).clone() {
             Val::Sort(l) => Ok((t, l)),
+            _ if self.is_bool(ctx, &ty) => Ok((self.reflect(t), Level::Zero)),
             other => Err(self.error(
                 Code::TypeMismatch,
                 raw.span,
                 format!("expected a type, found a value of type `{}`", self.show(ctx, &other)),
             )),
         }
+    }
+
+    /// Whether `ty` is the prelude's `Bool`.
+    fn is_bool(&self, ctx: &mut Context, ty: &Val) -> bool {
+        let Some(builtins) = self.sig.builtins() else { return false };
+        let bool = eval(&self.sig, &Env::new(), &Term::Global(builtins.bool, Rc::new([])));
+        self.conversion(ctx).conv_type(ty, &bool)
+    }
+
+    // Rule [Bool-Reflection]
+    /// The proposition a boolean `b` stands for where a type is expected,
+    /// `b ~ true`. See Note [Booleans as propositions].
+    fn reflect(&self, b: Term) -> Term {
+        let builtins = self.sig.builtins().expect("only a script, after the prelude, has a boolean in a type");
+        let global = |id| Rc::new(Term::Global(id, Rc::new([])));
+        Term::Eq(Level::constant(1), global(builtins.bool), Rc::new(b), global(builtins.true_value))
     }
 
     // Algorithm [Bidirectional checking]
@@ -655,6 +679,12 @@ impl Checker<'_> {
                 let (t, found) = self.infer(ctx, raw)?;
                 if self.conversion(ctx).conv_type(&found, expected) {
                     Ok(t)
+                } else if matches!(expected.force(&self.sig), Val::Sort(_)) && self.is_bool(ctx, &found) {
+                    if self.conversion(ctx).conv_type(&Val::Sort(Level::Zero), expected) {
+                        Ok(self.reflect(t))
+                    } else {
+                        Err(self.mismatch(ctx, raw.span, expected, &Val::Sort(Level::Zero)))
+                    }
                 } else {
                     Err(self.mismatch(ctx, raw.span, expected, &found))
                 }
@@ -667,6 +697,11 @@ impl Checker<'_> {
             return self.spine(ctx, raw, None);
         }
         match &raw.kind {
+            RawKind::Nat(n) => {
+                let builtins = self.sig.builtins().expect("the prelude declares no numeral");
+                let nat = eval(&self.sig, &Env::new(), &Term::Global(builtins.nat, Rc::new([])));
+                Ok((crate::prelude::numeral(builtins, *n), nat))
+            }
             RawKind::Hole => Err(self.error(
                 Code::TypeAnnotationRequired,
                 raw.span,
@@ -1018,9 +1053,13 @@ impl Checker<'_> {
             })?,
             None => {
                 let suffix = format!(".{tag}");
-                let found: Vec<GlobalId> = (0..self.sig.len() as GlobalId)
+                let mut found: Vec<GlobalId> = (0..self.sig.len() as GlobalId)
                     .filter(|id| is_ctor(id) && self.sig.global(*id).name.ends_with(&suffix))
                     .collect();
+                // The script's own constructors come before the prelude's.
+                if found.iter().any(|id| !self.sig.is_prelude(*id)) {
+                    found.retain(|id| !self.sig.is_prelude(*id));
+                }
                 match found.as_slice() {
                     [id] => *id,
                     [] => return Err(self.error(Code::UnknownSymbol, raw.span, format!("no constructor is tagged `{tag}`"))),
@@ -1075,7 +1114,7 @@ impl Checker<'_> {
         let Some(id) = self.sig.lookup(name) else {
             let locals = ctx.names.iter().map(|n| &**n);
             let mut err = self.error(Code::UnknownSymbol, span, format!("unknown name `{name}`"));
-            if let Some(near) = closest(name, locals.chain(self.sig.names())) {
+            if let Some(near) = closest(name, locals.chain(self.sig.visible_names())) {
                 err = err.with_help(format!("did you mean `{near}`?"));
             }
             return Err(err);
@@ -1124,6 +1163,21 @@ impl Checker<'_> {
         })
     }
 }
+
+// Note [Booleans as propositions]
+//
+// A boolean where a type is expected is the proposition `b ~ true`, as in
+// SSReflect, where `is_true b` is the coercion from `bool` to `Prop`, and as
+// the frontend reads it (#539). The checker writes the equality out, so the
+// elaborated term is an ordinary `Eq` at the prelude's `Bool` and the
+// re-check and the computation rules never see a boolean in a type: the rule
+// is notation over Eq-Form. A comparison computes by the recursors of the
+// prelude's `@Nat`, so `3 < 10` is `true ~ true`, which is `@Top`, and
+// `30 < 10` is `false ~ true`, which is `@Bottom`. With a variable,
+// `n < 10 ~ true` is stuck until `n` is known, and a proof of it is a
+// hypothesis, or an induction over `n` (See Rule [Data-Elim]).
+// Only the prelude's `Bool` is read so: a script's own boolean type is
+// data, not notation.
 
 // Note [Equality is not formed at a proposition]
 //

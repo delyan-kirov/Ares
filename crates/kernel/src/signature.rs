@@ -97,11 +97,28 @@ pub struct Global {
     pub kind: GlobalKind,
 }
 
+/// The prelude's globals the checker builds terms from, and the printer
+/// reads back: the booleans a type may be, and the naturals a numeral is.
+/// See [`crate::prelude`].
+#[derive(Clone, Copy, Debug)]
+pub struct Builtins {
+    pub bool: GlobalId,
+    pub true_ctor: GlobalId,
+    pub true_value: GlobalId,
+    pub nat: GlobalId,
+    pub zero: GlobalId,
+    pub succ: GlobalId,
+}
+
 #[derive(Default)]
 pub struct Signature {
     globals: Vec<Global>,
     by_name: HashMap<Name, GlobalId>,
     datas: Vec<DataDecl>,
+    /// How many globals, from the first, are the prelude's. A script's
+    /// global may take a prelude global's name, which then names it.
+    prelude: GlobalId,
+    builtins: Option<Builtins>,
     /// The globals read since [`Signature::recording`] started, if it has.
     consulted: RefCell<Option<BTreeSet<GlobalId>>>,
 }
@@ -129,8 +146,38 @@ impl Signature {
         self.globals.is_empty()
     }
 
+    /// The names of the script's own globals, in declaration order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.globals.iter().map(|g| &*g.name)
+        self.globals[self.prelude as usize..].iter().map(|g| &*g.name)
+    }
+
+    /// Every name a script may refer to, the prelude's included.
+    pub fn visible_names(&self) -> impl Iterator<Item = &str> {
+        self.by_name.keys().map(|n| &**n)
+    }
+
+    /// Whether global `id` is the prelude's.
+    pub fn is_prelude(&self, id: GlobalId) -> bool {
+        id < self.prelude
+    }
+
+    /// The globals so far are the prelude, with `builtins` among them.
+    pub(crate) fn seal_prelude(&mut self, builtins: Builtins) {
+        self.prelude = self.next_global();
+        self.builtins = Some(builtins);
+    }
+
+    pub fn builtins(&self) -> Option<Builtins> {
+        self.builtins
+    }
+
+    /// Give global `id` the name `name`, which no global has.
+    pub(crate) fn rename(&mut self, id: GlobalId, name: &str) {
+        assert!(!self.by_name.contains_key(name), "global `{name}` is declared twice");
+        let global = &mut self.globals[id as usize];
+        self.by_name.remove(&global.name);
+        global.name = name.into();
+        self.by_name.insert(global.name.clone(), id);
     }
 
     /// An inductive declaration; reading it reads its type former.
@@ -178,7 +225,8 @@ impl Signature {
     }
 
     pub fn add(&mut self, global: Global) -> GlobalId {
-        assert!(!self.by_name.contains_key(&global.name), "global `{}` is declared twice", global.name);
+        let taken = self.by_name.get(&global.name).is_some_and(|id| !self.is_prelude(*id));
+        assert!(!taken, "global `{}` is declared twice", global.name);
         let id = self.globals.len() as GlobalId;
         self.by_name.insert(global.name.clone(), id);
         self.globals.push(global);
@@ -265,7 +313,8 @@ impl Signature {
 //    computation rules (Data-Iota, Eq-Ctor, Cast-Ctor) and the read-back of
 //    a value use. Reading a declaration reads its type former, which rests
 //    on all of them (See Note [Axioms are read off the terms]);
-// 3. `Signature::lookup` and `Signature::names`, which resolve a name. Only
+// 3. `Signature::lookup`, `Signature::names` and `Signature::visible_names`,
+//    which resolve a name. Only
 //    the elaborator calls them, never the re-check or the evaluator,
 //    conversion and computation rules it shares.
 //

@@ -349,6 +349,10 @@ impl Checker<'_> {
         }
         if let Some(expected) = expected {
             if !self.conversion(ctx).conv_type(&ty, expected) {
+                let proposition = Val::Sort(Level::Zero);
+                if matches!(expected.force(&self.sig), Val::Sort(_)) && self.is_bool(ctx, &ty) && self.conversion(ctx).conv_type(&proposition, expected) {
+                    return Ok((self.reflect(term), proposition));
+                }
                 return Err(self.mismatch(ctx, raw.span, expected, &ty));
             }
         }
@@ -515,7 +519,11 @@ impl Checker<'_> {
                 let pi = pi.clone();
                 let (body, cod, cod_level) = self.under(ctx, name, pi.dom.clone(), |c, ctx| {
                     let cod = pi.cod.apply(&c.sig, Val::var(ctx.depth() - 1));
-                    let (body, found) = c.infer_under(ctx, body, &cod, holes)?;
+                    let (mut body, mut found) = c.infer_under(ctx, body, &cod, holes)?;
+                    // A motive whose body is a boolean returns its proposition.
+                    if matches!(cod.force(&c.sig), Val::Sort(_)) && c.is_bool(ctx, &found) {
+                        (body, found) = (c.reflect(body), Val::Sort(Level::Zero));
+                    }
                     let level = c.conversion(ctx).sort_of(&found);
                     Ok::<_, utilities::Diagnostic>((body, quote(&c.sig, ctx.depth(), &found), level))
                 })?;
