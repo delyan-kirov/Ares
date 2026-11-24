@@ -25,6 +25,7 @@
 //!
 //! Entry points: [`format_source`], [`format_edits`].
 
+mod groups;
 mod layout;
 mod wadler;
 
@@ -150,12 +151,15 @@ fn format_items(src: &str, style: &Style) -> Result<(String, Vec<(Span, String)>
     let mut out = String::new();
     // Per item: its source extent and the output lines it covers.
     let mut items: Vec<(Span, usize, usize)> = Vec::new();
+    // The tokens the output must lex to: the source's, with field groups merged.
+    let mut expected = Vec::with_capacity(toks.len());
     for (n, &s) in starts.iter().enumerate() {
         let e = starts.get(n + 1).copied().unwrap_or(toks.len());
         if s == e {
             continue;
         }
-        let slice = &toks[s..e];
+        let slice = &groups::merge_groups(&toks[s..e]);
+        expected.extend_from_slice(slice);
         let text = format_item(slice, style);
         if n > 0 {
             out.push_str(if slice[0].blank { "\n\n" } else { "\n" });
@@ -169,7 +173,7 @@ fn format_items(src: &str, style: &Style) -> Result<(String, Vec<(Span, String)>
         out.push('\n');
     }
     let out = align_comments(&out, style.width);
-    verify(src, &out)?;
+    verify(src, &expected, &out)?;
     let lines: Vec<&str> = out.split('\n').collect();
     let items = items.into_iter().map(|(span, a, b)| (span, lines[a..=b].join("\n"))).collect();
     Ok((out, items))
@@ -226,7 +230,8 @@ fn align_comments(out: &str, width: usize) -> String {
 //
 // So every result is checked before it is returned. The output is lexed
 // again and must give the very same tokens (comments compared without
-// trailing space), and when the input parsed, the output must parse to the
+// trailing space), save the ones a field group merge drops (`a: T, b: T`
+// becomes `a b: T`, see `groups`), and when the input parsed, the output must parse to the
 // same number of items. If either fails, the file is left as it was, with an
 // error naming where. A layout bug can make the formatter decline a file; it
 // cannot make it change one.
@@ -256,8 +261,7 @@ fn align_comments(out: &str, width: usize) -> String {
 
 /// Refuse output that is not the input's token sequence, or that stops parsing.
 /// See Note [Formatter re-lex check].
-fn verify(src: &str, out: &str) -> Result<(), String> {
-    let a = lex(src)?;
+fn verify(src: &str, a: &[Tok], out: &str) -> Result<(), String> {
     let b = lex(out).map_err(|m| format!("the formatted text does not lex: {m}"))?;
     let same = a.len() == b.len()
         && a.iter().zip(&b).all(|(x, y)| {

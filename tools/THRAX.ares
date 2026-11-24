@@ -42,9 +42,7 @@ $ Command : @Type = @union
 # What the command line spells a command as, its arguments, and its help. Each
 # `\n` in `info` continues the description on a line of its own.
 $ Spec : @Type = @struct
-    name: @Str,
-    usage: @Str,
-    info: @Str,
+    name usage info: @Str,
 
 $ spec : Command -> Spec = \c =>
     c |> \

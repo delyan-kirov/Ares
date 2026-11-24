@@ -17,8 +17,8 @@ $ shift : @ctx { r: @Row } -> { x: @Int | r } -> { x: @Int | r } = \p => { .x = 
 # Stack: add a field on top of an open-row record.
 $ tag : @ctx { r: @Row } -> { x: @Int | r } -> { x: @Int, tag: @Int | r } = \p => { .tag = 99, ..p }
 
-$ Point : @Type = @struct x: @Int, y: @Int,
-$ Boxed : @Type = @struct x: @Int, y: @Int, z: @Int,
+$ Point : @Type = @struct x y: @Int,
+$ Boxed : @Type = @struct x y z: @Int,
 
 # One open-row function, applied to two nominal structs and to an anonymous
 # record (the extra field is absorbed by the row variable).
@@ -38,7 +38,7 @@ $ diag : @ctx { r: @Row } -> { x: @Int, y: @Int | r } -> @Int = \p =>
 $ ck_pat : @Int = if diag { .x = 3, .y = 7, .tag = 1 } == 10 => 0 else 32
 
 # `..rest` BINDS the leftover fields as a record: peel off `x`, forward the rest.
-$ sum2 : { y: @Int, z: @Int } -> @Int = y + z
+$ sum2 : { y z: @Int } -> @Int = y + z
 $ peel : Boxed -> @Int = \p => p |> \ | { .x = a, ..rest } => a + sum2 rest
 $ ck_rest : @Int = if peel Boxed.{ .x = 1, .y = 2, .z = 3 } == 6 => 0 else 64
 

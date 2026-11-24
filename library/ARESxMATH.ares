@@ -14,8 +14,7 @@ $ min : @ctx { t: @Type, d: IOrd t } -> t -> t -> t = \a b => if d.lt b a => b e
 $ max : @ctx { t: @Type, d: IOrd t } -> t -> t -> t = \a b => if d.lt a b => b else a
 
 # `x` forced into [lo, hi].
-$ clamp : @ctx { t: @Type, d: IOrd t } -> t -> t -> t -> t = \lo hi x =>
-    max lo (min hi x)
+$ clamp : @ctx { t: @Type, d: IOrd t } -> t -> t -> t -> t = \lo hi x => max lo (min hi x)
 
 # The distance from zero, for any type that is ordered and can subtract.
 $ abs : @ctx { t: @Type, o: IOrd t, s: ISub t, z: IZero t } -> t -> t = \x =>

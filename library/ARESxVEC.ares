@@ -30,8 +30,7 @@ $ first : @ctx { t: @Type } -> @Vec t -> Opt t = \v => get 0 v
 
 # ---- transforms (build via push, so O(n)) ----
 
-$ flat_map : @ctx { a: @Type, b: @Type } -> (a -> @Vec b) -> @Vec a -> @Vec b = \f v =>
-    concat (fmap f v)
+$ flat_map : @ctx { a b: @Type } -> (a -> @Vec b) -> @Vec a -> @Vec b = \f v => concat (fmap f v)
 
 # All but the last element.
 $ init : @ctx { t: @Type } -> @Vec t -> @Vec t = \v =>
@@ -54,8 +53,7 @@ $ find_index : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> Opt @Int = \p v =>
 $ contains_by : @ctx { t: @Type } -> (t -> t -> Bool) -> t -> @Vec t -> Bool = \eqf x v =>
     any_from (\y => eqf x y) v 0
 
-$ lookup_by : @ctx { k: @Type, v: @Type } -> (k -> k -> Bool) -> k -> @Vec { k, v }
-    -> Opt v = \eqf k ps =>
+$ lookup_by : @ctx { k v: @Type } -> (k -> k -> Bool) -> k -> @Vec { k, v } -> Opt v = \eqf k ps =>
     find_at (\p => eqf k p.0) ps 0 |> \ | Opt.Some.{ p } => Opt.Some.{ p.1 } | _ => Opt.None
 
 $ span : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> { @Vec t, @Vec t } = \p v =>
@@ -73,11 +71,10 @@ $ remove_first : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Vec t = \p v =>
 
 # ---- pairs / numeric ----
 
-$ zip_with : @ctx { a: @Type, b: @Type, c: @Type } -> (a -> b -> c) -> @Vec a -> @Vec b
-    -> @Vec c = \f xs ys =>
+$ zip_with : @ctx { a b c: @Type } -> (a -> b -> c) -> @Vec a -> @Vec b -> @Vec c = \f xs ys =>
     zip_with_from f xs ys 0 (@vec_new {})
 
-$ unzip : @ctx { a: @Type, b: @Type } -> @Vec { a, b } -> { @Vec a, @Vec b } = \ps =>
+$ unzip : @ctx { a b: @Type } -> @Vec { a, b } -> { @Vec a, @Vec b } = \ps =>
     foldl (\acc p => { @vec_push acc.0 p.0, @vec_push acc.1 p.1 }) { @vec_new {}, @vec_new {} } ps
 
 $ sum : @Vec @Int -> @Int = \v => foldl (\a x => a + x) 0 v
@@ -121,12 +118,11 @@ $ from_c : @ctx { e: @Row, t: @Type } -> ({ p: @Ptr, i: @Int } -> <e> t) -> @Ptr
 
 # ---- the collection interfaces ----
 
-$ impl_IFor_for_vec : @ctx { a: @Type, e: @Type } -> IFor (@Vec a) a e =
+$ impl_IFor_for_vec : @ctx { a e: @Type } -> IFor (@Vec a) a e =
     .{ .each = \xs body => for_go xs body 0 }
-$ impl_IFormap_for_vec : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (@Vec a) a (@Vec b) b e =
-    .{
-        .mapping = \xs f => formap_vec xs f 0 (@vec_new {}),
-    }
+$ impl_IFormap_for_vec : @ctx { a b e: @Type } -> IFormap (@Vec a) a (@Vec b) b e = .{
+    .mapping = \xs f => formap_vec xs f 0 (@vec_new {}),
+}
 $ impl_INew_for_vec : @ctx { t: @Type } -> INew (@Vec t) = .{ .new = \u => @vec_new {} }
 $ impl_ILen_for_vec : @ctx { t: @Type } -> ILen (@Vec t) = .{ .len = \v => @vec_len v }
 $ impl_IEmpty_for_vec : @ctx { t: @Type } -> IEmpty (@Vec t) =
@@ -138,17 +134,16 @@ $ impl_IGet_for_vec : @ctx { t: @Type } -> IGet (@Vec t) @Int t = .{ .get = vec_
 $ impl_INth_for_vec : @ctx { t: @Type } -> INth (@Vec t) t = .{ .nth = vec_get_opt }
 $ impl_ILast_for_vec : @ctx { t: @Type } -> ILast (@Vec t) t =
     .{ .last = \v => vec_get_opt v ((@vec_len v) - 1) }
-$ impl_IFoldl_for_vec : @ctx { t: @Type, a: @Type } -> IFoldl (@Vec t) a t =
+$ impl_IFoldl_for_vec : @ctx { t a: @Type } -> IFoldl (@Vec t) a t =
     .{ .foldl = \f acc v => foldl_from f acc v 0 }
-$ impl_IFold_for_vec : @ctx { t: @Type, a: @Type } -> IFold (@Vec t) a (a -> t -> a) =
+$ impl_IFold_for_vec : @ctx { t a: @Type } -> IFold (@Vec t) a (a -> t -> a) =
     .{ .fold = \f acc v => foldl_from f acc v 0 }
-$ impl_IFoldr_for_vec : @ctx { t: @Type, a: @Type } -> IFoldr (@Vec t) a t =
+$ impl_IFoldr_for_vec : @ctx { t a: @Type } -> IFoldr (@Vec t) a t =
     .{ .foldr = \f z v => foldr_from f z v (@vec_len v) }
-$ impl_IFmap_for_vec : @ctx { a: @Type, b: @Type } -> IFmap (@Vec a) a (@Vec b) b =
-    .{ .fmap = vec_map }
+$ impl_IFmap_for_vec : @ctx { a b: @Type } -> IFmap (@Vec a) a (@Vec b) b = .{ .fmap = vec_map }
 $ impl_IFilter_for_vec : @ctx { t: @Type } -> IFilter (@Vec t) (t -> Bool) =
     .{ .filter = vec_filter }
-$ impl_IFilterMap_for_vec : @ctx { a: @Type, b: @Type } -> IFilterMap (@Vec a) a (@Vec b) b = .{
+$ impl_IFilterMap_for_vec : @ctx { a b: @Type } -> IFilterMap (@Vec a) a (@Vec b) b = .{
     .filter_map = \f v =>
         foldl_from (\acc x => f x |> \ | Opt.Some.{ y } => @vec_push acc y | _ => acc) (@vec_new {})
             v 0,
@@ -167,7 +162,7 @@ $ impl_ITakeWhile_for_vec : @ctx { t: @Type } -> ITakeWhile (@Vec t) t =
     .{ .take_while = \p v => @vec_slice v 0 (prefix_len p v 0) }
 $ impl_IDropWhile_for_vec : @ctx { t: @Type } -> IDropWhile (@Vec t) t =
     .{ .drop_while = \p v => @vec_slice v (prefix_len p v 0) (@vec_len v) }
-$ impl_IZip_for_vec : @ctx { a: @Type, b: @Type } -> IZip (@Vec a) (@Vec b) (@Vec { a, b }) =
+$ impl_IZip_for_vec : @ctx { a b: @Type } -> IZip (@Vec a) (@Vec b) (@Vec { a, b }) =
     .{ .zip = \xs ys => zip_with (\x y => { x, y }) xs ys }
 # A cons `List`'s elements, in order.
 $ impl_IFromList_for_vec : @ctx { t: @Type } -> IFromList (@Vec t) (List t) =
@@ -199,7 +194,7 @@ $ formap_vec : @ctx { a: @Type, e: @Row, b: @Type } -> @Vec a -> (a -> <Loop | e
 $ vec_get_opt : @ctx { t: @Type } -> @Vec t -> @Int -> Opt t = \v i =>
     if i < 0 => Opt.None else if i >= @vec_len v => Opt.None else Opt.Some.{ @vec_get v i }
 
-$ vec_map : @ctx { a: @Type, b: @Type } -> (a -> b) -> @Vec a -> @Vec b = \f v =>
+$ vec_map : @ctx { a b: @Type } -> (a -> b) -> @Vec a -> @Vec b = \f v =>
     foldl_from (\acc x => @vec_push acc (f x)) (@vec_new {}) v 0
 
 $ vec_filter : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Vec t = \p v =>
@@ -221,12 +216,10 @@ $ from_c_onto : @ctx { e: @Row, t: @Type } -> ({ p: @Ptr, i: @Int } -> <e> t) ->
     -> @Int -> @Vec t -> <e> @Vec t = \at p n i acc =>
     if i >= n => acc else from_c_onto at p n (i + 1) (@vec_push acc (at { p, i }))
 
-$ foldl_from : @ctx { a: @Type, t: @Type } -> (a -> t -> a) -> a -> @Vec t -> @Int
-    -> a = \f acc v i =>
+$ foldl_from : @ctx { a t: @Type } -> (a -> t -> a) -> a -> @Vec t -> @Int -> a = \f acc v i =>
     if i >= @vec_len v => acc else foldl_from f (f acc (@vec_get v i)) v (i + 1)
 
-$ foldr_from : @ctx { t: @Type, a: @Type } -> (t -> a -> a) -> a -> @Vec t -> @Int
-    -> a = \f z v i =>
+$ foldr_from : @ctx { t a: @Type } -> (t -> a -> a) -> a -> @Vec t -> @Int -> a = \f z v i =>
     if i <= 0 => z else foldr_from f (f (@vec_get v (i - 1)) z) v (i - 1)
 
 $ any_from : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Bool = \p v i =>
@@ -252,8 +245,8 @@ $ find_index_from : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> Opt @I
 $ prefix_len : @ctx { t: @Type } -> (t -> Bool) -> @Vec t -> @Int -> @Int = \p v i =>
     if i >= @vec_len v => i else if p (@vec_get v i) => prefix_len p v (i + 1) else i
 
-$ zip_with_from : @ctx { a: @Type, b: @Type, c: @Type } -> (a -> b -> c) -> @Vec a -> @Vec b -> @Int
-    -> @Vec c -> @Vec c = \f xs ys i acc =>
+$ zip_with_from : @ctx { a b c: @Type } -> (a -> b -> c) -> @Vec a -> @Vec b -> @Int -> @Vec c
+    -> @Vec c = \f xs ys i acc =>
     if i >= @vec_len xs =>
         acc
     else if i >= @vec_len ys =>

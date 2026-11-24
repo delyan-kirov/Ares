@@ -6,7 +6,7 @@ $ @mod TYPE_SPLICE_LIB
 
 $ @import ARESxDERIVE
 
-$ Size : @Type = @struct w: @Int, h: @Int
+$ Size : @Type = @struct w h: @Int
 $ Box : @Type = @struct !ARES.fields_of "Size", depth: @Int
 
 $ test : @Int = 0

@@ -18,30 +18,29 @@ $ impl_IUnwrapOr_for_Opt : @ctx { t: @Type } -> IUnwrapOr (Opt t) t =
 
 # Chain a partial computation: feed the value (if any) to an `f` that may
 # itself decline.
-$ opt_then : @ctx { a: @Type, b: @Type } -> (a -> Opt b) -> Opt a -> Opt b = \f o =>
+$ opt_then : @ctx { a b: @Type } -> (a -> Opt b) -> Opt a -> Opt b = \f o =>
     o |> \ | Opt.Some.{ x } => f x | _ => Opt.None
 
 # ---- the container interfaces: zero elements or one ----
 
-$ impl_IFmap_for_Opt : @ctx { a: @Type, b: @Type } -> IFmap (Opt a) a (Opt b) b =
+$ impl_IFmap_for_Opt : @ctx { a b: @Type } -> IFmap (Opt a) a (Opt b) b =
     .{ .fmap = \f o => o |> \ | Opt.Some.{ x } => Opt.Some.{ f x } | _ => Opt.None }
-$ impl_IFor_for_Opt : @ctx { a: @Type, e: @Type } -> IFor (Opt a) a e =
+$ impl_IFor_for_Opt : @ctx { a e: @Type } -> IFor (Opt a) a e =
     .{ .each = \o body => o |> \ | Opt.Some.{ x } => (if loop_body x body => {} else {}) | _ => {} }
-$ impl_IFormap_for_Opt : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (Opt a) a (Opt b) b e =
-    .{
-        .mapping = \o f =>
-            o |> \
-                | Opt.Some.{ x } =>
-                    (loop_step x f |> \ | LoopStep.Keep.{ y } => Opt.Some.{ y } | _ => Opt.None)
-                | _              => Opt.None,
-    }
+$ impl_IFormap_for_Opt : @ctx { a b e: @Type } -> IFormap (Opt a) a (Opt b) b e = .{
+    .mapping = \o f =>
+        o |> \
+            | Opt.Some.{ x } =>
+                (loop_step x f |> \ | LoopStep.Keep.{ y } => Opt.Some.{ y } | _ => Opt.None)
+            | _              => Opt.None,
+}
 $ impl_IFilter_for_Opt : @ctx { t: @Type } -> IFilter (Opt t) (t -> Bool) =
     .{ .filter = \p o => o |> \ | Opt.Some.{ x } => (if p x => o else Opt.None) | _ => Opt.None }
-$ impl_IFilterMap_for_Opt : @ctx { a: @Type, b: @Type } -> IFilterMap (Opt a) a (Opt b) b =
+$ impl_IFilterMap_for_Opt : @ctx { a b: @Type } -> IFilterMap (Opt a) a (Opt b) b =
     .{ .filter_map = \f o => o |> \ | Opt.Some.{ x } => f x | _ => Opt.None }
-$ impl_IFoldl_for_Opt : @ctx { t: @Type, a: @Type } -> IFoldl (Opt t) a t =
+$ impl_IFoldl_for_Opt : @ctx { t a: @Type } -> IFoldl (Opt t) a t =
     .{ .foldl = \f acc o => o |> \ | Opt.Some.{ x } => f acc x | _ => acc }
-$ impl_IFoldr_for_Opt : @ctx { t: @Type, a: @Type } -> IFoldr (Opt t) a t =
+$ impl_IFoldr_for_Opt : @ctx { t a: @Type } -> IFoldr (Opt t) a t =
     .{ .foldr = \f z o => o |> \ | Opt.Some.{ x } => f x z | _ => z }
 $ impl_ILen_for_Opt : @ctx { t: @Type } -> ILen (Opt t) =
     .{ .len = \o => o |> \ | Opt.Some.{ _ } => 1 | _ => 0 }

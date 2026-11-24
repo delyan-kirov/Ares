@@ -14,7 +14,7 @@ $ Tenths : @Type = @struct n: @Int
 $ impl_IIntLit_for_Tenths : @IIntLit Tenths = .{ .of_int = \k => Tenths.{ k * 10 } }
 
 $ id : @ctx { t: @Type } -> t -> t = \x => x
-$ pair : @ctx { a: @Type, b: @Type } -> a -> b -> { a, b } = \x y => { x, y }
+$ pair : @ctx { a b: @Type } -> a -> b -> { a, b } = \x y => { x, y }
 
 # A call: `id`'s result is `Tenths`, so its argument is too.
 $ by_call : Tenths = id 3

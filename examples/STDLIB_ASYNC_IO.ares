@@ -16,8 +16,7 @@ $ @import ARESxSTR
 $ fileno : @Int -> <@IO> @Int32 = @extern "C" "fileno" "libc"
 # `@Int32`: C's `int` result, so EOF reads back as -1.
 $ fgetc : @Int -> <@IO> @Int32 = @extern "C" "fgetc" "libc"
-$ setvbuf : { stream: @Int, buf: @Int, mode: @Int, size: @Int } -> <@IO> @Int =
-    @extern "C" "setvbuf" "libc"
+$ setvbuf : { stream buf mode size: @Int } -> <@IO> @Int = @extern "C" "setvbuf" "libc"
 
 # Unbuffered, so each `fgetc` is one read(2): a byte the stream already buffered
 # would be invisible to poll(2), and its reader would wait on it forever.

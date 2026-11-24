@@ -12,9 +12,7 @@ $ @import ARESxDERIVE
 $ @import DERIVE_LIB
 
 $ Rgb : @Type = @struct
-    r: @Int,
-    g: @Int,
-    b: @Int,
+    r g b: @Int,
 
 $ Shape : @Type = @union
     Dot: {},

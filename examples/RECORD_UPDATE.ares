@@ -38,9 +38,7 @@ $ chk_bumped_age : @Int = if bumped.age == 31 => 0 else 1
 
 # Three fields: several unlisted fields fill from the source.
 $ Vec3 : @Type = @struct
-    x: @Int,
-    y: @Int,
-    z: @Int,
+    x y z: @Int,
 
 $ origin : Vec3 = Vec3.{ .x = 0, .y = 0, .z = 0 }
 $ shifted : Vec3 = .{ .y = 5 | origin }

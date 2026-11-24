@@ -23,8 +23,7 @@ $ chk_sgn_0 : @Int = if sgn 0 == 0 => 0 else 1
 
 # --- Guards on the SAME struct pattern (the motivating example) ---------------
 $ Pair : @Type = @struct
-    a: @Int,
-    b: @Int,
+    a b: @Int,
 
 $ cmp : Pair -> @Int = \p =>
     p |> \

@@ -14,12 +14,10 @@ $ Person : @Type = @struct
     age: @Int,
 
 $ Point : @Type = @struct
-    x: @Int,
-    y: @Int,
+    x y: @Int,
 
 $ Line : @Type = @struct
-    from: Point,
-    to: Point,
+    from to: Point,
 
 $ alice : Person = Person.{ .name = "Alice", .age = 30 }
 

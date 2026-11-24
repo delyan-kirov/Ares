@@ -13,9 +13,7 @@ $ @import ARESxALGO
 $ @import ARESxVEC
 
 $ Exception : @Type = @struct
-    module: @Str,
-    os: @Str,
-    reason: @Str,
+    module os reason: @Str,
 
 $ exceptions : @Vec Exception = [
     Exception.{

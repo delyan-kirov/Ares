@@ -34,10 +34,7 @@ $ Pr : @Type = @union
     Closed: {},
 
 $ PrSpec : @Type = @struct
-    branch: @Str,
-    base: @Str,
-    title: @Str,
-    body: @Str,
+    branch base title body: @Str,
 
 $ Forge : @Effect =
     issue : @Int -> Lookup,

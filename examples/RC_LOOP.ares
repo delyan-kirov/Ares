@@ -9,8 +9,7 @@ $ @mod RC_LOOP
 #       A wrong sum divides by zero, so the test fails loudly.
 
 $ Pair : @Type = @struct
-    fst: @Int,
-    snd: @Int,
+    fst snd: @Int,
 
 # A tail-recursive loop: every step builds a Pair, reads it back, and carries
 # the sum. The Pair (and the ints inside it) die each iteration -- exactly the

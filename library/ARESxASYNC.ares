@@ -92,8 +92,7 @@ $ step_child : @ctx { m: @Type, e: @Row, a: @Type } -> ({} -> <Async m e | e> {}
 # A FIFO queue: pushed onto `back`, popped from `front`, `back` reversed into
 # `front` when it runs dry.
 $ Queue : (t: @Type) -> @Type = @struct
-    front: List t,
-    back: List t,
+    front back: List t,
 
 $ q_empty : @ctx { t: @Type } -> {} -> Queue t = Queue.{ .front = List.Nil, .back = List.Nil }
 
@@ -115,16 +114,14 @@ $ q_rev_onto : @ctx { t: @Type } -> List t -> List t -> List t = \l acc =>
 # A channel's state: its buffered values (at most `cap`), and the tasks parked
 # on it.
 $ Mailbox : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
-    cap: @Int,
-    size: @Int,
+    cap size: @Int,
     buf: Queue m,
     senders: Queue { m, {} -> <e> Step m e a },
     receivers: Queue (m -> <e> Step m e a),
 
 # A task parked on a descriptor until it is ready for `events`.
 $ Waiter : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
-    fd: @Int,
-    events: @Int,
+    fd events: @Int,
     k: {} -> <e> Step m e a,
 
 # `poll` takes the parked descriptors as `{fd, events}` pairs and answers which
@@ -136,7 +133,7 @@ $ Sched : (m: @Type) -> (e: @Row) -> (a: @Type) -> @Type = @struct
     result: Opt a,
     poll: @Vec { @Int, @Int } -> <e> @Vec @Int,
 
-$ run_with : @ctx { e: @Row, m: @Type, a: @Type } -> (@Vec { @Int, @Int } -> <e> @Vec @Int)
+$ run_with : @ctx { e: @Row, m a: @Type } -> (@Vec { @Int, @Int } -> <e> @Vec @Int)
     -> ({} -> <Async m e | e> a) -> <e> Opt a = \poll main =>
     schedule
         (
@@ -161,8 +158,8 @@ $ schedule : @ctx { m: @Type, e: @Row, a: @Type } -> Sched m e a -> <e> Opt a = 
                 let woken = s.poll (fd_list s.waiting 0 (@vec_new {})) in
                 if @vec_len woken == 0 => s.result else schedule (wake s woken)
 
-$ fd_list : @ctx { m: @Type, e: @Type, a: @Type } -> @Vec (Waiter m e a) -> @Int
-    -> @Vec { @Int, @Int } -> @Vec { @Int, @Int } = \ws i acc =>
+$ fd_list : @ctx { m e a: @Type } -> @Vec (Waiter m e a) -> @Int -> @Vec { @Int, @Int }
+    -> @Vec { @Int, @Int } = \ws i acc =>
     if i >= @vec_len ws =>
         acc
     else
@@ -170,8 +167,7 @@ $ fd_list : @ctx { m: @Type, e: @Type, a: @Type } -> @Vec (Waiter m e a) -> @Int
 
 # Requeue the waiters at the `woken` indices (ascending), in order, and keep
 # the rest parked.
-$ wake : @ctx { m: @Type, e: @Type, a: @Type } -> Sched m e a -> @Vec @Int
-    -> Sched m e a = \s woken =>
+$ wake : @ctx { m e a: @Type } -> Sched m e a -> @Vec @Int -> Sched m e a = \s woken =>
     let go =
         \i j ready rest =>
             if i >= @vec_len s.waiting =>
@@ -187,7 +183,7 @@ $ wake : @ctx { m: @Type, e: @Type, a: @Type } -> Sched m e a -> @Vec @Int
 
 # Serve what a task stopped for. An operation that can complete at once resumes
 # the same task right away; one that cannot parks it.
-$ serve : @ctx { m: @Type, e: @Type, a: @Type } -> Step m e a -> Sched m e a -> <e> Opt a = \st s =>
+$ serve : @ctx { m e a: @Type } -> Step m e a -> Sched m e a -> <e> Opt a = \st s =>
     st |> \
         | Step.Done.{ r }          =>
             schedule (r |> \ | Opt.Some.{ _ } => Sched.{ .result = r | s } | _ => s)
@@ -209,7 +205,7 @@ $ serve : @ctx { m: @Type, e: @Type, a: @Type } -> Step m e a -> Sched m e a -> 
         | Step.Waits.{ fd, ev, k } => schedule
             Sched.{ .waiting = @vec_push s.waiting Waiter.{ .fd = fd, .events = ev, .k = k } | s }
 
-$ set_chan : @ctx { m: @Type, e: @Type, a: @Type } -> Sched m e a -> @Int -> Mailbox m e a
+$ set_chan : @ctx { m e a: @Type } -> Sched m e a -> @Int -> Mailbox m e a
     -> Sched m e a = \s c ch =>
     Sched.{ .chans = @vec_set s.chans c ch | s }
 
@@ -252,7 +248,7 @@ $ recv_from : @ctx { m: @Type, e: @Row, a: @Type } -> @Int -> (m -> <e> Step m e
 
 # ---- poll(2) ----
 
-$ PollFd : @Type = @struct @extern "C" fd: @Int32, events: @Int16, revents: @Int16,
+$ PollFd : @Type = @struct @extern "C" fd: @Int32, events revents: @Int16,
 $ c_poll : { fds: @Vec PollFd, n: @Nat64, timeout: @Int32 } -> <@IO> @Int32 =
     @extern "C" "poll" "libc"
 

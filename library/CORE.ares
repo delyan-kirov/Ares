@@ -53,7 +53,7 @@ $ not : Bool -> Bool = @extern "ares"
 # (`a; b` is a `let` that drops `a`, `x |> f` and `f <| x` are `f x`), so these
 # declarations give the operators their types and nothing calls them. `f`'s effect
 # passes through to the pipe.
-$ (;) : @ctx { a: @Type, b: @Type } -> a -> b -> b = @extern "ares"
+$ (;) : @ctx { a b: @Type } -> a -> b -> b = @extern "ares"
 $ (|>) : @ctx { a: @Type, e: @Row, b: @Type } -> a -> (a -> <e> b) -> <e> b = @extern "ares"
 $ (<|) : @ctx { a: @Type, e: @Row, b: @Type } -> (a -> <e> b) -> a -> <e> b = @extern "ares"
 
@@ -300,7 +300,7 @@ $ @lookup : @Str -> <@Meta> Decl = @extern "ares"
 $ @scope : {} -> <@Meta> @Vec { @Str, @Str } = @extern "ares"
 
 # Where the running `!` is: its file, line and column (both from 1).
-$ Site : @Type = @struct file: @Str, line: @Int, column: @Int
+$ Site : @Type = @struct file: @Str, line column: @Int
 $ @here : {} -> <@Meta> Site = @extern "ares"
 
 # Type-check an expression fragment as if written at the running `!`, seeing
@@ -313,7 +313,7 @@ $ @check : @Code -> <@Meta> @Str = @extern "ares"
 # `help:` line per help, shown at the running `!`. `@fail` is an error that fails
 # the build (`META_ABORT`); `@warn` a warning, after which the build goes on
 # (`META_WARNING`). `diag msg` is one with no notes or helps.
-$ Diag : @Type = @struct message: @Str, notes: @Vec @Str, helps: @Vec @Str
+$ Diag : @Type = @struct message: @Str, notes helps: @Vec @Str
 $ diag : @Str -> Diag = \message => { .message = message, .notes = [], .helps = [] }
 $ @fail : @ctx { a: @Type } -> Diag -> <@Meta> a = @extern "ares"
 $ @warn : Diag -> <@Meta> {} = @extern "ares"
@@ -630,17 +630,15 @@ $ impl_IEq_for_bool : IEq Bool = .{ .eq = \a b => if a => b else not b }
 
 # Aggregates compare through their components', so equality composes without any
 # structural fallback: a tuple needs one instance per arity, a sequence one.
-$ impl_IEq_for_tup2 : @ctx { a: @Type, b: @Type, ea: IEq a, eb: IEq b } -> IEq { a, b } =
+$ impl_IEq_for_tup2 : @ctx { a b: @Type, ea: IEq a, eb: IEq b } -> IEq { a, b } =
     .{ .eq = \x y => ea.eq x.0 y.0 && eb.eq x.1 y.1 }
-$ impl_IEq_for_tup3 : @ctx { a: @Type, b: @Type, c: @Type, ea: IEq a, eb: IEq b, ec: IEq c }
-    -> IEq { a, b, c } =
+$ impl_IEq_for_tup3 : @ctx { a b c: @Type, ea: IEq a, eb: IEq b, ec: IEq c } -> IEq { a, b, c } =
     .{ .eq = \x y => ea.eq x.0 y.0 && eb.eq x.1 y.1 && ec.eq x.2 y.2 }
 
 # Tuples order lexicographically: the first component decides, later ones break ties.
-$ impl_IOrd_for_tup2 : @ctx { a: @Type, b: @Type, oa: IOrd a, ob: IOrd b }
-    -> IOrd { a, b } =
+$ impl_IOrd_for_tup2 : @ctx { a b: @Type, oa: IOrd a, ob: IOrd b } -> IOrd { a, b } =
     .{ .lt = \x y => oa.lt x.0 y.0 || (not (oa.lt y.0 x.0) && ob.lt x.1 y.1) }
-$ impl_IOrd_for_tup3 : @ctx { a: @Type, b: @Type, c: @Type, oa: IOrd a, ob: IOrd b, oc: IOrd c }
+$ impl_IOrd_for_tup3 : @ctx { a b c: @Type, oa: IOrd a, ob: IOrd b, oc: IOrd c }
     -> IOrd { a, b, c } =
     .{
         .lt = \x y =>
@@ -650,8 +648,7 @@ $ impl_IOrd_for_tup3 : @ctx { a: @Type, b: @Type, c: @Type, oa: IOrd a, ob: IOrd
                 )
     }
 
-$ vec_eq_from : @ctx { t: @Type, d: IEq t } -> @Vec t -> @Vec t -> @Int
-    -> Bool = \x y i =>
+$ vec_eq_from : @ctx { t: @Type, d: IEq t } -> @Vec t -> @Vec t -> @Int -> Bool = \x y i =>
     if i >= @vec_len x =>
         true
     else if d.eq (@vec_get x i) (@vec_get y i) =>
@@ -677,7 +674,7 @@ $ impl_IEq_for_Opt : @ctx { t: @Type, e: IEq t } -> IEq (Opt t) = .{
 # lambda instead, so no global is spelled `<|>`). One row `e` covers both steps, so
 # the two must agree on their effects here; the infix form, typed per site, unions
 # two different rows.
-$ compose : @ctx { b: @Type, e: @Row, c: @Type, a: @Type } -> (b -> <e> c) -> (a -> <e> b) -> a
+$ compose : @ctx { b: @Type, e: @Row, c a: @Type } -> (b -> <e> c) -> (a -> <e> b) -> a
     -> <e> c = \f g x =>
     f (g x)
 
@@ -806,7 +803,7 @@ $ impl_IFromStr_for_float32 : IFromStr @Float32 = .{
 # suffix, which it desugars to the hook below. Everything else here is the same
 # overloading any user type gets, so a program may swap in its own complex type
 # by defining its own hook.
-$ Cpx : @Type = @struct re: Real, im: Real,
+$ Cpx : @Type = @struct re im: Real,
 
 # `1.2i` resolves `@IImagLit` and calls its single field, so a program that wants
 # its own complex type defines its own instance.
@@ -850,7 +847,7 @@ $ vcons : @ctx { t: @Type } -> t -> @Vec t -> @Vec t = \x v =>
 # one instance names both.
 $ ICons : (t: @Type) -> (s: @Type) -> @Class = @struct cons: t -> s -> s,
 
-$ (::) : @ctx { t: @Type, s: @Type, d: ICons t s } -> t -> s -> s = \x xs => d.cons x xs
+$ (::) : @ctx { t s: @Type, d: ICons t s } -> t -> s -> s = \x xs => d.cons x xs
 
 $ impl_ICons_for_vec : @ctx { t: @Type } -> ICons t (@Vec t) = .{ .cons = \x v => vcons x v }
 
@@ -1023,7 +1020,7 @@ $ IToResult : (c: @Type) -> (t: @Type) -> (e: @Type) -> @Class = @struct to_resu
 $ impl_IToResult_for_bool : IToResult Bool {} {} =
     .{ .to_result = \c => if c => Result.Ok.{ {} } else Result.Err.{ {} } }
 
-$ impl_IToResult_for_Result : @ctx { t: @Type, e: @Type } -> IToResult (Result t e) t e =
+$ impl_IToResult_for_Result : @ctx { t e: @Type } -> IToResult (Result t e) t e =
     .{ .to_result = \r => r }
 
 $ impl_IToResult_for_Opt : @ctx { t: @Type } -> IToResult (Opt t) t {} = .{
@@ -1033,8 +1030,8 @@ $ impl_IToResult_for_Opt : @ctx { t: @Type } -> IToResult (Opt t) t {} = .{
 # `when c <| \x => body` is an `if` with no `else`: it runs `body` for its effects
 # on what `c` carries when `c` is good, and is `{}` otherwise. The body's effect
 # row is a parameter, so one `when` serves any effects.
-$ when : @ctx { c: @Type, t: @Type, e: @Type, r: @Row, d: IToResult c t e } -> c
-    -> (t -> <r> {}) -> <r> {} = \c body =>
+$ when : @ctx { c t e: @Type, r: @Row, d: IToResult c t e } -> c -> (t -> <r> {})
+    -> <r> {} = \c body =>
     d.to_result c |> \ | Result.Ok.{ x } => body x | _ => {}
 
 # ---- quotations ----

@@ -116,7 +116,7 @@ $ greet : @Str -> @Str = \who => "hello ?(who)!"
 
 Involved (a user type interpolates by defining an `IToString` instance):
 ```ares
-$ Point : @Type = @struct x: @Int, y: @Int
+$ Point : @Type = @struct x y: @Int
 $ impl_IToString_for_Point : IToString Point = .{ .show = \p => "(?(p.x), ?(p.y))" }
 $ msg : @Str = "at ?(Point.{ .x = 3, .y = 4 }), n=?(40 + 2)"   # "at (3, 4), n=42"
 ```
@@ -341,7 +341,7 @@ is read off the signature alone. A record kept whole is a named parameter,
 ```ares
 $ add   : (a: @Int) -> (b: @Int) -> @Int = a + b
 $ scale : (k: @Int) -> @Int -> @Int = \x => k * x
-$ norm  : {x: @Int, y: @Int} -> @Int = x * x + y * y
+$ norm  : {x y: @Int} -> @Int = x * x + y * y
 $ later : {} -> @Int -> @Int = \x => x + 1
 ```
 
@@ -359,8 +359,22 @@ field's type decides how it is solved. A lowercase name in a type is whatever is
 its uses give it. A field the signature uses as a size is a `@Nat`.
 
 ```ares
-$ fst : @ctx {a: @Type, b: @Type} -> {a, b} -> a = \t => t.0
-$ const : @ctx {t: @Type, u: @Type} -> t -> u -> t = \x y => x
+$ fst : @ctx {a b: @Type} -> {a, b} -> a = \t => t.0
+$ const : @ctx {t u: @Type} -> t -> u -> t = \x y => x
+```
+
+Fields of one type share it by juxtaposition (#575): `{a b: @Type}` is
+`{a: @Type, b: @Type}`, each name with its own copy of the type. A run of
+names followed by `:` is a group, never an application, so a tuple `{a, b}`
+keeps its comma. Groups stand wherever fields are named: `@ctx`, record types,
+struct fields, payload fields and effect operations. `ares fmt` merges
+adjacent fields of one type into a group, unless a comment stands between
+them.
+
+```ares
+$ insert : @ctx {k v: @Type, o: IOrd k} -> k -> v -> List {k, v} -> List {k, v} =
+    \key val xs => {key, val} :: xs
+$ Vec3 : @Type = @struct x y z: @Float64
 ```
 
 A caller leaves `@ctx` fields to unification, or gives some by name with an
@@ -402,7 +416,7 @@ $ n : @Int = p.0
 
 Involved (generic, nested, first-class):
 ```ares
-$ swap : @ctx {a: @Type, b: @Type} -> {a, b} -> {b, a} = \t => {t.1, t.0}
+$ swap : @ctx {a b: @Type} -> {a, b} -> {b, a} = \t => {t.1, t.0}
 $ nested : {@Int, {@Int, @Int}} = {1, {2, 3}}
 $ deep : @Int = nested.1.0 + nested.1.1        # 5
 ```
@@ -473,7 +487,7 @@ A type may be computed where it is written. A `let` names a part of it, and
 an applied lambda reduces to its body:
 ```ares
 $ endo : @Type -> @Type = \t => let p = {t, t} in p -> p
-$ Point : @Type = (\t => {x: t, y: t}) @Float64
+$ Point : @Type = (\t => {x y: t}) @Float64
 ```
 Choosing a type by a value (`if`, a match) waits for dependent types (#406).
 
@@ -957,7 +971,7 @@ $ tag : @Int -> @Int = \n => n |> \ | 0 => 100 | m => m + 1
 or named (dotted, any order, others ignored; a lone `.name` puns).
 
 ```ares
-$ Point  : @Type = @struct x: @Int, y: @Int,
+$ Point  : @Type = @struct x y: @Int,
 $ Person : @Type = @struct name: @Str, age: @Int,
 $ sum_xy : Point -> @Int = \p => p |> \ | Point.{ x, y } => x + y
 $ who    : Person -> @Str = \p => p |> \ | Person.{ .name } => name
@@ -1084,9 +1098,9 @@ the error carries that rewrite as a fix: `\P => B` becomes
 sugar for applying a lambda.
 
 ```ares
-$ Point  : @Type = @struct x: @Int, y: @Int,
+$ Point  : @Type = @struct x y: @Int,
 $ Person : @Type = @struct name: @Str, age: @Int,
-$ Line   : @Type = @struct from: Point, to: Point,
+$ Line   : @Type = @struct from to: Point,
 $ person : Person = Person.{ .name = "A", .age = 30 }
 $ age : @Int = let Person.{ .age = a } = person in a
 $ start : Line -> @Int = \Line.{ .from = Point.{ x, _ }, .to = _ } => x
@@ -1097,7 +1111,8 @@ $ start : Line -> @Int = \Line.{ .from = Point.{ x, _ }, .to = _ } => x
 # 6. Algebraic data types
 
 ## 6.1 Structs `@struct`
-A named record type: `$ Name : @Type = @struct field: Type, ...`. Built with a
+A named record type: `$ Name : @Type = @struct field: Type, ...`, where
+fields of one type may share it, `x y: @Int` (3.6). Built with a
 literal (`Type.{ .f = e }`, bare `.{ ... }`, or positional `Type.{ a, b }`);
 read with `.field`. Nominal (unifies by name).
 
@@ -1184,7 +1199,7 @@ duplicate member is an error.
 
 ```ares
 $ @import ARESxDERIVE
-$ Point  : @Type = @struct x: @Int, y: @Int
+$ Point  : @Type = @struct x y: @Int
 $ Point3 : @Type = @struct !ARES.fields_of "Point", z: @Int   # x, y, then z
 $ Base   : @Type = @union Red: {}, Green: {}
 $ Color  : @Type = @union !ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
@@ -1240,7 +1255,7 @@ Functions are first-class values.
 
 ```ares
 $ apply_twice : @ctx {t: @Type} -> (t -> t) -> t -> t = \f x => f (f x)
-$ compose : @ctx {b: @Type, c: @Type, a: @Type} -> (b -> c) -> (a -> b) -> a -> c = \f g x => f (g x)
+$ compose : @ctx {b c a: @Type} -> (b -> c) -> (a -> b) -> a -> c = \f g x => f (g x)
 ```
 
 ## 7.3 One name, one definition
@@ -1349,8 +1364,8 @@ $ sum_to : @Int -> @Int -> @Int = \n acc =>
 
 ## 8.1 Declaring an effect
 `$ Name : @Effect = op : Arg -> Resume, ...`. A signature ending in `@Effect`
-declares an effect, and the body lists its operations like a struct's fields.
-Each operation takes one argument
+declares an effect, and the body lists its operations like a struct's fields,
+operations of one type grouped as fields are (3.6). Each operation takes one argument
 and names its resume type. An operation whose handler never resumes (an
 exception) names a type variable of its own as its result, `@ctx {a: @Type}`.
 An effect with no operations is `= {}`.
@@ -1607,8 +1622,8 @@ to an inclusive range, `..` keeps it whole. Every result is an O(1) strided view
 
 ```ares
 $ @import ARESxLA
-$ row : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor n a = \m i => m.[i]
-$ col : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor m a = \m j => m.[.., j]
+$ row : @ctx {m n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor n a = \m i => m.[i]
+$ col : @ctx {m n: @Nat, a: @Type} -> Matrix m n a -> @Int -> @Tensor m a = \m j => m.[.., j]
 $ sub : @Tensor 8 @Int -> @Tensor 4 @Int = \m => m.[2 ... 5]      # inclusive 2..5, four elements
 ```
 
@@ -1621,7 +1636,7 @@ computed from the slots.
 
 ```ares
 $ @import ARESxLA
-$ transpose : @ctx {m: @Nat, n: @Nat, a: @Type} -> Matrix m n a -> Matrix n m a = \t =>
+$ transpose : @ctx {m n: @Nat, a: @Type} -> Matrix m n a -> Matrix n m a = \t =>
 	@tensor_create (@tensor_index t 0)
 		(\j => @tensor_create t (\i => @tensor_index (@tensor_index t i) j))
 ```
@@ -1674,7 +1689,7 @@ fields, in declaration order, are the positional C arguments (marshalled by name
 so a reordered call site is fine). A nullary C function takes `{}`.
 
 ```ares
-$ pow : {base: Real, exp: Real} -> Real = @extern "C" "pow" "libm"
+$ pow : {base exp: Real} -> Real = @extern "C" "pow" "libm"
 $ a : Real = pow {2.0, 10.0}                 # positional
 $ b : Real = pow {.exp = 10.0, .base = 2.0}  # named, reordered
 $ getchar : {} -> @Int = @extern "C" "getchar" "libc"
@@ -1687,7 +1702,7 @@ and `.field`, and it crosses the boundary by value. A C union is
 `Name : @Type = @union @extern "C" ...` (members share offset 0).
 
 ```ares
-$ Color : @Type = @struct @extern "C" r: @Nat8, g: @Nat8, b: @Nat8, a: @Nat8,
+$ Color : @Type = @struct @extern "C" r g b a: @Nat8,
 $ clear : Color -> {} = @extern "C" "ClearBackground" "libraylib.so"
 $ go : {} = clear Color.{ .r = 0, .g = 0, .b = 0, .a = 255 }
 ```
@@ -1698,7 +1713,7 @@ A function-typed parameter is a C function pointer: pass a Ares closure. A
 count.
 
 ```ares
-$ Vector2 : @Type = @struct @extern "C" x: @Float32, y: @Float32,
+$ Vector2 : @Type = @struct @extern "C" x y: @Float32,
 $ sort : {@Ptr, @Int, (@Int -> @Int -> @Int)} -> {} = @extern "C" "qsort_r" "libc"
 $ draw : {@Vec Vector2, @Int} -> {} = @extern "C" "DrawLineStrip" "lib"
 ```
@@ -1737,7 +1752,7 @@ C memory reaches Ares two ways, both copies:
 
 ```ares
 $ @import ARESxVEC
-$ Point : @Type = @struct @extern "C" x: @Int32, y: @Int32,
+$ Point : @Type = @struct @extern "C" x y: @Int32,
 $ point_at : { p: @Ptr, i: @Int } -> Point = @extern "load"
 $ arg_at : { p: @Ptr, i: @Int } -> @Str = @extern "load"      # a `char**`
 
