@@ -343,7 +343,7 @@ impl<'a> Desugarer<'a> {
     }
 
     /// Lower a definition, consuming leading record parameters of its signature. A
-    /// `@use` context parameter needs nothing here: the body binds it like any other first
+    /// context parameter needs nothing here: the body binds it like any other first
     /// parameter, and each call site injects the resolved value as a leading
     /// argument (see [`Self::apply_ctx`]).
     /// Lower a global's body with `f`, and whether it reached a deferred site.
@@ -505,12 +505,11 @@ impl<'a> Desugarer<'a> {
 
             Expr::App(f, x) => {
                 let (f, x) = (*f, *x);
-                // An explicit `@use {...}` argument is not applied here: the checker
-                // took it off the spine and recorded it in the head's resolved
-                // context, which `apply_ctx` injects at the head reference. A
-                // `@ctx {...}` one fixed types and sizes, which `apply_sizes`
-                // passes where needed.
-                if matches!(self.node(x), Expr::UseArg(_) | Expr::CtxArg(_)) {
+                // An explicit `@ctx {...}` argument is not applied here: the
+                // checker took it off the spine. Its instances went in the head's
+                // resolved context, which `apply_ctx` injects at the head
+                // reference; its types and sizes `apply_sizes` passes where needed.
+                if matches!(self.node(x), Expr::CtxArg(_)) {
                     return self.expr(f);
                 }
                 // Integers are one 64-bit value at runtime, so `@cast x` to a narrower
@@ -873,10 +872,6 @@ impl<'a> Desugarer<'a> {
                 }
             }
 
-            // A `@use {...}` argument is consumed at the head reference it applies
-            // to (`ctx_args` holds its values), so reaching it here means the
-            // checker let a stray one through.
-            Expr::UseArg(_) => self.fault("a `@use {...}` argument out of place"),
             Expr::CtxArg(_) | Expr::Type(_) => self.fault("a dependent form the checker rejects"),
 
             Expr::Ascribe { expr, ty } => {
@@ -986,7 +981,7 @@ impl<'a> Desugarer<'a> {
     }
 
     /// The lowered head term for an `Expr::Var`: the resolved global reference
-    /// with any `@use` context applied, but WITHOUT the first-class extern
+    /// with any instance context applied, but WITHOUT the first-class extern
     /// eta-wrapper (a call site applies it directly).
     fn var_head(&mut self, site: Aol<Expr>) -> Aol<Term> {
         // A blessed interface in head position is not a global at all: the checker

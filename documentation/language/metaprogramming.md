@@ -252,7 +252,7 @@ host (`machine::set_type_host`, fed from `Declarations::reflect` plus each round
 checked global types). They read the program being compiled, so they carry
 `<@Meta>`: a call in ordinary code is a type error, and a helper that reflects
 declares `<@Meta>` (as `ARES.derive_show` does). `@type_of "fib"` is
-`"@Int -> @Int"`, exactly as `ares check` prints it, `@use` fields included. In a
+`"@Int -> @Int"`, exactly as `ares check` prints it, instance fields included. In a
 round that still has unexpanded sites a type may be partial, so a generator that
 depends on it should not run before the sites it reads. On top of them, `library/ARESxDERIVE.ares`
 derives a default `to_string` for any struct or union (`$ @e (ARES.derive_show
@@ -850,7 +850,7 @@ the `@build` message loop (`@msg`/`@add_code`/`@modules`).
    the driver evaluates it, requires an `@Code`, and splices its source at the
    node's span. Nests inside larger types (`@Vec (@e ...)`). Every type position
    is collected (#160): def signatures, struct fields, union payloads, alias
-   bodies, effect operations, effect-row arguments (`<State (@e X)>`), `@use`
+   bodies, effect operations, effect-row arguments (`<State (@e X)>`), `@ctx`
    fields, and the annotations inside a body (`let x : T`, `\(x : T)`,
    `(e : T)`). Before #160 a member-type `@e` parsed but was never spliced, so it
    stood as an unchecked variable. See `examples/META_TYPE.ares`.

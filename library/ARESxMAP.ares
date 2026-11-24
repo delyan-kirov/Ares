@@ -4,7 +4,7 @@ $ @mod ARES
 # \info An immutable ordered map, `Map `K `V`, backed by an AVL tree, the same
 #       design as Haskell's Data.Map and Koka's std/data/map. The key ordering is
 #       the `IOrd k` interface, resolved by type at each operation that compares
-#       keys (`@use { o: IOrd k }`), so any ordered key works with no comparator
+#       keys (`@ctx { o: IOrd k }`), so any ordered key works with no comparator
 #       to pass or store: base types, tuples, and anything `DERIVE.derive_ord`
 #       reaches. The map is a VALUE: `insert` / `remove` return an updated copy
 #       and never disturb the original. Lookup, insert and remove are O(log n);
@@ -26,25 +26,25 @@ $ Map : (k: @Type) -> (v: @Type) -> @Type = @struct
 # `to_list` (pairs, ascending), `fold` (`f acc k v`, ascending), `filter` (`p k
 # v`) and `merge` (left-biased).
 
-$ insert : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> v -> Map k v
+$ insert : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> v -> Map k v
     -> Map k v = \k v m =>
     let fresh = if map_has m k => 0 else 1 in
     Map.{ .count = m.count + fresh, .root = tinsert k v m.root }
 
 # Insert, combining with the existing value: `f old new` decides what an
 # already-present key maps to.
-$ insert_with : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> v -> (v -> v -> v)
+$ insert_with : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> v -> (v -> v -> v)
     -> Map k v -> Map k v = \k v f m =>
     tget k m.root |> \ | Opt.Some.{ old } => insert k (f old v) m | _ => insert k v m
 
 # `m.[k]` joins the `.[..]` surface: an indexing hook overload for maps, returning
 # `Opt v` (a missing key is `None`).
-$ impl_IIndex_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k }
+$ impl_IIndex_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k }
     -> @IIndex (Map k v) k (Opt v) =
     .{ .index = \m k => tget k m.root }
 
 # Apply `f` to the value at `k`, if present; absent keys leave the map as is.
-$ update : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> (v -> v) -> Map k v
+$ update : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> (v -> v) -> Map k v
     -> Map k v = \k f m =>
     tget k m.root |> \ | Opt.Some.{ old } => insert k (f old) m | _ => m
 
@@ -66,16 +66,16 @@ $ impl_INew_for_Map : @ctx { k: @Type, v: @Type } -> INew (Map k v) = .{ .new = 
 $ impl_ILen_for_Map : @ctx { k: @Type, v: @Type } -> ILen (Map k v) = .{ .len = \m => m.count }
 $ impl_IEmpty_for_Map : @ctx { k: @Type, v: @Type } -> IEmpty (Map k v) =
     .{ .is_empty = \m => m.count == 0 }
-$ impl_IGet_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> IGet (Map k v) k v =
+$ impl_IGet_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k } -> IGet (Map k v) k v =
     .{ .get = \m k => tget k m.root }
-$ impl_IHas_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> IHas (Map k v) k =
+$ impl_IHas_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k } -> IHas (Map k v) k =
     .{ .has = map_has }
-$ impl_IRemove_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> IRemove (Map k v) k =
+$ impl_IRemove_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k } -> IRemove (Map k v) k =
     .{
         .remove = \m k =>
             if map_has m k => Map.{ .count = m.count - 1, .root = tremove k m.root } else m,
     }
-$ impl_IFromList_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k }
+$ impl_IFromList_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k }
     -> IFromList (Map k v) (@Vec { k, v }) =
     .{ .from_list = \ps => foldl (\m p => insert p.0 p.1 m) empty_map ps }
 $ impl_IToList_for_Map : @ctx { k: @Type, v: @Type } -> IToList (Map k v) (@Vec { k, v }) =
@@ -83,12 +83,12 @@ $ impl_IToList_for_Map : @ctx { k: @Type, v: @Type } -> IToList (Map k v) (@Vec 
 $ impl_IFold_for_Map : @ctx { k: @Type, v: @Type, a: @Type }
     -> IFold (Map k v) a (a -> k -> v -> a) =
     .{ .fold = \f acc m => tfold f acc m.root }
-$ impl_IFilter_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k }
+$ impl_IFilter_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k }
     -> IFilter (Map k v) (k -> v -> Bool) =
     .{
         .filter = \p m => tfold (\acc k v => if p k v => insert k v acc else acc) empty_map m.root,
     }
-$ impl_IMerge_for_Map : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> IMerge (Map k v) = .{
+$ impl_IMerge_for_Map : @ctx { k: @Type, v: @Type, o: IOrd k } -> IMerge (Map k v) = .{
     .merge = \a b => tfold (\acc k v => if map_has acc k => acc else insert k v acc) a b.root,
 }
 
@@ -100,7 +100,7 @@ $ @private
 
 $ empty_map : @ctx { k: @Type, v: @Type } -> Map k v = Map.{ .count = 0, .root = Tree.Leaf }
 
-$ map_has : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> Map k v -> k -> Bool = \m k =>
+$ map_has : @ctx { k: @Type, v: @Type, o: IOrd k } -> Map k v -> k -> Bool = \m k =>
     is_some (tget k m.root)
 
 $ Tree : (k: @Type) -> (v: @Type) -> @Type = @union
@@ -149,7 +149,7 @@ $ balance : @ctx { k: @Type, v: @Type } -> k -> v -> Tree k v -> Tree k v -> Tre
     else
         mknode k v l r
 
-$ tinsert : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> v -> Tree k v
+$ tinsert : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> v -> Tree k v
     -> Tree k v = \k v t =>
     t |> \
         | Tree.Node.{ tk, tv, l, r, _ } => (
@@ -162,13 +162,13 @@ $ tinsert : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> v -> Tree 
         )
         | _                             => mknode k v Tree.Leaf Tree.Leaf
 
-$ tget : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> Tree k v -> Opt v = \k t =>
+$ tget : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> Tree k v -> Opt v = \k t =>
     t |> \
         | Tree.Node.{ tk, tv, l, r, _ } =>
             if k < tk => tget k l else if tk < k => tget k r else Opt.Some.{ tv }
         | _ => Opt.None
 
-$ tremove : @ctx { k: @Type, v: @Type } -> @use { o: IOrd k } -> k -> Tree k v -> Tree k v = \k t =>
+$ tremove : @ctx { k: @Type, v: @Type, o: IOrd k } -> k -> Tree k v -> Tree k v = \k t =>
     t |> \
         | Tree.Node.{ tk, tv, l, r, _ } => (
             if k < tk =>

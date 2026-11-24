@@ -18,7 +18,7 @@ $ @mod ARES
 #
 #       A GENERIC type derives one GENERIC instance, which takes the renderers of
 #       its parameters as its own context: `$ impl_IToString_for_Pair : @ctx {a: @Type,
-#       b: @Type} -> @use {show_a: IToString a, show_b: IToString b} -> IToString
+#       b: @Type, show_a: IToString a, show_b: IToString b} -> IToString
 #       (Pair a b)`. Resolving it resolves those too, so
 #       `to_string` works at every instantiation (`Box @Int`, `Pair @Int Bool`,
 #       nesting). This is `instance (Show a, Show b) => Show (Pair a b)`.
@@ -69,7 +69,7 @@ $ union_show : @Str -> <@Meta> @Str = \base =>
     "\\" ++ arms
 
 # The context an instance for a GENERIC type needs: its parameters, bound in
-# `@ctx`, and the renderer of each, one `@use` field each (`show_a: IToString a`).
+# `@ctx`, and the renderer of each, one instance field each (`show_a: IToString a`).
 # The body never names the renderers: its `?(...)` interpolation finds each by type.
 $ show_ctx : @Vec @Str -> @Str = \params =>
     let binds = fmap (\p => p ++ ": @Type") params in
@@ -77,7 +77,7 @@ $ show_ctx : @Vec @Str -> @Str = \params =>
     if is_empty params =>
         ""
     else
-        "@ctx {" ++ join_nonempty ", " binds ++ "} -> @use {" ++ join_nonempty ", " reqs ++ "} -> "
+        "@ctx {" ++ join_nonempty ", " binds ++ ", " ++ join_nonempty ", " reqs ++ "} -> "
 
 # The derive: reflect on the type's parameters and kind, then build the instance.
 # A generic type's instance takes its parameters' renderers as its own context, so
@@ -115,9 +115,9 @@ $ derive_show : @Str -> <@Meta> @Code = \ty =>
 # type that has one. A derived `cmp_T` registers its own instance (see
 # `struct_cmp` / `union_cmp`), which is what makes a field of a derived type
 # comparable inside an enclosing derived type.
-$ ICmp : (t: @Type) -> @Type = @struct cmp: t -> t -> @Int,
+$ ICmp : (t: @Type) -> @Class = @struct cmp: t -> t -> @Int,
 
-$ compare : @ctx { t: @Type } -> @use { d: ICmp t } -> t -> t -> @Int = \a b => d.cmp a b
+$ compare : @ctx { t: @Type, d: ICmp t } -> t -> t -> @Int = \a b => d.cmp a b
 
 $ impl_ICmp_for_int : ICmp @Int = .{ .cmp = \a b => if a < b => (0 - 1) else if a > b => 1 else 0 }
 $ impl_ICmp_for_str : ICmp @Str = .{ .cmp = \a b => if a < b => (0 - 1) else if a > b => 1 else 0 }

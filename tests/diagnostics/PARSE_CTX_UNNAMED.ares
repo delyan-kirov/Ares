@@ -1,7 +1,7 @@
 $ @mod PARSE_CTX_UNNAMED
 
-# A `@ctx` parameter is a record of named fields solved by unification; an
-# instance parameter is a `@use` field.
+# A `@ctx` parameter is a record of named fields; an instance parameter is
+# one of them, `@ctx {d: IEq t}`.
 $ f : @ctx IEq t -> t -> Bool = \d x => d.eq x x  #~ error[UNEXPECTED_TOKEN]: a `@ctx` parameter is a record of named fields
 $ g : @ctx {ISub t, IZero t} -> t -> t = \{s, z} x => s.sub x z.zero  #~ error[UNEXPECTED_TOKEN]: expected ':' after the `@ctx` field name
 $ h : Bool = f (@ctx impl_IEq_for_Int) 1  #~ error[UNEXPECTED_TOKEN]: a `@ctx` parameter is a record of named fields

@@ -768,7 +768,7 @@ pub(crate) const IF_EQ: &str = "IEq";
 // ## Blessed interfaces
 
 /// The interface types the COMPILER resolves. Each is declared in CORE as a
-/// one-field `@struct` under its `@`-sigilled name (`$ @IRange : (b: @Type) -> (t: @Type) -> @Type = @struct
+/// one-field `@struct` under its `@`-sigilled name (`$ @IRange : (b: @Type) -> (t: @Type) -> @Class = @struct
 /// range: b -> b -> t,`); a desugar site resolves a value of that type by type and
 /// projects the single field. The names are fixed here because the desugars name
 /// them; the method name stays CORE's choice.

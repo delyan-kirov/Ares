@@ -407,8 +407,8 @@ fn one_operation_over_two_types_matches_interpreter() {
     // One operation covering two types is an interface plus two instances. The C
     // backend must project and call the same instance the interpreter does.
     let src = "$ @mod M\n\
-               $ IKind : (t: @Type) -> @Type = @struct kind: t -> @Int,\n\
-               $ kind : @ctx {t: @Type} -> @use {d: IKind t} -> t -> @Int = \\x => d.kind x\n\
+               $ IKind : (t: @Type) -> @Class = @struct kind: t -> @Int,\n\
+               $ kind : @ctx {t: @Type, d: IKind t} -> t -> @Int = \\x => d.kind x\n\
                $ kind_int : IKind @Int = .{ .kind = \\x => 1 }\n\
                $ kind_bool : IKind Bool = .{ .kind = \\b => 2 }\n\
                $ test : @Int = (kind 7) + (kind true) * 10\n";
@@ -417,21 +417,21 @@ fn one_operation_over_two_types_matches_interpreter() {
 
 #[test]
 fn ctx_context_parameter_passing() {
-    // A `@use` context parameter elaborates to a leading argument the call site injects, an
+    // An instance field elaborates to a leading argument the call site injects, an
     // instance built from another instance to a nested one; the C backend must do it
     // exactly as the interpreter does.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
+               $ Ord : (t: @Type) -> @Class = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type, o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ ord_box : @ctx {t: @Type} -> @use {o: Ord t} -> Ord (Box t) = \n\
+               $ ord_box : @ctx {t: @Type, o: Ord t} -> Ord (Box t) = \n\
                \t.{ .gt = \\p q => p |> \\ | Box.Wrap.{a} => (q |> \\ | Box.Wrap.{b} => o.gt a b) }\n\
                $ unbox : Box @Int -> @Int = \\b => b |> \\ | Box.Wrap.{n} => n\n\
                $ test : @Int =\n\
                \tlet flip : Ord @Int = .{ .gt = \\a b => a < b } in\n\
-               \t(max_of 3 7) + (max_of @use {.o = flip} 3 7)\n\
+               \t(max_of 3 7) + (max_of @ctx {.o = flip} 3 7)\n\
                \t+ unbox (max_of (Box.Wrap.{ 2 } : Box @Int) (Box.Wrap.{ 9 } : Box @Int))\n";
     assert_matches(src, "test");
 }

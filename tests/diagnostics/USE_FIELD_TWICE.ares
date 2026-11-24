@@ -1,5 +1,0 @@
-$ @mod USE_FIELD_TWICE
-
-# A field name is unique across a signature's `@ctx` and `@use` parameters.
-$ f : @ctx {t: @Type} -> @use {d: IEq t} -> t -> @use {d: IOrd t} -> t -> Bool = \x y => d.lt x y  #~ error[DUPLICATE_SYMBOL]: `d` is bound twice in this signature
-$ g : @ctx {t: @Type} -> @use {t: IEq t} -> t -> Bool = \x => t.eq x x  #~ error[DUPLICATE_SYMBOL]: `t` is bound twice in this signature

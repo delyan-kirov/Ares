@@ -62,10 +62,10 @@
 %token HOLE         /* ??? a typed hole: any type, always a compile error naming it */
 
 %token AT_MOD AT_STRUCT AT_UNION AT_MAIN AT_BUILD
-%token AT_USE AT_IFACE  /* AT_USE: `@use` */
-%token AT_CTX       /* `@ctx`: parameters solved by unification,
-                       `@ctx {t: @Type, n: @Nat} ->`, and arguments that give
-                       some by name, `f @ctx {.t = @Int}` (#537) */
+%token AT_IFACE
+%token AT_CTX       /* `@ctx`: parameters solved by unification or instance
+                       search, `@ctx {t: @Type, d: IOrd t} ->`, and arguments
+                       that give some by name, `f @ctx {.t = @Int}` (#537, #573) */
 %token AT_PRIVATE AT_EXTERN AT_ARRAY AT_IMPORT
 %token AT_TYCON     /* any other @name: a built-in type (@Int64, @Str, @Vec) or
                        effect (@IO) in a type, an intrinsic (@vec_len) as a value */
@@ -117,7 +117,10 @@ global
   /* A declared type: the signature states its parameters (#536),
    * `$ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b`,
    * and for a union its indices, which each constructor states in its
-   * result, `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil: {} -> Vec a 0, ...`. */
+   * result, `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil: {} -> Vec a 0, ...`.
+   * A `@struct` whose signature ends in `@Class` instead is an interface, whose
+   * values instance search finds (#573): `$ IOrd : (t: @Type) -> @Class = @struct ...`.
+   * `@Class` is an AT_TYCON; parser.rs takes it only on a `@struct`. */
   | DOLLAR UIDENT COLON expr EQ type_decl
   /* An effect: the signature ends in `@Effect`, the kind of row labels
    * (#574), and the body lists the operations,
@@ -143,8 +146,8 @@ global
   | DOLLAR LPAREN operator_name RPAREN COLON expr EQ expr  /* `$ (+) : T = e` */
   ;
 
-/* A signature is an expression, like every type; `@use` parameters stand on
- * its arrows (see use_param). `=` is never an operator, so it ends the type. */
+/* A signature is an expression, like every type; `@ctx` parameters stand on
+ * its arrows (see ctx_param). `=` is never an operator, so it ends the type. */
 opt_sig   : /* empty */ | COLON expr ;
 body      : expr | extern_lit ;
 
@@ -229,28 +232,21 @@ op_decl     : LIDENT COLON expr ;
 
 opt_comma   : /* empty */ | COMMA ;
 
-/* A searched parameter: `@use {d: IOrd t} -> t -> t -> t`. A closed record of
- * named fields, each an interface instance (or, with dependent types, a
- * proposition) that call sites do not write: the compiler finds each field by
- * its type in scope. The fields are in scope by name in the body, like a
- * named-record parameter's, so the body's lambda starts at the first explicit
- * parameter. Any number, anywhere in a signature; field names are unique
- * across a signature's `@use` parameters, and there is at least one (`@use {}`
- * is an error). Legal only on the spine of a global's signature, never
- * inside a parameter's type, a lambda or ascription annotation, or a field
- * type, which the parser enforces: the grammar admits `(@use {d: I t} -> t) -> t`,
- * parser.rs rejects it. A local `let` signature does not take `@use` yet. */
-use_param  : AT_USE LBRACE use_fields opt_comma RBRACE ;
-
-/* A `@ctx` parameter binds what unification solves: types `t: @Type`, sizes
- * `n: @Nat`, rows `e: @Row`, and universe levels `u: @l`, which stand in the
- * signature's first `@ctx`, ahead of its parameters (#406, #537). A
- * signature binds every type variable it names this way. Like `@use`: any
- * number, anywhere on a global's signature, at least one field, names unique
- * across the signature; never inside a parameter's type, an annotation, a
- * local `let`'s type or a field type, which parser.rs enforces. A constructor
- * or an effect operation opens with one binding its own variables (#558). A use leaves
- * the fields to unification or gives some by name, `f @ctx {.t = @Int}`.
+/* A `@ctx` parameter is a closed record of named fields that call sites do
+ * not write, each solved by the sort of its type (#406, #537, #573): types
+ * `t: @Type`, sizes `n: @Nat`, rows `e: @Row` and universe levels `u: @l` by
+ * unification, and instances `d: IOrd t`, whose type is a `@Class`, by search
+ * in scope. Levels stand in the signature's first `@ctx`, ahead of its
+ * parameters. A signature binds every type variable it names this way. The
+ * fields are in scope by name in the body, like a named-record parameter's,
+ * so the body's lambda starts at the first explicit parameter. Any number,
+ * anywhere on a global's signature, at least one field, names unique across
+ * the signature; never inside a parameter's type, an annotation, a local
+ * `let`'s type or a field type, which parser.rs enforces: the grammar admits
+ * `(@ctx {d: I t} -> t) -> t`, parser.rs rejects it. A constructor or an
+ * effect operation opens with one binding its own variables, and no instance
+ * (#558). A use leaves the fields to be solved or gives some by name,
+ * `f @ctx {.t = @Int, .d = flip}`.
  * The first `@ctx` may end in `if cond`, the constraints between its levels
  * (#567): `@ctx {u: @l, v: @l if v <= u}`. parser.rs reads the `@l` before
  * the `if` as the whole field type, so the `if` never becomes its argument. */
@@ -298,13 +294,11 @@ expr
   /* The function type, at that same lowest level: `a -> b -> c` is
    * `a -> (b -> c)`, and `a |> f -> b` is `(a |> f) -> b`. An effect row may
    * follow the arrow (`a -> <@IO> b`); `<` and `<|` cannot start an operand,
-   * so the row is unambiguous. A `@use` parameter stands only left of an
+   * so the row is unambiguous. A `@ctx` parameter stands only left of an
    * arrow. An ascribed name left of an arrow names the parameter,
    * `(x: A) -> B`; in a signature the body sees `x` bound. */
   | op_expr ARROW expr
   | op_expr ARROW eff_row expr
-  | use_param ARROW expr
-  | use_param ARROW eff_row expr
   | ctx_param ARROW expr
   ;
 
@@ -398,15 +392,11 @@ plain
   | LPAREN expr RPAREN
   | LPAREN operator_name RPAREN  /* an operator as a function value: `(+) 1 1` */
   | LPAREN expr COLON expr RPAREN  /* a type ascription: `([] : List @Int)` */
-  /* An explicit `@use` argument, matched to the signature's `@use` fields by
-   * name; omitted fields are still searched: `max_of @use {.d = flip} 3 7`.
-   * At least one field: an empty `@use {}` supplies nothing, so it is an error.
-   * It precedes the explicit argument that follows its parameter. */
-  | AT_USE LBRACE use_inits opt_comma RBRACE
   /* An explicit `@ctx` argument, matched to the signature's `@ctx` fields by
    * name; omitted fields are still solved: `zero_of @ctx {.t = @Int}`,
-   * `id @ctx {.u = 2}` for a level. It precedes the explicit argument that
-   * follows its parameter. */
+   * `id @ctx {.u = 2}` for a level, `max_of @ctx {.d = flip} 3 7` for an
+   * instance. At least one field: an empty `@ctx {}` supplies nothing, so it
+   * is an error. It precedes the explicit argument that follows its parameter. */
   | AT_CTX LBRACE use_inits opt_comma RBRACE
   /* `_`, left to elaboration: in a type the checker solves it from the body
    * (#535); in a term the kernel infers it from the types around it (#470). */

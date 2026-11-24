@@ -64,8 +64,8 @@ fn the_shell_effect_controls_the_session() {
 fn type_and_scope_print_what_reflection_finds() {
     let out = shell(&["x : @Int = 1", "_= type \"x + 1\"", "_= type \"to_string\"", "_= scope \"to_string\""]);
     assert!(out.contains("x + 1 : @Int\n"), "{out}");
-    // A name prints its declaration, `@use` fields and all, in both.
-    assert_eq!(out.matches("to_string : @ctx {t: @Type} -> @use {d: IToString t} -> t -> @Str\n").count(), 2, "{out}");
+    // A name prints its declaration, instance fields and all, in both.
+    assert_eq!(out.matches("to_string : @ctx {t: @Type, d: IToString t} -> t -> @Str\n").count(), 2, "{out}");
 }
 
 #[test]

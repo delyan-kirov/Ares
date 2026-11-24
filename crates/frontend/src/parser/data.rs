@@ -54,9 +54,10 @@ pub struct Ast {
     item_spans: Store<ItemSpan>,
     slice_slots: Store<SliceSlot>,
     use_fields: Store<UseField>,
-    /// The `@use` fields of a definition's signature, keyed by the signature (the
-    /// handle `Item::Def::sig` and the checker's context table carry), in the
-    /// order written. Present only when the signature declares `@use`.
+    /// The instance fields of a definition's signature, the `@ctx` fields whose
+    /// type is no sort, keyed by the signature (the handle `Item::Def::sig` and
+    /// the checker's context table carry), in the order written. Present only
+    /// when the signature declares one.
     pub use_params: SecondaryMap<Ty, Slice<UseField>>,
     /// The level parameters of a signature's leading `@ctx {u: @l, ...} ->`,
     /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
@@ -79,9 +80,16 @@ pub struct Ast {
     /// Source span of the name of each named-parameter arrow `(x: A) -> B`.
     pub binder_spans: SecondaryMap<Ty, Span>,
     /// A definition body's lambda whose leading parameters the parser added for
-    /// its signature (the `@use` fields and the parameters the signature binds),
+    /// its signature (the instance fields and the parameters the signature binds),
     /// with how many: the written ones follow.
     pub sig_bound: SecondaryMap<Expr, u32>,
+    /// The `@Class` declarations, keyed by their signature, whose universe the
+    /// parser reads as `@Type`: a dictionary is a record to everything after
+    /// the instance search.
+    pub classes: SecondaryMap<Ty, ()>,
+    /// The expression an explicit `@ctx {.f = e}` argument wrote, keyed by the
+    /// `Expr::Type` it reads as: an instance field takes the expression.
+    pub ctx_arg_values: SecondaryMap<Expr, Aol<Expr>>,
 }
 
 /// An element type stored in a run: names the [`Store`] on the [`Ast`] that holds
@@ -158,6 +166,10 @@ impl Ast {
     }
     pub fn ty(&self, id: Aol<Ty>) -> &Ty {
         self.tys.lookup(id)
+    }
+    /// Make the `Ty` node `id` read as `t`, keeping its handle and span.
+    pub fn replace_ty(&mut self, id: Aol<Ty>, t: Ty) {
+        *self.tys.lookup_mut(id) = t;
     }
     /// The source span recorded for a `Pattern`, if the parser stamped one.
     pub fn pat_span(&self, id: Aol<Pattern>) -> Option<Span> {
@@ -786,11 +798,9 @@ pub enum Expr {
         expr: Aol<Expr>,
         ty: Aol<Ty>,
     },
-    /// `@use {.f = e, ...}` in argument position: supply the named `@use` fields
-    /// of the callee; the ones it omits are still searched.
-    UseArg(Slice<FieldInit>),
-    /// `@ctx {.u = l, ...}` in argument position: the level arguments of a
-    /// level-polymorphic global (#406).
+    /// `@ctx {.f = e, ...}` in argument position: values for the named `@ctx`
+    /// fields of the callee, its levels, types, sizes and instances; the ones
+    /// it omits are solved as usual.
     CtxArg(Slice<FieldInit>),
     /// A type in term position: a function type `A -> B` or a record type
     /// `{x: A}` where an expression stands, as in a lambda that returns a type.
@@ -807,10 +817,10 @@ pub enum FieldInit {
     Positional(Aol<Expr>),
 }
 
-/// One field of a `@use {name: Type, ...}` or `@ctx {name: Type, ...}`
-/// parameter. `before` counts the explicit parameters the signature declares
-/// ahead of it, which is where an explicit `@use {.name = e}` or
-/// `@ctx {.name = e}` argument goes. `ctx` tells a `@ctx` field.
+/// One field of a `@ctx {name: Type, ...}` parameter. `before` counts the
+/// explicit parameters the signature declares ahead of it, which is where an
+/// explicit `@ctx {.name = e}` argument goes. `ctx` tells a field unification
+/// solves from an instance field.
 #[derive(Clone, Copy, Debug)]
 pub struct UseField {
     pub name: StrId,

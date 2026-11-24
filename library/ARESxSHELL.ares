@@ -69,7 +69,7 @@ $ help_text : @Vec @Str = [
     "  C-j new line (or submit the item when it ends in `$`)",
 ]
 
-# Print the type of `src`: a global's declared type, `@use` fields and all, or
+# Print the type of `src`: a global's declared type, instance fields and all, or
 # else the type the expression `src` checks at, without running it.
 $ type : @Str -> <@Meta, @IO> {} = \src =>
     let ty = @lookup src |> \ | Decl.Value.{ ty } => ty | _ => @check <| @parse_str src in

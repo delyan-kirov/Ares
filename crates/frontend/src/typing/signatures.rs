@@ -226,14 +226,10 @@ impl<'a> Checker<'a> {
                 bound.extend(self.ast.slice(*fs).iter().copied());
             }
         }
-        let first_use = self.ast.use_params.get(sig).and_then(|fs| {
-            self.ast.slice(*fs).iter().filter(|f| !f.ctx).map(|f| f.span.start).min()
-        });
-        let leading = bound
-            .iter()
-            .filter(|f| f.before == 0 && first_use.is_none_or(|u| f.span.start < u))
-            .map(|f| f.span.end)
-            .max();
+        if let Some(fs) = self.ast.use_params.get(sig) {
+            bound.extend(self.ast.slice(*fs).iter().copied());
+        }
+        let leading = bound.iter().filter(|f| f.before == 0).map(|f| f.span.end).max();
         match leading {
             Some(end) => Some(Edit::new(Span::at(end), format!(", {}", fields.join(", ")))),
             None => {
@@ -243,9 +239,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Check that each `@ctx` field of `name`'s signature binds a type, a size
-    /// or a row: an instance is found by search, so it is a `@use` field.
-    pub(super) fn check_ctx_fields(&mut self, name: StrId, sig: Aol<Ty>) {
+    /// Check that each `@ctx` field of signature `sig` that unification solves
+    /// binds a type, a size or a row.
+    pub(super) fn check_ctx_fields(&mut self, sig: Aol<Ty>) {
         let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return };
         for f in self.ast.slice(fields).to_vec() {
             if self.kind_of_ast(f.ty).is_some() {
@@ -255,21 +251,7 @@ impl<'a> Checker<'a> {
                 self.errors.push(label_variable(Some(f.span)));
                 continue;
             }
-            let written = self.ast.ty_source(f.ty).unwrap_or_else(|| "T".into());
-            let mut head = f.ty;
-            while let Ty::App(h, _) = self.tnode(head) {
-                head = *h;
-            }
-            let d = match *self.tnode(head) {
-                Ty::Con { name: h, .. } if self.is_nominal(h) => diag!(
-                    Code::TypeMismatch, f.span, 0,
-                    "`@ctx` field `{}` of `{name}` is an instance, which is found by search", f.name;
-                    note: "`@ctx` binds what unification solves: types, sizes and rows";
-                    help: "make it a `@use` field: `@use {{{}: {written}}} -> ...`", f.name
-                ),
-                _ => dependent_only(Some(f.span), "a `@ctx` field that is a value"),
-            };
-            self.errors.push(d);
+            self.errors.push(dependent_only(Some(f.span), "a `@ctx` field of this sort"));
         }
     }
 }

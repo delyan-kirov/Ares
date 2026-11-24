@@ -510,9 +510,9 @@ fn ctx_resolves_by_type() {
     // site does not write. It is found by its type (`Ord @Int`), and injected as a
     // leading argument.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
+               $ Ord : (t: @Type) -> @Class = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type, o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
                $ r : @Int = max_of 3 7";
     assert_eq!(run(src, "r"), "7");
@@ -521,21 +521,35 @@ fn ctx_resolves_by_type() {
 #[test]
 fn ctx_chains_and_is_overridden() {
     // `max3` declares the same context and passes it down to `max_of` (its own
-    // parameter is nearer than any global), and an explicit `@use {.o = flip}` turns
+    // parameter is nearer than any global), and an explicit `@ctx {.o = flip}` turns
     // `max_of` into a min. The flipped instance is local, so global scope keeps one
     // value per type.
     let src = "$ @mod M\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
+               $ Ord : (t: @Type) -> @Class = @struct gt: t -> t -> Bool,\n\
                $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
-               $ max_of : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y =>\n\
+               $ max_of : @ctx {t: @Type, o: Ord t} -> t -> t -> t = \\x y =>\n\
                \tif o.gt x y => x else y\n\
-               $ max3 : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t -> t = \\x y z =>\n\
+               $ max3 : @ctx {t: @Type, o: Ord t} -> t -> t -> t -> t = \\x y z =>\n\
                \tmax_of (max_of x y) z\n\
                $ chained : @Int = max3 3 9 5\n\
                $ flipped : @Int =\n\
-               \tlet flip : Ord @Int = .{ .gt = \\a b => a < b } in max_of @use {.o = flip} 3 7\n\
+               \tlet flip : Ord @Int = .{ .gt = \\a b => a < b } in max_of @ctx {.o = flip} 3 7\n\
                $ r : @Int = chained + flipped";
     assert_eq!(run(src, "r"), "12");
+}
+
+#[test]
+fn ctx_argument_gives_types_and_instances_together() {
+    // One explicit `@ctx` argument names a field unification solves and an
+    // instance field alike; each goes where its sort says.
+    let src = "$ @mod M\n\
+               $ Ord : (t: @Type) -> @Class = @struct gt: t -> t -> Bool,\n\
+               $ impl_Ord_for_int : Ord @Int = .{ .gt = \\a b => a > b }\n\
+               $ max_of : @ctx {t: @Type, o: Ord t} -> t -> t -> t = \\x y =>\n\
+               \tif o.gt x y => x else y\n\
+               $ flip : Ord @Int = .{ .gt = \\a b => a < b }\n\
+               $ r : @Int = max_of @ctx {.t = @Int, .o = flip} 3 7";
+    assert_eq!(run(src, "r"), "3");
 }
 
 #[test]
@@ -543,12 +557,12 @@ fn ctx_generic_instance_resolves_per_element_type() {
     // A generic instance `Show (Box t)` is built from `Show t`: resolving the outer
     // context recursively resolves the instance's own one, per element type.
     let src = "$ @mod M\n\
-               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
-               $ show : @ctx {t: @Type} -> @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
+               $ Show : (t: @Type) -> @Class = @struct show: t -> @Str,\n\
+               $ show : @ctx {t: @Type, d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show Bool = .{ .show = \\b => to_string b }\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ sh_box : @ctx {t: @Type} -> @use {d: Show t} -> Show (Box t) = \n\
+               $ sh_box : @ctx {t: @Type, d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }\n\
                $ r : @Int = if (show (Box.Wrap.{ 5 } : Box @Int) == \"W(5)\") && (show (Box.Wrap.{ true } : Box Bool) == \"W(true)\") => 0 else 1";
     assert_eq!(run(src, "r"), "0");
@@ -560,11 +574,11 @@ fn ctx_bundle_resolves_each_component() {
     // own type and the bundle is built at the call site, so no global of the bundled
     // type has to exist.
     let src = "$ @mod M\n\
-               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
+               $ Show : (t: @Type) -> @Class = @struct show: t -> @Str,\n\
                $ sh_int : Show @Int = .{ .show = \\n => to_string n }\n\
                $ sh_bool : Show Bool = .{ .show = \\b => to_string b }\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
-               $ show_pair : @ctx {a: @Type, b: @Type} -> @use {sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
+               $ show_pair : @ctx {a: @Type, b: @Type, sa: Show a, sb: Show b} -> Pair a b -> @Str = \\x =>\n\
                \t\"(\" ++ sa.show x.fst ++ \", \" ++ sb.show x.snd ++ \")\"\n\
                $ r : @Int = if show_pair (Pair.{ .fst = 5, .snd = true } : Pair @Int Bool) == \"(5, true)\" => 0 else 1";
     assert_eq!(run(src, "r"), "0");
@@ -575,11 +589,11 @@ fn ctx_nullary_instance_resolves_by_expected_type() {
     // A context whose field is a value rather than a function still resolves by type,
     // including where the expected type comes from a struct-literal field.
     let src = "$ @mod M\n\
-               $ Blank : (t: @Type) -> @Type = @struct blank: t,\n\
+               $ Blank : (t: @Type) -> @Class = @struct blank: t,\n\
                $ bl_int : Blank @Int = .{ .blank = 0 }\n\
                $ bl_str : Blank @Str = .{ .blank = \"\" }\n\
                $ Pair : (a: @Type) -> (b: @Type) -> @Type = @struct fst: a, snd: b,\n\
-               $ mk : @ctx {a: @Type, b: @Type} -> @use {ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
+               $ mk : @ctx {a: @Type, b: @Type, ba: Blank a, bb: Blank b} -> {} -> Pair a b =\n\
                \tPair.{ .fst = ba.blank, .snd = bb.blank }\n\
                $ p : Pair @Int @Str = mk {}\n\
                $ r : @Int = if (p.fst == 0) && (p.snd == \"\") => 0 else 1";
@@ -591,10 +605,10 @@ fn ctx_instance_crosses_module_boundary() {
     // An imported instance is found by type like a local one, and an imported generic
     // instance keeps its own context requirement across the boundary.
     let lib = "$ @mod GENM\n\
-               $ Show : (t: @Type) -> @Type = @struct show: t -> @Str,\n\
-               $ show : @ctx {t: @Type} -> @use {d: Show t} -> t -> @Str = \\x => d.show x\n\
+               $ Show : (t: @Type) -> @Class = @struct show: t -> @Str,\n\
+               $ show : @ctx {t: @Type, d: Show t} -> t -> @Str = \\x => d.show x\n\
                $ Box : (t: @Type) -> @Type = @union Wrap: {t},\n\
-               $ sh_box : @ctx {t: @Type} -> @use {d: Show t} -> Show (Box t) = \n\
+               $ sh_box : @ctx {t: @Type, d: Show t} -> Show (Box t) = \n\
                \t.{ .show = \\x => x |> \\ | Box.Wrap.{a} => \"W(\" ++ d.show a ++ \")\" }";
     let root = "$ @mod M\n\
                 $ @import GENM\n\
@@ -608,8 +622,8 @@ fn qualified_ctx_call_injects_its_context() {
     // `MOD.f` (qualified) plans its context just like a bare `f`, resolving the
     // instance from the caller's scope.
     let lib = "$ @mod LM\n\
-               $ Ord : (t: @Type) -> @Type = @struct gt: t -> t -> Bool,\n\
-               $ maxf : @ctx {t: @Type} -> @use {o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
+               $ Ord : (t: @Type) -> @Class = @struct gt: t -> t -> Bool,\n\
+               $ maxf : @ctx {t: @Type, o: Ord t} -> t -> t -> t = \\x y => if o.gt x y => x else y";
     let root = "$ @mod M\n\
                 $ @import LM\n\
                 $ impl_Ord_for_int : LM.Ord @Int = .{ .gt = \\a b => a > b }\n\
@@ -1894,7 +1908,7 @@ fn equality_forces_lazy_slots() {
     let src = "$ @mod M\n\
                $ L : (a: @Type) -> @Type = @union N: {}, C: {a, L a},\n\
                $ mk : @Int -> L @Int = \\n => if n == 0 => L.N else L.C.{ n, mk (n - 1) }\n\
-               $ eq_l : @ctx {a: @Type} -> @use {d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
+               $ eq_l : @ctx {a: @Type, d: IEq a} -> IEq (L a) = .{ .eq = \\x y =>\n\
                \tx |> \\ | L.N => (y |> \\ | L.N => true | _ => false)\n\
                \t| L.C.{ h, t } => (y |> \\ | L.C.{ h2, t2 } => d.eq h h2 && eq_l.eq t t2 | _ => false) }\n\
                $ r : Bool = mk 4 == mk 4";

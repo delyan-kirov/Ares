@@ -758,7 +758,7 @@ fn reflection(run: &ModuleRun, loaded: &Loaded, resolved: &frontend::Resolved, s
         }
     }
     // Each global as its own module renders it: only there does its type carry
-    // its `@use` fields.
+    // its instance fields.
     let mut declared: HashMap<utilities::StrId, Vec<String>> = HashMap::new();
     for (i, defs) in run.results.iter().enumerate() {
         let module = utilities::StrId::intern(&loaded.sources[i].0);

@@ -553,7 +553,7 @@ fn blessed_interface_prefix_rule() {
         Ok(_) => panic!("expected a parse error for {src:?}"),
     };
     // A blessed interface is a declarable `@`-name, as a one-field `@struct`.
-    assert!(parse("$ @mod M\n$ @IIndex : (s: @Type) -> (i: @Type) -> (t: @Type) -> @Type = @struct index: s -> i -> t,").is_ok());
+    assert!(parse("$ @mod M\n$ @IIndex : (s: @Type) -> (i: @Type) -> (t: @Type) -> @Class = @struct index: s -> i -> t,").is_ok());
     // It is a TYPE, so a value signature on the same name is rejected.
     assert!(err("$ @mod M\n$ @IIndex : a -> @Int -> a = \\t i => t").contains("one-field '@struct'"));
     // Any other `@`-name is a compiler intrinsic, not extensible in user code.
@@ -986,14 +986,14 @@ fn a_bare_ctx_parameter_fixes_to_a_named_use_field() {
     let m = "$ @mod M\n";
     assert_eq!(
         fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = \\d x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @ctx {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
     );
     assert_eq!(
         fixed(&format!("{m}$ same : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = \\d => \\x => d.eq x x\n")),
-        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @use {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
+        Ok(format!("{m}$ same : @ctx {{t: @Type}} -> @ctx {{d: IEq t}} -> t -> Bool = \\x => d.eq x x\n"))
     );
     let help = fixed(&format!("{m}$ eq : @ctx {{t: @Type}} -> @ctx IEq t -> t -> Bool = eq_impl\n"));
-    assert!(help.as_ref().is_err_and(|h| h.contains("`@use {d: IEq t} -> ...`")), "{help:?}");
+    assert!(help.as_ref().is_err_and(|h| h.contains("`@ctx {d: IEq t} -> ...`")), "{help:?}");
     // A field of a `@ctx` record is named.
     let err = parse(&format!("{m}$ z : @ctx {{ISub t, IZero t, t: @Type}} -> t -> t = \\{{s, z}} x => s.sub x z.zero\n")).err();
     assert!(err.is_some_and(|e| e.to_string().contains("expected ':' after the `@ctx` field name")));

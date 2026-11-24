@@ -56,15 +56,15 @@ $ transpose : @ctx { m: @Nat, n: @Nat, a: @Type } -> Matrix m n a -> Matrix n m 
 # bundled. Any element type with them works, CORE's numbers and `Cpx` included.
 # The loop is the `@tensor_dot` kernel, which runs on unboxed numbers when the
 # operations are CORE's numeric ones and applies them as functions otherwise.
-$ dot : @ctx { a: @Type, n: @Nat } -> @use { p: IAdd a, m: IMul a, z: IZero a } -> @Tensor n a
+$ dot : @ctx { a: @Type, n: @Nat, p: IAdd a, m: IMul a, z: IZero a } -> @Tensor n a
     -> @Tensor n a -> a = \x y =>
     @tensor_dot p.add m.mul z.zero x y
 
 # Matrix multiply: each result cell is the dot of a row of `a` with a column of
 # `b`, computed by the `@tensor_matmul` kernel. The shared inner dimension `k`
 # unifies at the type level, so a shape mismatch is a compile error.
-$ matmul : @ctx { m: @Nat, n: @Nat, t: @Type, k: @Nat }
-    -> @use { p: IAdd t, mul: IMul t, z: IZero t } -> Matrix m k t -> Matrix k n t
+$ matmul : @ctx { m: @Nat, n: @Nat, t: @Type, k: @Nat, p: IAdd t, mul: IMul t, z: IZero t }
+    -> Matrix m k t -> Matrix k n t
     -> Matrix m n t = \a b =>
     @tensor_matmul p.add mul.mul z.zero a b
 

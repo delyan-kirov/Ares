@@ -67,8 +67,8 @@ backend.
   syntax and meaning of every construct.
 - **[Effect system](documentation/language/effect-system-design.md)**:
   effects, handlers and continuations.
-- **[Interfaces](documentation/language/interfaces.md)**: `@use` parameters
-  and how instances are found.
+- **[Interfaces](documentation/language/interfaces.md)**: `@Class` types,
+  instance fields in `@ctx`, and how instances are found.
 - **[Metaprogramming](documentation/language/metaprogramming.md)**:
   quotations, splices and compile-time code.
 - **[Standard library](documentation/library/standard-library.md)**.

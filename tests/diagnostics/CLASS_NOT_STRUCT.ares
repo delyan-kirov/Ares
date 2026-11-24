@@ -1,0 +1,4 @@
+$ @mod CLASS_NOT_STRUCT
+
+# A `@Class` is a record of operations, so only a `@struct` is one.
+$ IPick : (t: @Type) -> @Class = @union One: t, Two: t,  #~ error[UNEXPECTED_TOKEN]: only a `@struct` is a `@Class`

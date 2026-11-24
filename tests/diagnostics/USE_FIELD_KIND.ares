@@ -1,4 +1,0 @@
-$ @mod USE_FIELD_KIND
-
-# A type is solved by unification, so it is a `@ctx` field, not a `@use` one.
-$ f : @use {t: @Type} -> @Int = 1  #~ error[TYPE_MISMATCH]: `@use` field `t` of `f` is a `@Type`, which unification solves

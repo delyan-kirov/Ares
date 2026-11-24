@@ -61,7 +61,7 @@ Convention: predicates (and predicate parameters) are `Bool`-typed, matching
 `if` and comparisons; three-way COMPARISONS (`cmp_int`, `cmp_str`, the `sort_by`
 orderings) stay `@Int` (negative / 0 / positive). Where an operation needs
 equality or ordering on a type parameter, it asks for CORE's `IEq` / `IOrd`
-interface with `@use`, resolved by type at the call site (`Map`, `Set`). IO's
+interface in its `@ctx`, resolved by type at the call site (`Map`, `Set`). IO's
 `write_file` / `append_file` / `remove_file` return `Bool` success. Paired
 results use the language's tuples (`{\`A, \`B}`, accessed `.0`/`.1`).
 
@@ -108,7 +108,7 @@ ordinary effect (`$ Gpu : @Effect = ...`) whose handler discharges into `@IO`.
 `Map \`K \`V` is an immutable ORDERED map -- an AVL tree, the same design as
 Haskell's `Data.Map` -- polymorphic in key and value. The key ordering is
 CORE's `IOrd` interface: every operation that compares keys takes
-`@use { o: IOrd k }`, found by type at the call site, so `new` is just the
+`@ctx { o: IOrd k }`, found by type at the call site, so `new` is just the
 empty map and any ordered key works (base types, tuples lexicographically,
 anything `derive_ord` reaches). Lookup, insert and remove are
 O(log n); `to_list`/`keys`/`fold` visit entries in ascending key order. Maps are values: `insert`/`remove` return an updated
