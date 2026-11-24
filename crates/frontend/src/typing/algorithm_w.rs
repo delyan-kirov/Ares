@@ -48,6 +48,7 @@ impl<'a> Checker<'a> {
         self.ambient = self.top_level_ambient();
         if let Some(sig) = def.sig {
             let mut tvars = self.sig_tvars(sig);
+            self.unifier.hold_labels(tvars.values().copied());
             self.wildcards.clear();
             let sig_ty = self.ty_of_ast(sig, &mut tvars);
             let wildcards = std::mem::take(&mut self.wildcards);
@@ -282,6 +283,7 @@ impl<'a> Checker<'a> {
             self.unifier.collect_vars(p.req, &mut out);
         }
         self.unifier.postponed_vars(&mut out);
+        self.unifier.row_postponed_vars(&mut out);
         out
     }
 }
@@ -717,7 +719,10 @@ impl<'a> Checker<'a> {
 
     fn row_has(&self, row: Type, label: &str) -> bool {
         match self.unifier.head(row) {
-            TypeNode::RowExtend(l, _, rest) => l == label || self.row_has(rest, label),
+            TypeNode::RowExtend(l, _, rest) => {
+                let named = self.unifier.types.label_name(self.unifier.resolve(l));
+                named.is_some_and(|n| n.as_str() == label) || self.row_has(rest, label)
+            }
             _ => false,
         }
     }

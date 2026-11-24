@@ -40,6 +40,8 @@ impl<'a> Checker<'a> {
                 Some(ParamKind::Nat) => self.unifier.fresh_nat(),
                 Some(ParamKind::Type) => self.leveled_var(f.ty, &tvars),
                 Some(ParamKind::Row) => self.unifier.fresh(),
+                Some(ParamKind::Effect) => unreachable!("`kind_of_ast` gives no `@Effect`"),
+                None if self.is_effect_kind(f.ty) => self.unifier.fresh_label(),
                 None => continue,
             };
             tvars.insert(f.name, t);
@@ -94,6 +96,7 @@ impl<'a> Checker<'a> {
         }
         let t = match kind {
             ParamKind::Nat => self.unifier.fresh_nat(),
+            ParamKind::Effect => self.unifier.fresh_label(),
             _ => self.unifier.fresh(),
         };
         tvars.insert(name, t);
@@ -201,6 +204,7 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|u| {
                 let kind = match (u.row, self.unifier.is_size_var(u.ty)) {
+                    _ if self.unifier.is_label(u.ty) => ParamKind::Effect,
                     (true, _) => ParamKind::Row,
                     (false, true) => ParamKind::Nat,
                     (false, false) => ParamKind::Type,
@@ -240,14 +244,18 @@ impl<'a> Checker<'a> {
     }
 
     /// Check that each `@ctx` field of signature `sig` that unification solves
-    /// binds a type, a size or a row.
-    pub(super) fn check_ctx_fields(&mut self, sig: Aol<Ty>) {
+    /// binds a type, a size or a row, or with `labels` (a global's signature)
+    /// an effect.
+    pub(super) fn check_ctx_fields(&mut self, sig: Aol<Ty>, labels: bool) {
         let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return };
         for f in self.ast.slice(fields).to_vec() {
             if self.kind_of_ast(f.ty).is_some() {
                 continue;
             }
             if self.is_effect_kind(f.ty) {
+                if labels {
+                    continue;
+                }
                 self.errors.push(label_variable(Some(f.span)));
                 continue;
             }
@@ -456,6 +464,7 @@ impl<'a> Checker<'a> {
                 ParamKind::Type => self.unifier.fresh_universe(),
                 ParamKind::Nat => self.unifier.types.con(ty::NAT),
                 ParamKind::Row => self.unifier.types.con(StrId::intern("@Row")),
+                ParamKind::Effect => self.unifier.types.con(StrId::intern("@Effect")),
             })
             .collect();
         let one = self.unifier.types.add(TypeNode::Level(1));
@@ -469,6 +478,7 @@ impl<'a> Checker<'a> {
                 ParamKind::Type => from,
                 ParamKind::Nat => self.unifier.types.con(ty::NAT),
                 ParamKind::Row => self.unifier.types.con(StrId::intern("@Row")),
+                ParamKind::Effect => self.unifier.types.con(StrId::intern("@Effect")),
             };
             kind = self.unifier.types.arrow(from, kind);
         }
@@ -645,11 +655,26 @@ impl<'a> Checker<'a> {
         tvars: &mut HashMap<StrId, Type>,
     ) -> Type {
         let ast = self.ast;
-        let mut labels: Vec<(StrId, Type)> = Vec::new();
+        let mut labels: Vec<(Type, Type)> = Vec::new();
         let mut tails: Vec<Type> = Vec::new();
         if let Some(t) = tail {
-            let v = self.free_name(t, span, tvars, ParamKind::Row);
-            tails.push(v);
+            match tvars.get(&t).copied() {
+                // `<l>`: a row of the one effect `l` stands for.
+                Some(l) if self.unifier.is_label(l) && ast.slice(entries).is_empty() => {
+                    let args = self.unifier.label_args(l);
+                    labels.push((l, args));
+                }
+                Some(l) if self.unifier.is_label(l) => self.defer_type_error(diag!(
+                    Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0,
+                    "`{t}` is an effect, not a row";
+                    note: "the tail of a row after `|` is a variable of kind `@Row`, standing for any other effects";
+                    help: "write `{t}` among the row's effects, before the `|`"
+                )),
+                _ => {
+                    let v = self.free_name(t, span, tvars, ParamKind::Row);
+                    tails.push(v);
+                }
+            }
         }
         for entry in ast.slice(entries) {
             // `<!X>`: the labels are unknown until the driver splices them, so
@@ -660,6 +685,13 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let name = entry.name;
+            if name.as_str().starts_with(|c: char| c.is_ascii_lowercase()) {
+                if let Some(l) = self.label_var_of(name, entry, tvars) {
+                    let args = self.unifier.label_args(l);
+                    labels.push((l, args));
+                }
+                continue;
+            }
             if self.aliases.contains_key(&name) {
                 self.defer_type_error(diag!(
                     Code::TypeMismatch, entry.span, 0,
@@ -676,7 +708,7 @@ impl<'a> Checker<'a> {
                 }
             }
             let args = self.effect_label_args(name, ast.slice(entry.args), entry.span, tvars);
-            labels.push((name, args));
+            labels.push((self.unifier.types.con_id(name), args));
         }
         let mut row = match tails.split_first() {
             None => self.unifier.types.row_empty(),
@@ -690,9 +722,58 @@ impl<'a> Checker<'a> {
             }
         };
         for &(label, args) in labels.iter().rev() {
-            row = self.unifier.types.row_extend_args(label, args, row);
+            row = self.unifier.types.add(TypeNode::RowExtend(label, args, row));
         }
         row
+    }
+
+    /// The label variable a lowercase row entry `name` names: one of kind
+    /// `@Effect` the signature binds, or a new one reported unbound. `None`,
+    /// with the error deferred, for a variable of another kind. The parser
+    /// gives a label variable no arguments. See Note [Effect label variables].
+    fn label_var_of(&mut self, name: StrId, entry: &RowEntry, tvars: &mut HashMap<StrId, Type>) -> Option<Type> {
+        match tvars.get(&name).copied() {
+            Some(l) if self.unifier.is_label(l) => Some(l),
+            Some(t) => {
+                let what = if self.unifier.is_size_var(t) { "a size" } else { "a row or a type" };
+                self.defer_type_error(diag!(
+                    Code::TypeMismatch, entry.span, 0,
+                    "`{name}` is {what}, not an effect";
+                    note: "a row's entries are effects; a variable standing for one is bound `{name}: @Effect`"
+                ));
+                None
+            }
+            None => Some(self.free_name(name, Some(entry.span), tvars, ParamKind::Effect)),
+        }
+    }
+
+    /// The effect a written type names, as a row label and its arguments: an
+    /// effect applied to its arguments (`State @Int`), or a label variable in
+    /// scope. What an explicit `@ctx {.l = State}` gives a field `l: @Effect`.
+    pub(super) fn label_of_ast(&mut self, ty: Aol<Ty>, span: Span, tvars: &mut HashMap<StrId, Type>) -> Result<(Type, Type)> {
+        if let Ty::Var(name) = self.tnode(ty) {
+            let name = *name;
+            return match tvars.get(&name).copied() {
+                Some(l) if self.unifier.is_label(l) => Ok((l, self.unifier.label_args(l))),
+                _ => Err(diag!(Code::TypeMismatch, span, 0, "`{name}` is not an effect")),
+            };
+        }
+        let mut args = Vec::new();
+        let mut head = ty;
+        while let Ty::App(h, a) = self.tnode(head) {
+            args.push(*a);
+            head = *h;
+        }
+        args.reverse();
+        let Ty::Con { name, .. } = self.tnode(head) else {
+            return Err(diag!(Code::TypeMismatch, span, 0, "an effect is named, as in `State` or `State @Int`"));
+        };
+        let name = *name;
+        if let Some(d) = self.not_an_effect(name, span) {
+            return Err(d);
+        }
+        let args = self.effect_label_args(name, &args, span, tvars);
+        Ok((self.unifier.types.con_id(name), args))
     }
 
     /// Why the row label `name` is not an effect: it is a type, or nothing
@@ -1072,6 +1153,15 @@ impl<'a> Checker<'a> {
                     Code::TypeMismatch, self.ty_span_or_none(ty), 0,
                     "`{name}` is a level, which stands only in a universe";
                     help: "write `@Type {name}` for the universe at level `{name}`"
+                ));
+                self.unifier.fresh()
+            }
+            Ty::Var(name) if tvars.get(name).is_some_and(|t| self.unifier.is_label(*t)) => {
+                let name = *name;
+                self.defer_type_error(diag!(
+                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    "`{name}` is an effect, not a type";
+                    note: "a variable of kind `@Effect` stands for one effect of a row, as in `A -> <{name} | e> B`"
                 ));
                 self.unifier.fresh()
             }

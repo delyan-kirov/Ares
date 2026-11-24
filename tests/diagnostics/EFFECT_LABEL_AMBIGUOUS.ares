@@ -1,0 +1,11 @@
+$ @mod EFFECT_LABEL_AMBIGUOUS
+
+$ Ask : @Effect = ask : {} -> @Int,
+$ Tell : @Effect = tell : @Int -> {},
+
+$ pass : @ctx {l: @Effect, e: @Row} -> ({} -> <l | e> @Int) -> <l | e> @Int = \g => g {}
+
+# `<l | e>` against `<Ask, Tell>`: `l` may be either effect, so it is named
+# where `pass` is used.
+$ both : {} -> <Ask, Tell> @Int = pass <| \_ => let n = ask {} in tell n; n  #~ error[TYPE_ANNOTATION_REQUIRED]: cannot tell which effect stands for a label variable
+$ named : {} -> <Ask, Tell> @Int = pass @ctx {.l = Ask} <| \_ => let n = ask {} in tell n; n

@@ -71,7 +71,9 @@ pub enum TypeNode {
     /// label whose arguments are unknown, which matches any (an effect this
     /// module cannot see). Two occurrences of one label unify their arguments,
     /// so every operation performed under one handler shares its instance.
-    RowExtend(StrId, Type, Type),
+    /// The label is a [`TypeNode::Con`] naming the effect, or a variable of
+    /// kind `@Effect` standing for one. See Note [Effect label variables].
+    RowExtend(Type, Type, Type),
     /// A record type `{ label: ty, ... | rest }`, wrapping a record row built from
     /// [`TypeNode::RowField`] / [`TypeNode::RowEmpty`] / a tail [`TypeNode::Var`].
     /// A declared struct is nominal ([`TypeNode::Con`]); this is the structural,
@@ -301,7 +303,17 @@ impl Types {
 
     /// Extend a row with an effect label and its type arguments (a tuple).
     pub fn row_extend_args(&self, label: impl Into<StrId>, args: Type, rest: Type) -> Type {
-        self.add(TypeNode::RowExtend(label.into(), args, rest))
+        let label = self.con_id(label.into());
+        self.add(TypeNode::RowExtend(label, args, rest))
+    }
+
+    /// The effect a row label names, or `None` for a label variable (read
+    /// raw: `label` is already resolved).
+    pub fn label_name(&self, label: Type) -> Option<StrId> {
+        match self.node(label) {
+            TypeNode::Con(name) => Some(name),
+            _ => None,
+        }
     }
 
     pub fn record(&self, row: Type) -> Type {
@@ -704,7 +716,10 @@ pub fn display(
         let tail = loop {
             match types.node(cur) {
                 TypeNode::RowExtend(label, args, rest) => {
-                    let mut text = types.name(label).to_string();
+                    let mut text = match types.node(label) {
+                        TypeNode::Var(id) => namer(id),
+                        _ => types.label_name(label).map_or_else(String::new, |n| types.name(n).to_string()),
+                    };
                     if let TypeNode::Tuple(items) = types.node(args) {
                         for arg in types.items(items) {
                             text.push(' ');
@@ -787,6 +802,7 @@ fn closed_row_is(types: &Types, row: Type, want: &[&str]) -> bool {
     loop {
         match types.node(cur) {
             TypeNode::RowExtend(label, _, rest) => {
+                let Some(label) = types.label_name(label) else { return false };
                 if !labels.contains(&label) {
                     labels.push(label);
                 }

@@ -1,0 +1,5 @@
+$ @mod PARSE_EFFECT_LABEL_ARGS
+
+# A variable of kind `@Effect` stands for a whole effect, its arguments
+# included, so it is written bare.
+$ h : @ctx {l: @Effect, e: @Row} -> ({} -> <l @Int | e> @Int) -> @Int = \_ => 1  #~ error[UNEXPECTED_TOKEN]: an effect variable takes no arguments

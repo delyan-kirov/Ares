@@ -1,0 +1,54 @@
+$ @mod EFFECT_LABELS
+
+# A variable of kind `@Effect` stands for one effect of a row (#585), as a row
+# variable `e: @Row` stands for any number of them. `twice` runs a body that
+# performs exactly one effect, whichever it is; `with_counter` handles
+# `Counter` and passes one other effect `l` and the rest `e` through.
+#
+# A call solves `l` when exactly one effect of the other row can be it:
+# `twice`'s argument performs only `Counter`, so `l` is `Counter`, and
+# `total` leaves `with_counter` only `Log`. Where more than one could be, the
+# call names it, as `named` does: `with_counter @ctx { .l = Log }`. Inside its
+# own body, `l` is an effect of its own, apart from every other.
+
+$ Counter : @Effect = next : {} -> @Int,
+$ Log : @Effect = say : @Int -> {},
+
+$ twice : @ctx { l: @Effect } -> ({} -> <l> @Int) -> <l> @Int = \g => g {} + g {}
+
+$ count_from : @Int -> ({} -> <Counter> @Int) -> @Int = \start body =>
+    let h =
+        do body {}
+        is k | next u => \s => (k s) (s + 1) | x => \s => x
+    in
+    h start
+
+$ with_counter : @ctx { l: @Effect, e: @Row } -> @Int -> ({} -> <Counter, l | e> @Int)
+    -> <l | e> @Int = \start body =>
+    let h =
+        do body {}
+        is k | next u => \s => (k s) (s + 1) | x => \s => x
+    in
+    h start
+
+$ total : ({} -> <Log> @Int) -> @Int = \body =>
+    let h =
+        do body {}
+        is k | say n => \s => (k {}) (s + n) | x => \s => s + x
+    in
+    h 0
+
+$ logged : {} -> <Counter, Log> @Int =
+    let n = next {} in
+    say n;
+    n
+
+# 10 + 11
+$ counted : @Int = count_from 10 <| \_ => twice <| \_ => next {}
+# `say 5` logs 5, and the body returns 5
+$ inferred : @Int = total <| \_ => with_counter 5 logged
+$ named : @Int = total <| \_ => with_counter @ctx { .l = Log } 7 logged
+
+$ test : @Int = if counted == 21 && inferred == 10 && named == 14 => 0 else 1
+
+$ !assert (test == 0) "EFFECT_LABELS: a check failed"

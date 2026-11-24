@@ -293,15 +293,25 @@ impl Unifier {
 
     /// Retry the postponed size equations after a binding, until none moves.
     /// A binding one of them makes wakes nothing itself: this loop sees it.
-    /// See Note [Size patterns].
+    /// Postponed row equations wake the same way. See Note [Size patterns].
+    /// See Note [Effect label variables].
     pub(super) fn wake(&mut self) -> Result<()> {
-        if self.waking || self.postponed.iter().all(Option::is_none) {
+        if self.waking || (self.postponed.iter().all(Option::is_none) && !self.rows_postponed()) {
             return Ok(());
         }
         self.waking = true;
-        let r = self.wake_all();
+        let r = self.wake_sizes_and_rows();
         self.waking = false;
         r
+    }
+
+    fn wake_sizes_and_rows(&mut self) -> Result<()> {
+        loop {
+            self.wake_all()?;
+            if !self.wake_rows()? {
+                return Ok(());
+            }
+        }
     }
 
     fn wake_all(&mut self) -> Result<()> {

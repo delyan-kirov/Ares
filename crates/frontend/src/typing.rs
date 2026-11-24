@@ -78,6 +78,9 @@ pub(crate) enum ParamKind {
     Type,
     Nat,
     Row,
+    /// An effect of a row, `l: @Effect` (#585). Only a signature's `@ctx`
+    /// binds one: a declaration takes none.
+    Effect,
 }
 
 impl ParamKind {
@@ -87,6 +90,7 @@ impl ParamKind {
             ParamKind::Type => "@Type",
             ParamKind::Nat => "@Nat",
             ParamKind::Row => "@Row",
+            ParamKind::Effect => "@Effect",
         }
     }
 }
@@ -978,7 +982,7 @@ impl<'a> Checker<'a> {
                 self.qualified_ctx_sigs.insert((self.module_name, d.name), sig);
                 self.ctx_sigs.insert(d.name, sig);
             }
-            self.check_ctx_fields(sig);
+            self.check_ctx_fields(sig, true);
             let mut tvars = self.sig_tvars(sig);
             self.ty_reporting(sig, &mut tvars, Some(sig));
             let (exposed, ctx) = self.scheme_and_ctx(sig, d.ctx.is_some());
@@ -1107,10 +1111,18 @@ impl<'a> Checker<'a> {
         self.check(e, code)?;
         self.solve_pending()?;
         self.resolve_pending_ctx()?;
-        match self.unifier.unsolved_size() {
+        match self.unsolved_equation() {
             Some(d) => Err(d.fill_span(self.ast.expr_span(e).unwrap_or(Span::at(0)))),
             None => Ok(()),
         }
+    }
+
+    /// The first size or row equation left unsolved, as an error, after
+    /// dropping them all.
+    fn unsolved_equation(&mut self) -> Option<Diagnostic> {
+        let size = self.unifier.unsolved_size();
+        let row = self.unifier.unsolved_row();
+        size.or(row)
     }
 
     /// The ambient a top-level body starts under: the pure closed row normally, or
@@ -1168,7 +1180,7 @@ impl<'a> Checker<'a> {
         self.solve_pending()?;
         self.resolve_pending_ctx()?;
         self.settle_sizes();
-        if let Some(d) = self.unifier.unsolved_size() {
+        if let Some(d) = self.unsolved_equation() {
             let first = &defs[component[0]];
             let span = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
             return Err(d.fill_span(span));
@@ -1190,6 +1202,7 @@ impl<'a> Checker<'a> {
         for &i in component {
             self.check_level_if(&defs[i], level_mark)?;
         }
+        self.unifier.release_labels();
         self.unifier.leave_level();
         let mono = self.pending_vars();
         for (&i, decl) in component.iter().zip(&declared) {
@@ -1253,6 +1266,8 @@ impl<'a> Checker<'a> {
     ) {
         self.unifier.unwind_level(level);
         let _ = self.unifier.unsolved_size();
+        let _ = self.unifier.unsolved_row();
+        self.unifier.release_labels();
         self.scopes.truncate(1);
         self.local_sites.truncate(1);
         self.pending.clear();

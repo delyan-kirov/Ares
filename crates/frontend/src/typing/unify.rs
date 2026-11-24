@@ -93,6 +93,18 @@ pub struct Unifier {
     /// The universe of each declared struct, union and effect as a function
     /// of its parameters' levels. See Note [Declaration levels].
     pub decl_levels: HashMap<StrId, levels::DeclLevel>,
+    /// Variables of kind `@Effect`: each stands for one effect of a row.
+    /// See Note [Effect label variables].
+    label_vars: HashSet<VarId>,
+    /// The label variables of the signatures being checked, which their
+    /// bodies see as effects of their own, distinct from every other.
+    rigid_labels: HashSet<VarId>,
+    /// The arguments variable of each label variable a signature names, which
+    /// all its occurrences share.
+    label_args: HashMap<VarId, Type>,
+    /// Row equations waiting for a label variable to be solved, `None` once
+    /// solved. See Note [Effect label variables].
+    row_postponed: Vec<Option<rows::RowPostponed>>,
 }
 
 /// A type in weak head normal form, as conversion compares it. See
@@ -122,6 +134,14 @@ enum Undo {
     VarLevel(VarId),
     /// Drop the last waiting level constraint again.
     LevelLe,
+    /// Drop this id from the `@Effect`-kinded set again.
+    LabelVar(VarId),
+    /// Forget this label variable's arguments variable again.
+    LabelArgs(VarId),
+    /// Drop the last postponed row equation again.
+    RowPostponed,
+    /// Put this postponed row equation back, unsolved.
+    RowWoken(usize, rows::RowPostponed),
 }
 
 /// A checkpoint of the [`Unifier`] state, taken by [`Unifier::save`] and rewound by
@@ -155,6 +175,10 @@ impl Unifier {
             scheme_le: Vec::new(),
             scheme_le_by_var: HashMap::new(),
             decl_levels: HashMap::new(),
+            label_vars: HashSet::new(),
+            rigid_labels: HashSet::new(),
+            label_args: HashMap::new(),
+            row_postponed: Vec::new(),
         }
     }
 
@@ -312,6 +336,16 @@ impl Unifier {
                 Undo::LevelLe => {
                     self.level_le.pop();
                 }
+                Undo::LabelVar(id) => {
+                    self.label_vars.remove(&id);
+                }
+                Undo::LabelArgs(id) => {
+                    self.label_args.remove(&id);
+                }
+                Undo::RowPostponed => {
+                    self.row_postponed.pop();
+                }
+                Undo::RowWoken(i, c) => self.row_postponed[i] = Some(c),
             }
         }
         self.vars.truncate(save.vars);
@@ -408,8 +442,8 @@ impl Unifier {
                 self.types.tuple(zonked)
             }
             TypeNode::RowExtend(label, args, rest) => {
-                let (a, r) = (self.zonk(args), self.zonk(rest));
-                self.types.add(TypeNode::RowExtend(label, a, r))
+                let (l, a, r) = (self.zonk(label), self.zonk(args), self.zonk(rest));
+                self.types.add(TypeNode::RowExtend(l, a, r))
             }
             TypeNode::Record(row) => {
                 let r = self.zonk(row);
@@ -570,6 +604,7 @@ impl Unifier {
             }
         };
         self.check_kind(id, ty)?;
+        self.check_label_kind(id, ty)?;
         self.occurs_and_adjust(id, level, ty)?;
         self.bind_level(id, ty)?;
         self.set_var(id, VarState::Linked(ty));
@@ -619,7 +654,8 @@ impl Unifier {
                 }
                 Ok(())
             }
-            TypeNode::RowExtend(_, args, rest) => {
+            TypeNode::RowExtend(label, args, rest) => {
+                self.occurs_and_adjust(id, level, label)?;
                 self.occurs_and_adjust(id, level, args)?;
                 self.occurs_and_adjust(id, level, rest)
             }
@@ -698,7 +734,8 @@ impl Unifier {
                     self.generalize_rec(t, mono);
                 }
             }
-            TypeNode::RowExtend(_, args, rest) => {
+            TypeNode::RowExtend(label, args, rest) => {
+                self.generalize_rec(label, mono);
                 self.generalize_rec(args, mono);
                 self.generalize_rec(rest, mono);
             }
@@ -738,7 +775,8 @@ impl Unifier {
                     self.collect_vars(t, out);
                 }
             }
-            TypeNode::RowExtend(_, args, rest) => {
+            TypeNode::RowExtend(label, args, rest) => {
+                self.collect_vars(label, out);
                 self.collect_vars(args, out);
                 self.collect_vars(rest, out);
             }
@@ -844,6 +882,12 @@ impl Unifier {
                             self.mark_nat(fid);
                         }
                     }
+                    // A refreshed label variable stays `@Effect`-kinded.
+                    if self.is_label_var(id) {
+                        if let TypeNode::Var(fid) = self.types.node(fresh) {
+                            self.mark_label(fid);
+                        }
+                    }
                     mapping.insert(id, fresh);
                     if let Some(l) = self.var_level(id) {
                         let l = self.instantiate_with(l, mapping);
@@ -902,9 +946,10 @@ impl Unifier {
                 self.types.tuple(mapped)
             }
             TypeNode::RowExtend(label, args, rest) => {
+                let l = self.instantiate_with(label, mapping);
                 let a = self.instantiate_with(args, mapping);
                 let r = self.instantiate_with(rest, mapping);
-                self.types.add(TypeNode::RowExtend(label, a, r))
+                self.types.add(TypeNode::RowExtend(l, a, r))
             }
             TypeNode::Record(row) => {
                 let r = self.instantiate_with(row, mapping);

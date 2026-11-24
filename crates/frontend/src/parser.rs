@@ -407,6 +407,12 @@ impl<'a> Parser<'a> {
         }
         Ok(self.intern(self.text(t)))
     }
+    /// Is the next token a lowercase name in an effect row not followed by
+    /// its `>`: a variable of kind `@Effect` (`<l | e>`), not the row's tail?
+    fn at_label_variable(&mut self) -> Result<bool> {
+        let next = self.peek_at(1)?;
+        Ok(!(matches!(next.kind, Kind::Op) && self.text(next).starts_with('>')))
+    }
     /// Is the next token a lowercase-initial word, i.e. a type variable?
     fn at_tyvar(&mut self) -> Result<bool> {
         let t = self.peek()?;
@@ -2032,9 +2038,11 @@ impl<'a> Parser<'a> {
 
     /// An optional effect row right after `->`: `<>`, `<e>`, `<A, B>`,
     /// `<A, B | e>`, or `<| e>`. Effect names are Capitalized (user effects) or
-    /// `@`-form (builtin effects like `@IO`); a lowercase name is the
-    /// row-polymorphic tail variable. An entry may be a splice `<!X, @IO>`; what
-    /// each name denotes is the checker's call.
+    /// `@`-form (builtin effects like `@IO`); a lowercase name after `|`, or
+    /// alone, is the row-polymorphic tail variable, and one among the entries
+    /// (`<l, A | e>`) a variable of kind `@Effect`, which takes no
+    /// arguments. An entry may be a splice `<!X, @IO>`; what each name
+    /// denotes is the checker's call.
     fn parse_effect_row_opt(&mut self) -> Result<Option<EffectRow>> {
         if self.at_op("<>")? {
             self.bump()?;
@@ -2060,7 +2068,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.bump()?; // '<'
-        if self.at_tyvar()? {
+        if self.at_tyvar()? && !self.at_label_variable()? {
             let at = self.here()?;
             let tail = self.expect_tyvar("expected a type variable in the effect row")?;
             let tail_span = Some(Span::new(at, self.last_end));
@@ -2091,6 +2099,10 @@ impl<'a> Parser<'a> {
             }
             let name = self.expect_effect_label()?;
             let mut args = Vec::new();
+            if name.as_str().starts_with(|c: char| c.is_ascii_lowercase()) && self.starts_type_arg()? {
+                let t = self.peek()?;
+                return Err(self.unexpected(&t, "an effect variable takes no arguments: it stands for a whole effect"));
+            }
             while self.starts_type_arg()? {
                 args.push(self.parse_type_arg()?);
             }

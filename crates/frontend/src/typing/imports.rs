@@ -492,9 +492,15 @@ impl<'a> Checker<'a> {
                 self.unifier.types.arrow_eff(f, t, e)
             }
             TypeNode::RowExtend(label, args, rest) => {
+                let l = self.import_ty(src, label, map);
+                if let (TypeNode::Var(from), TypeNode::Var(to)) = (src.types.node(label), self.unifier.types.node(l)) {
+                    if src.is_label_var(from) {
+                        self.unifier.mark_label(to);
+                    }
+                }
                 let a = self.import_ty(src, args, map);
                 let r = self.import_ty(src, rest, map);
-                self.unifier.types.add(TypeNode::RowExtend(label, a, r))
+                self.unifier.types.add(TypeNode::RowExtend(l, a, r))
             }
             TypeNode::Tuple(items) => {
                 let items = self.unifier.types.items(items).to_vec();

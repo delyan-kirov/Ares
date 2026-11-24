@@ -720,7 +720,7 @@ impl<'a> Checker<'a> {
                         t
                     }
                     Some(ParamKind::Row) => self.unifier.fresh(),
-                    None => continue,
+                    Some(ParamKind::Effect) | None => continue,
                 };
                 tvars.insert(f.name, t);
             }
@@ -1193,7 +1193,7 @@ impl<'a> Checker<'a> {
             for op in self.ast.slice(*ops).iter() {
                 let op_name = op.name;
                 self.check_own_ctx(effect, op_name, &params, self.ast.ctx_params.get(op.ty).copied())?;
-                self.check_ctx_fields(op.ty);
+                self.check_ctx_fields(op.ty, false);
                 let scheme = self.op_scheme(effect, &params, op.ty)?;
                 op_schemes.insert(op_name, scheme);
                 per_op.entry(op_name).or_default().push(scheme);
@@ -1549,6 +1549,7 @@ impl<'a> Checker<'a> {
         match kind {
             ParamKind::Nat => self.unifier.fresh_nat(),
             ParamKind::Type | ParamKind::Row => self.unifier.fresh(),
+            ParamKind::Effect => self.unifier.fresh_label(),
         }
     }
 
@@ -1788,11 +1789,12 @@ struct LevelDecl {
     span: Span,
 }
 
-/// A binder of kind `@Effect`, a variable standing for one effect of a row.
+/// A binder of kind `@Effect` where only a global's signature may bind one:
+/// a declaration's parameter, or an effect operation's own `@ctx`.
 pub(super) fn label_variable(span: Option<Span>) -> Diagnostic {
     diag!(
         Code::Unsupported, span.unwrap_or(Span::at(0)), 0,
-        "a variable of kind `@Effect` is not supported yet";
-        note: "a row holds named effects; a row variable stands for any others, as in `@ctx {{e: @Row}} -> ... -> <A | e> B`"
+        "a variable of kind `@Effect` is bound only in a global's signature";
+        note: "a global binds one in its `@ctx`, as in `@ctx {{l: @Effect, e: @Row}} -> ({{}} -> <l | e> a) -> <l | e> a`"
     )
 }

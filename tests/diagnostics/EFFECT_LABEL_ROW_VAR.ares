@@ -1,0 +1,6 @@
+$ @mod EFFECT_LABEL_ROW_VAR
+
+$ Ask : @Effect = ask : {} -> @Int,
+
+# A row variable stands for any number of effects, so it is no entry of a row.
+$ k : @ctx {e: @Row, r: @Row} -> ({} -> <e, Ask | r> @Int) -> @Int = \_ => 1  #~ error[TYPE_MISMATCH]: `e` is a row or a type, not an effect

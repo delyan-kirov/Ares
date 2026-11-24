@@ -1,0 +1,7 @@
+$ @mod EFFECT_LABEL_RIGID
+
+$ Ask : @Effect = ask : {} -> @Int,
+
+# The body sees `l` as an effect of its own: the caller chooses it, so the
+# body may not perform `Ask` in its place.
+$ f : @ctx {l: @Effect} -> ({} -> <l> @Int) -> <l> @Int = \g => g {} + ask {}  #~ error[TYPE_MISMATCH]: effect `Ask` is performed but not handled

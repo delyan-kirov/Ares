@@ -1,4 +1,5 @@
 $ @mod EFFECT_LABEL_VARIABLE
 
-# A variable standing for one effect waits for label variables in rows.
-$ f : @ctx {l: @Effect, e: @Row} -> ({} -> <e> @Int) -> <e> @Int = \g => g {}  #~ error[UNSUPPORTED]: a variable of kind `@Effect` is not supported yet
+# A variable of kind `@Effect` is bound in a global's signature, not by a
+# declaration's parameter.
+$ Task : (l: @Effect) -> @Type = @struct run: {} -> @Int  #~ error[UNSUPPORTED]: a variable of kind `@Effect` is bound only in a global's signature
