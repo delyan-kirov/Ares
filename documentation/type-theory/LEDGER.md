@@ -230,6 +230,7 @@ that the re-check never resolves a name.
 | Frontend-Level-Polymorphism | ST14 | not checked: not vendored; the frontend checker's mirror of Level-Polymorphism, with constraints between levels stated by an `if` or inferred from the body | published-uncovered | - | - | yes |
 | Frontend-Data-Level | PLT25 | Section 4.1, the fields of an inductive definition in its universe; the frontend checker's mirror of Data-Form and Data-Ctor, for structs and unions | published | PLT25 Consistency | - | yes |
 | Frontend-Effect-Level | - | an effect, of kind `@Effect` and in no universe, has the level of the largest of its parameters' and its operations' types, and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
+| Frontend-Effect-Label-Var | - | a variable of kind `@Effect` in a row is one effect: rigid in the body that binds it, and at a use solved only when one effect of the other row can be it, the equation postponed until then and an error if still postponed when the definition is checked | conjecture | - | #585 | yes |
 | Frontend-Eq-Form | PT23 | Fig. 2, ∼-Form in Ω; the frontend checker's mirror of Eq-Form, for sides that are sizes, booleans or types, of one sort, two types at one level | published | PT23 Consistency | - | yes |
 | Frontend-Prop-Impredicative | PT23 | Fig. 2, Π-Form with ℛ(s, Ω) = Ω; a function type whose result is a proposition is a proposition | published | PT23 Consistency | - | yes |
 | Frontend-Refl | PT22 | Fig. 2, Refl; the frontend checker's mirror, with its conversion (unification, sizes as polynomials, booleans folded) | published | PT22 Normalisation | - | yes |
@@ -267,7 +268,13 @@ universe that holds every member, and a member's own `@ctx` type variable is a
 field in `@Type u + 1`. Frontend-Effect-Level has no source: no effect system
 in the survey (`survey/9-effects.md`) gives effects universes. It reads an
 effect as the signature of its free monad, so an operation generic in a type
-makes the effect large.
+makes the effect large. Frontend-Effect-Label-Var has no source either:
+Leijen's scoped-label rows (TFP 2005), which the frontend's row unification
+follows, have no label variables. It keeps unification's answers most
+general by never choosing among several: a step that would pick one label
+of a row for a label variable waits, as a size equation that is not a
+pattern waits (Note [Effect label variables] in
+`crates/frontend/src/typing/unify/rows.rs`).
 
 The proposition rows (#539) are the frontend checker's equality. Its sides
 are the values the checker evaluates while it checks a type: sizes (modular

@@ -350,8 +350,8 @@ is a dependent function type, which comes with dependent types (#406).
 
 ## 3.6 Type variables and `@ctx`
 A signature binds its type variables in a `@ctx` parameter (#537): a type
-`t: @Type`, a size `n: @Nat` or an effect row `e: @Row`, each solved by
-unification. The same record names the instances the signature needs, fields
+`t: @Type`, a size `n: @Nat`, an effect row `e: @Row` or one effect
+`l: @Effect` (8.5), each solved by unification. The same record names the instances the signature needs, fields
 whose type is a `@Class`, which instance search solves (7.4): the sort of a
 field's type decides how it is solved. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
 `(t: @Type)` parameter, or a global (3.10). A name nothing binds is a
@@ -1374,8 +1374,10 @@ does not sit inside `@Type`: an effect is the type of nothing. So a type in a
 row is a kind error (`<@Int>`, `TYPE_MISMATCH`), as is an effect where a type
 belongs (`Boom -> @Int`), and a label that names no effect declared here or
 imported is `TYPE_UNBOUND`. The builtin effects are `@IO`, `@Meta` and
-`@Shell`. A body `= name : Type, ...` under any other kind is a parse error,
-and a variable of kind `@Effect` (`@ctx {l: @Effect}`) is not supported yet.
+`@Shell`. A body `= name : Type, ...` under any other kind is a parse error.
+A global's signature may bind a variable of kind `@Effect`, standing for one
+effect of a row (section 8.5); a declaration's parameter or an operation's
+`@ctx` may not (`UNSUPPORTED`).
 
 ```ares
 $ State : (s: @Type) -> @Effect = get : {} -> s, put : s -> {},
@@ -1479,6 +1481,39 @@ accepts effectful ones.
 ```ares
 $ map : @ctx {a: @Type, e: @Row, b: @Type} -> (a -> <e> b) -> @Vec a -> <e> @Vec b = \f xs =>
 	xs |> \ | [] => [] | h :: t => f h :: map f t
+```
+
+A row variable `e: @Row` stands for any number of effects; a variable of kind
+`@Effect`, `l: @Effect`, stands for exactly one, its arguments included
+(#585). It is written among a row's entries, bare (`<l | e>`, `<A, l>`,
+`<l>`), never after `|`, never applied to arguments and never where a type
+belongs; each of those is an error. Inside the body of the definition whose
+signature binds it, `l` is an effect of its own, different from every other,
+so a handler of `Counter` digs `Counter` out of `<Counter, l | e>` and
+leaves `<l | e>`.
+
+```ares
+$ Counter : @Effect = next : {} -> @Int,
+$ twice : @ctx {l: @Effect} -> ({} -> <l> @Int) -> <l> @Int = \g => g {} + g {}
+$ with_counter : @ctx {l: @Effect, e: @Row} -> @Int -> ({} -> <Counter, l | e> @Int) -> <l | e> @Int =
+	\start body =>
+		let h = do body {} is k | next u => \s => (k s) (s + 1) | x => \s => x in
+		h start
+```
+
+A use solves `l` by unification, but only when the answer is unique.
+Matching `<l | e>` with `<A, B | r>` has several answers (`l` is `A`, or `B`,
+or an effect of `r`), so such an equation waits until a later step decides
+`l`; a closed row with one place left decides it at once (`<l>` against
+`<A>`, or `A` sought in `<B, l>`). An equation still waiting when the
+definition is checked is `TYPE_ANNOTATION_REQUIRED`, and the use names the
+effect itself:
+
+```ares
+$ Ask : @Effect = ask : {} -> @Int,
+$ Tell : @Effect = tell : @Int -> {},
+$ pass : @ctx {l: @Effect, e: @Row} -> ({} -> <l | e> @Int) -> <l | e> @Int = \g => g {}
+$ both : {} -> <Ask, Tell> @Int = pass @ctx {.l = Ask} <| \_ => let n = ask {} in tell n; n
 ```
 
 ## 8.6 `@finale`
