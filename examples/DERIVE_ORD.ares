@@ -11,8 +11,7 @@ $ @mod DERIVE_ORD
 $ @import ARESxDERIVE
 
 $ Coord : @Type = @struct
-    x: @Int,
-    y: @Int,
+    x y: @Int,
 
 $ Geom : @Type = @union
     Dot: {},

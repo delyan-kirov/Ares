@@ -11,7 +11,7 @@ $ Prob : @Effect = pick : @Int -> @Int, observe : Bool -> {},
 
 # The weight of a set of worlds: `yes` of them made the model true, `all`
 # survived every `observe`, each worth `1 / den`.
-$ Mass : @Type = @struct yes: @Int, all: @Int, den: @Int
+$ Mass : @Type = @struct yes all den: @Int
 
 $ gcd : @Int -> @Int -> @Int = \a b => if b == 0 => a else gcd b (a % b)
 

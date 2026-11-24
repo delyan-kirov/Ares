@@ -1055,3 +1055,34 @@ fn a_union_may_state_its_signature_and_results() {
     // Without a lambda binding the parameter it stays a definition.
     assert!(matches!(&items[1], Item::Def { .. }));
 }
+
+#[test]
+fn grouped_field_binders_expand_to_one_field_per_name() {
+    // `a b: T` declares `a: T, b: T`, each with its own parse of `T`.
+    let p = prog("$ @mod M\n$ swap : @ctx { a b: @Type, o: IOrd a } -> {a, b} -> {b, a} = \\{x, y} => {y, x}");
+    let Item::Def { sig: Some(sig), .. } = p.ast.slice(p.program.items)[0] else { panic!("expected a def") };
+    let ctx = p.ast.slice(*p.ast.ctx_params.get(sig).expect("the `@ctx` fields"));
+    let names: Vec<&str> = ctx.iter().map(|f| p.ast.text(f.name)).collect();
+    assert_eq!(names, ["a", "b"]);
+    assert_ne!(ctx[0].ty, ctx[1].ty, "each name parses the group's type afresh");
+
+    let fields = |src: &str| {
+        let p = prog(src);
+        match p.ast.slice(p.program.items).last() {
+            Some(Item::Struct { fields, .. }) => p.ast.slice(*fields).iter().map(|f| p.ast.text(f.name).to_string()).collect::<Vec<_>>(),
+            Some(Item::Effect { ops, .. }) => p.ast.slice(*ops).iter().map(|f| p.ast.text(f.name).to_string()).collect(),
+            _ => panic!("expected a struct or an effect"),
+        }
+    };
+    assert_eq!(fields("$ @mod M\n$ V : @Type = @struct x y z: @Float64"), ["x", "y", "z"]);
+    assert_eq!(fields("$ @mod M\n$ V : @Type = @struct x y: @Int, n: @Int"), ["x", "y", "n"]);
+    assert_eq!(fields("$ @mod M\n$ E : @Effect = ask tell: {} -> @Int, put : @Int -> {},"), ["ask", "tell", "put"]);
+
+    // Union payloads and record types group the same way; a run of names
+    // without a `:` is still an application.
+    assert!(parse("$ @mod M\n$ S : @Type = @union Rect: { w h: @Int }, Dot").is_ok());
+    assert!(parse("$ @mod M\n$ S : (a: @Type) -> @Type = @union One: { List a, n: @Int }").is_ok());
+    assert!(parse("$ @mod M\n$ P : @Type = { px py: @Int }").is_ok());
+    assert!(parse("$ @mod M\n$ f : @ctx { a b }  -> a = 1").is_err());
+    assert!(parse("$ @mod M\n$ E : @Effect = Ask tell: {} -> @Int,").is_err());
+}

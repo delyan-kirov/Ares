@@ -19,7 +19,7 @@ $ nested : { @Int, { @Int, @Int } } = { 1, { 2, 3 } }
 $ chk_nested : @Int = if nested.1.0 + nested.1.1 == 5 => 0 else 1
 
 # Tuples are first-class: function arguments, results, and generics.
-$ swap : @ctx { a: @Type, b: @Type } -> { a, b } -> { b, a } = \t => { t.1, t.0 }
+$ swap : @ctx { a b: @Type } -> { a, b } -> { b, a } = \t => { t.1, t.0 }
 $ chk_swap : @Int = if (swap p).1 == 42 => 0 else 1
 
 $ area : { @Int, @Int } -> @Int = \d => d.0 * d.1

@@ -31,10 +31,10 @@ fn a_long_match_breaks_its_arms_under_the_head() {
 
 #[test]
 fn a_trailing_comma_keeps_a_declaration_exploded() {
-    let src = "$ @mod M\n$ P : @Type = @struct\n  x: @Int, y: @Int,\n$ Q : @Type = @struct x: @Int, y: @Int,\n";
+    let src = "$ @mod M\n$ P : @Type = @struct\n  x: @Int, y: @Nat,\n$ Q : @Type = @struct x: @Int, y: @Nat,\n";
     assert_eq!(
         fmt(src),
-        "$ @mod M\n$ P : @Type = @struct\n    x: @Int,\n    y: @Int,\n$ Q : @Type = @struct x: @Int, y: @Int,\n"
+        "$ @mod M\n$ P : @Type = @struct\n    x: @Int,\n    y: @Nat,\n$ Q : @Type = @struct x: @Int, y: @Nat,\n"
     );
 }
 
@@ -299,4 +299,23 @@ fn a_break_at_a_forms_chosen_point_keeps_it_a_block() {
     for src in [arms, block, let_block, if_block, is, clauses, both] {
         assert_eq!(fmt(&fmt(src)), fmt(src));
     }
+}
+
+#[test]
+fn adjacent_fields_of_one_type_merge_into_a_group() {
+    let m = |src: &str| fmt(&format!("$ @mod M\n{src}\n"));
+    assert_eq!(m("$ f : @ctx { a: @Type, b: @Type } -> a = 1"), "$ @mod M\n$ f : @ctx { a b: @Type } -> a = 1\n");
+    assert_eq!(m("$ V : @Type = @struct x: @Int, y: @Int, z: @Int"), "$ @mod M\n$ V : @Type = @struct x y z: @Int\n");
+    assert_eq!(m("$ S : @Type = @union R: { w: @Int, h: @Int }, D"), "$ @mod M\n$ S : @Type = @union R: { w h: @Int }, D\n");
+    assert_eq!(m("$ E : @Effect = get : {} -> @Int, ask : {} -> @Int"), "$ @mod M\n$ E : @Effect = get ask : {} -> @Int\n");
+    assert_eq!(m("$ P : @Type = { x: @Int, y: @Int | r }"), "$ @mod M\n$ P : @Type = { x: @Int, y: @Int | r }\n");
+    // Only adjacent fields of one type merge, and never across a comment.
+    assert_eq!(m("$ f : @ctx { n: @Nat, a: @Type, m: @Nat } -> a = 1"), "$ @mod M\n$ f : @ctx { n: @Nat, a: @Type, m: @Nat } -> a = 1\n");
+    let commented = "$ @mod M\n$ V : @Type = @struct\n    # across\n    x: @Int,\n    # down\n    y: @Int,\n";
+    assert_eq!(fmt(commented), commented);
+    // A row's commas are not the list's.
+    assert_eq!(
+        m("$ f : @ctx { e: @Row } -> { p: {} -> <A, B> @Int, q: {} -> <A, B> @Int } -> @Int = 0"),
+        "$ @mod M\n$ f : @ctx { e: @Row } -> { p q: {} -> <A, B> @Int } -> @Int = 0\n"
+    );
 }

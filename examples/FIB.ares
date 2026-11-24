@@ -31,8 +31,7 @@ $ sample : @Vec @Int = to 0 3
 $ len3 : @Int = len sample |> \ | 3 => 0 | _ => 1
 
 $ Point: @Type = @struct
-    x: @Int,
-    y: @Int,
+    x y: @Int,
 
 # `+` on a user type comes from an `IAdd` instance. The interface and the operator
 # are CORE's; a module adds the type by defining a value of the interface type.

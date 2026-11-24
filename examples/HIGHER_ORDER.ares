@@ -5,7 +5,7 @@ $ @mod HIGHER_ORDER
 
 $ id : @ctx { t: @Type } -> t -> t = \x => x
 
-$ const : @ctx { t: @Type, u: @Type } -> t -> u -> t = \x y => x
+$ const : @ctx { t u: @Type } -> t -> u -> t = \x y => x
 
 $ apply_twice : @ctx { t: @Type } -> (t -> t) -> t -> t = \f x => f (f x)
 

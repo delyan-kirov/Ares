@@ -31,10 +31,10 @@ $ tail : @ctx { t: @Type } -> List t -> List t = \l =>
 $ reverse_onto : @ctx { t: @Type } -> List t -> List t -> List t = \acc l =>
     l |> \ | List.Cons.{ h, t } => reverse_onto List.Cons.{ h, acc } t | _ => acc
 
-$ concat_map : @ctx { a: @Type, b: @Type } -> (a -> List b) -> List a -> List b = \f l =>
+$ concat_map : @ctx { a b: @Type } -> (a -> List b) -> List a -> List b = \f l =>
     l |> \ | List.Cons.{ h, t } => list_append (f h) (concat_map f t) | _ => List.Nil
 
-$ lookup : @ctx { k: @Type, v: @Type } -> (k -> Bool) -> List { k, v } -> Opt v = \p l =>
+$ lookup : @ctx { k v: @Type } -> (k -> Bool) -> List { k, v } -> Opt v = \p l =>
     l |> \ | List.Cons.{ h, t } => if p h.0 => Opt.Some.{ h.1 } else lookup p t | _ => Opt.None
 
 $ to_vec : @ctx { t: @Type } -> List t -> @Vec t = \l => to_vec_onto (@vec_new {}) l
@@ -45,8 +45,8 @@ $ from_vec : @ctx { t: @Type } -> @Vec t -> List t = \v => from_vec_onto List.Ni
 
 # Iteration walks the spine one cons at a time. The tail slot is lazy, so a list
 # the body stops early on is only ever built as far as the body looked.
-$ impl_IFor_for_List : @ctx { a: @Type, e: @Type } -> IFor (List a) a e = .{ .each = for_list }
-$ impl_IFormap_for_List : @ctx { a: @Type, b: @Type, e: @Type } -> IFormap (List a) a (List b) b e =
+$ impl_IFor_for_List : @ctx { a e: @Type } -> IFor (List a) a e = .{ .each = for_list }
+$ impl_IFormap_for_List : @ctx { a b e: @Type } -> IFormap (List a) a (List b) b e =
     .{ .mapping = formap_list }
 $ impl_ILen_for_List : @ctx { t: @Type } -> ILen (List t) = .{ .len = \l => length_onto 0 l }
 $ impl_IEmpty_for_List : @ctx { t: @Type } -> IEmpty (List t) =
@@ -61,16 +61,13 @@ $ impl_IConcat_for_List : @ctx { t: @Type } -> IConcat (List (List t)) (List t) 
 # A `[xs, ys, ..]` literal of lists, joined into one list.
 $ impl_IConcat_for_vec_of_List : @ctx { t: @Type } -> IConcat (@Vec (List t)) (List t) =
     .{ .concat = \ls => list_concat (from_vec ls) }
-$ impl_IFmap_for_List : @ctx { a: @Type, b: @Type } -> IFmap (List a) a (List b) b =
-    .{ .fmap = list_map }
+$ impl_IFmap_for_List : @ctx { a b: @Type } -> IFmap (List a) a (List b) b = .{ .fmap = list_map }
 $ impl_IFilter_for_List : @ctx { t: @Type } -> IFilter (List t) (t -> Bool) =
     .{ .filter = list_filter }
-$ impl_IFilterMap_for_List : @ctx { a: @Type, b: @Type } -> IFilterMap (List a) a (List b) b =
+$ impl_IFilterMap_for_List : @ctx { a b: @Type } -> IFilterMap (List a) a (List b) b =
     .{ .filter_map = list_filter_map }
-$ impl_IFoldl_for_List : @ctx { t: @Type, a: @Type } -> IFoldl (List t) a t =
-    .{ .foldl = list_foldl }
-$ impl_IFoldr_for_List : @ctx { t: @Type, a: @Type } -> IFoldr (List t) a t =
-    .{ .foldr = list_foldr }
+$ impl_IFoldl_for_List : @ctx { t a: @Type } -> IFoldl (List t) a t = .{ .foldl = list_foldl }
+$ impl_IFoldr_for_List : @ctx { t a: @Type } -> IFoldr (List t) a t = .{ .foldr = list_foldr }
 $ impl_ITake_for_List : @ctx { t: @Type } -> ITake (List t) = .{ .take = list_take }
 $ impl_IDrop_for_List : @ctx { t: @Type } -> IDrop (List t) = .{ .drop = list_drop }
 $ impl_ITakeWhile_for_List : @ctx { t: @Type } -> ITakeWhile (List t) t =
@@ -80,7 +77,7 @@ $ impl_IDropWhile_for_List : @ctx { t: @Type } -> IDropWhile (List t) t =
 $ impl_IAny_for_List : @ctx { t: @Type } -> IAny (List t) t = .{ .any = list_any }
 $ impl_IAll_for_List : @ctx { t: @Type } -> IAll (List t) t = .{ .all = list_all }
 $ impl_IFind_for_List : @ctx { t: @Type } -> IFind (List t) t = .{ .find = list_find }
-$ impl_IZip_for_List : @ctx { a: @Type, b: @Type } -> IZip (List a) (List b) (List { a, b }) =
+$ impl_IZip_for_List : @ctx { a b: @Type } -> IZip (List a) (List b) (List { a, b }) =
     .{ .zip = list_zip }
 
 $ @private
@@ -120,7 +117,7 @@ $ list_append : @ctx { t: @Type } -> List t -> List t -> List t = \xs ys =>
 $ list_concat : @ctx { t: @Type } -> List (List t) -> List t = \ls =>
     ls |> \ | List.Cons.{ h, t } => list_append h (list_concat t) | _ => List.Nil
 
-$ list_map : @ctx { a: @Type, b: @Type } -> (a -> b) -> List a -> List b = \f l =>
+$ list_map : @ctx { a b: @Type } -> (a -> b) -> List a -> List b = \f l =>
     l |> \ | List.Cons.{ h, t } => List.Cons.{ f h, list_map f t } | _ => List.Nil
 
 $ list_filter : @ctx { t: @Type } -> (t -> Bool) -> List t -> List t = \p l =>
@@ -128,7 +125,7 @@ $ list_filter : @ctx { t: @Type } -> (t -> Bool) -> List t -> List t = \p l =>
         | List.Cons.{ h, t } => if p h => List.Cons.{ h, list_filter p t } else list_filter p t
         | _                  => List.Nil
 
-$ list_filter_map : @ctx { a: @Type, b: @Type } -> (a -> Opt b) -> List a -> List b = \f l =>
+$ list_filter_map : @ctx { a b: @Type } -> (a -> Opt b) -> List a -> List b = \f l =>
     l |> \
         | List.Cons.{ h, t } => (
             f h |> \
@@ -137,10 +134,10 @@ $ list_filter_map : @ctx { a: @Type, b: @Type } -> (a -> Opt b) -> List a -> Lis
         )
         | _                  => List.Nil
 
-$ list_foldl : @ctx { a: @Type, t: @Type } -> (a -> t -> a) -> a -> List t -> a = \f acc l =>
+$ list_foldl : @ctx { a t: @Type } -> (a -> t -> a) -> a -> List t -> a = \f acc l =>
     l |> \ | List.Cons.{ h, t } => list_foldl f (f acc h) t | _ => acc
 
-$ list_foldr : @ctx { t: @Type, a: @Type } -> (t -> a -> a) -> a -> List t -> a = \f z l =>
+$ list_foldr : @ctx { t a: @Type } -> (t -> a -> a) -> a -> List t -> a = \f z l =>
     l |> \ | List.Cons.{ h, t } => f h (list_foldr f z t) | _ => z
 
 $ list_take : @ctx { t: @Type } -> @Int -> List t -> List t = \n l =>
@@ -169,7 +166,7 @@ $ list_all : @ctx { t: @Type } -> (t -> Bool) -> List t -> Bool = \p l =>
 $ list_find : @ctx { t: @Type } -> (t -> Bool) -> List t -> Opt t = \p l =>
     l |> \ | List.Cons.{ h, t } => if p h => Opt.Some.{ h } else list_find p t | _ => Opt.None
 
-$ list_zip : @ctx { a: @Type, b: @Type } -> List a -> List b -> List { a, b } = \xs ys =>
+$ list_zip : @ctx { a b: @Type } -> List a -> List b -> List { a, b } = \xs ys =>
     xs |> \
         | List.Cons.{ x, xt } => (
             ys |> \ | List.Cons.{ y, yt } => List.Cons.{ { x, y }, list_zip xt yt } | _ => List.Nil

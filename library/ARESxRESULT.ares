@@ -18,30 +18,29 @@ $ @import ARESxOPT
 
 # ---- the value shape ----
 
-$ is_ok : @ctx { t: @Type, e: @Type } -> Result t e -> Bool = \r =>
+$ is_ok : @ctx { t e: @Type } -> Result t e -> Bool = \r =>
     r |> \ | Result.Ok.{ _ } => true | _ => false
 
-$ is_err : @ctx { t: @Type, e: @Type } -> Result t e -> Bool = \r =>
+$ is_err : @ctx { t e: @Type } -> Result t e -> Bool = \r =>
     r |> \ | Result.Ok.{ _ } => false | _ => true
 
 # `unwrap_or r d`: the answer, or `d` when the computation failed.
-$ impl_IUnwrapOr_for_Result : @ctx { t: @Type, e: @Type } -> IUnwrapOr (Result t e) t =
+$ impl_IUnwrapOr_for_Result : @ctx { t e: @Type } -> IUnwrapOr (Result t e) t =
     .{ .unwrap_or = \r d => r |> \ | Result.Ok.{ x } => x | _ => d }
 
 # The arms below are exhaustive; the required `else` recurses, which is
 # unreachable (a Result is always Ok or Err) but well-typed.
-$ map_ok : @ctx { a: @Type, b: @Type, e: @Type } -> (a -> b) -> Result a e -> Result b e = \f r =>
+$ map_ok : @ctx { a b e: @Type } -> (a -> b) -> Result a e -> Result b e = \f r =>
     r |> \ | Result.Ok.{ x } => Result.Ok.{ f x } | Result.Err.{ e } => Result.Err.{ e }
 
-$ map_err : @ctx { e: @Type, f: @Type, t: @Type } -> (e -> f) -> Result t e -> Result t f = \f r =>
+$ map_err : @ctx { e f t: @Type } -> (e -> f) -> Result t e -> Result t f = \f r =>
     r |> \ | Result.Ok.{ x } => Result.Ok.{ x } | Result.Err.{ e } => Result.Err.{ f e }
 
 # Chain a fallible step onto an earlier result (monadic bind).
-$ and_then : @ctx { a: @Type, b: @Type, e: @Type } -> (a -> Result b e) -> Result a e
-    -> Result b e = \f r =>
+$ and_then : @ctx { a b e: @Type } -> (a -> Result b e) -> Result a e -> Result b e = \f r =>
     r |> \ | Result.Ok.{ x } => f x | Result.Err.{ e } => Result.Err.{ e }
 
-$ ok_opt : @ctx { t: @Type, e: @Type } -> Result t e -> Opt t = \r =>
+$ ok_opt : @ctx { t e: @Type } -> Result t e -> Opt t = \r =>
     r |> \ | Result.Ok.{ x } => Opt.Some.{ x } | _ => Opt.None
 
 # ---- the effect shape ----

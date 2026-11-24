@@ -449,6 +449,37 @@ impl<'a> Parser<'a> {
             Ok(false)
         }
     }
+    /// How many names open a field group `a b c: T` at the cursor: the run of
+    /// words a `:` ends, or 0 when the cursor is at no such run. The `:`
+    /// decides, so `F a` followed by anything else stays an application.
+    fn group_len(&mut self) -> Result<usize> {
+        self.group_len_at(0)
+    }
+    /// [`Self::group_len`] from `from` tokens ahead.
+    fn group_len_at(&mut self, from: usize) -> Result<usize> {
+        let mut n = 0;
+        while matches!(self.peek_kind_at(from + n)?, Kind::Word) {
+            n += 1;
+        }
+        Ok(if n > 0 && matches!(self.peek_kind_at(from + n)?, Kind::Colon) { n } else { 0 })
+    }
+    /// The names of a field group `a b c: T` through its `:`, with the cursor
+    /// on the first name and `n` from [`Self::group_len`], and the lexer mark
+    /// of `T`. Each name parses `T` from that mark (see [`Self::group_type`]),
+    /// so the fields share no node: the group is sugar for `a: T, b: T, c: T`.
+    fn group_names(&mut self, n: usize) -> Result<(Vec<(Token, StrId)>, usize)> {
+        let mut names = Vec::with_capacity(n);
+        for _ in 0..n {
+            let t = self.bump()?;
+            names.push((t, self.intern(self.text(t))));
+        }
+        self.bump()?; // ':'
+        Ok((names, self.lex.mark()))
+    }
+    /// Rewind to a field group's type, for the next name to parse it again.
+    fn group_type(&mut self, mark: usize) {
+        self.lex.reset(mark);
+    }
     /// Is the next token the operator with lexeme `s`?
     /// The operand of a splice `!X`, with the cursor on the `!`. `!` binds like
     /// the other prefix operators in every position, so `!f a b` splices `f a b`
@@ -878,8 +909,8 @@ impl<'a> Parser<'a> {
         if !matches!(self.peek_kind()?, Kind::Eq) {
             return Ok(());
         }
-        let (word, colon) = (self.peek_at(1)?, self.peek_at(2)?);
-        if !matches!(word.kind, Kind::Word) || !matches!(colon.kind, Kind::Colon) {
+        let word = self.peek_at(1)?;
+        if self.group_len_at(1)? == 0 {
             return Ok(());
         }
         Err(Diagnostic::error(
@@ -1214,46 +1245,18 @@ impl<'a> Parser<'a> {
             return Err(self.unexpected(&t, "expected a `name: Type` field: a `@ctx` parameter names at least one"));
         }
         loop {
-            let t = self.peek()?;
-            let name = self.expect_word("expected a `name: Type` field in the `@ctx` parameter")?;
-            if !matches!(self.peek_kind()?, Kind::Colon) {
+            let n = self.group_len()?;
+            if n == 0 {
+                self.expect_word("expected a `name: Type` field in the `@ctx` parameter")?;
                 let at = self.peek()?;
                 return Err(self
                     .unexpected(&at, "expected ':' after the `@ctx` field name")
                     .with_help("a `@ctx` field is named, as in `@ctx {t: @Type}`"));
             }
-            self.bump()?; // ':'
-            // `@l if ...`: the `if` ends the fields, never an argument of `@l`.
-            let ty = if self.at_intrinsic("l")? && matches!(self.peek_kind_at(1)?, Kind::If) {
-                let at = self.peek()?;
-                self.bump()?; // '@l'
-                let name = self.intern("@l");
-                let node = self.ty(Ty::Con { module: None, name });
-                self.ast.ty_spans.insert(node, at.span);
-                node
-            } else {
-                self.parse_type()?
-            };
-            let span = Span::new(t.span.start, self.last_end);
-            if levels.iter().chain(ctx.iter()).chain(uses.iter()).any(|f| f.name == name) {
-                return Err(Diagnostic::error(
-                    Code::DuplicateSymbol,
-                    t.span,
-                    t.line,
-                    format!("`{name}` is bound twice in this signature"),
-                ));
-            }
-            let field = UseField { name, ty, before, span, ctx: true };
-            match self.ast.ty(ty) {
-                Ty::Con { module: None, name: k } if k.as_str() == "@l" => {
-                    if !leading {
-                        return Err(Diagnostic::error(Code::UnexpectedToken, t.span, t.line, format!("the level `{name}` is bound after a parameter"))
-                            .with_help("bind every level in the signature's first `@ctx`, ahead of its parameters"));
-                    }
-                    levels.push(field);
-                }
-                _ if !self.is_sort(ty) => uses.push(UseField { ctx: false, ..field }),
-                _ => ctx.push(field),
+            let (names, mark) = self.group_names(n)?;
+            for (t, name) in names {
+                self.group_type(mark);
+                self.parse_ctx_field(t, name, before, leading, levels, ctx, uses)?;
             }
             if matches!(self.peek_kind()?, Kind::If) {
                 let at = self.peek()?;
@@ -1272,6 +1275,54 @@ impl<'a> Parser<'a> {
         }
         expect!(self, Kind::RBrace, "expected '}' to close the `@ctx` parameter");
         Ok(None)
+    }
+
+    /// One `@ctx` field `name: T`, its name `t` read and the cursor on `T`,
+    /// filed by its type as [`Self::parse_ctx_fields`] says.
+    #[allow(clippy::too_many_arguments)]
+    fn parse_ctx_field(
+        &mut self,
+        t: Token,
+        name: StrId,
+        before: u32,
+        leading: bool,
+        levels: &mut Vec<UseField>,
+        ctx: &mut Vec<UseField>,
+        uses: &mut Vec<UseField>,
+    ) -> Result<()> {
+        // `@l if ...`: the `if` ends the fields, never an argument of `@l`.
+        let ty = if self.at_intrinsic("l")? && matches!(self.peek_kind_at(1)?, Kind::If) {
+            let at = self.peek()?;
+            self.bump()?; // '@l'
+            let name = self.intern("@l");
+            let node = self.ty(Ty::Con { module: None, name });
+            self.ast.ty_spans.insert(node, at.span);
+            node
+        } else {
+            self.parse_type()?
+        };
+        let span = Span::new(t.span.start, self.last_end);
+        if levels.iter().chain(ctx.iter()).chain(uses.iter()).any(|f| f.name == name) {
+            return Err(Diagnostic::error(
+                Code::DuplicateSymbol,
+                t.span,
+                t.line,
+                format!("`{name}` is bound twice in this signature"),
+            ));
+        }
+        let field = UseField { name, ty, before, span, ctx: true };
+        match self.ast.ty(ty) {
+            Ty::Con { module: None, name: k } if k.as_str() == "@l" => {
+                if !leading {
+                    return Err(Diagnostic::error(Code::UnexpectedToken, t.span, t.line, format!("the level `{name}` is bound after a parameter"))
+                        .with_help("bind every level in the signature's first `@ctx`, ahead of its parameters"));
+                }
+                levels.push(field);
+            }
+            _ if !self.is_sort(ty) => uses.push(UseField { ctx: false, ..field }),
+            _ => ctx.push(field),
+        }
+        Ok(())
     }
 
     /// The `@ctx {..} ->` opening a constructor's or effect operation's type,
@@ -1550,16 +1601,26 @@ impl<'a> Parser<'a> {
     fn parse_effect_ops(&mut self) -> Result<Slice<FieldDecl>> {
         let mut ops = Vec::new();
         while matches!(self.peek_kind()?, Kind::Word) {
-            let t = self.peek()?;
-            if is_upper(self.text(t)) {
-                return Err(self.unexpected(&t, "an effect operation name must start lowercase"));
+            let n = self.group_len()?;
+            for i in 0..n.max(1) {
+                let t = self.peek_at(i)?;
+                if is_upper(self.text(t)) {
+                    return Err(self.unexpected(&t, "an effect operation name must start lowercase"));
+                }
             }
-            let name = self.bump_word()?;
-            expect!(self, Kind::Colon, "expected ':' after the operation name");
-            let ctx = self.parse_own_ctx("an effect operation")?;
-            let ty = self.parse_type()?;
-            self.record_ctx(ty, Vec::new(), ctx, None);
-            ops.push(FieldDecl { name, ty });
+            if n == 0 {
+                self.bump()?;
+                let t = self.peek()?;
+                return Err(self.unexpected(&t, "expected ':' after the operation name"));
+            }
+            let (names, mark) = self.group_names(n)?;
+            for (_, name) in names {
+                self.group_type(mark);
+                let ctx = self.parse_own_ctx("an effect operation")?;
+                let ty = self.parse_type()?;
+                self.record_ctx(ty, Vec::new(), ctx, None);
+                ops.push(FieldDecl { name, ty });
+            }
             if !self.eat(|k| matches!(k, Kind::Comma))? {
                 break;
             }
@@ -1576,10 +1637,18 @@ impl<'a> Parser<'a> {
             match self.peek_kind()? {
                 _ if self.at_splice()? => splices.push(self.parse_entry_splice()?),
                 Kind::Word => {
-                    let name = self.bump_word()?;
-                    expect!(self, Kind::Colon, "expected ':' after the field name");
-                    let ty = self.parse_type()?;
-                    fields.push(FieldDecl { name, ty });
+                    let n = self.group_len()?;
+                    if n == 0 {
+                        self.bump()?;
+                        let t = self.peek()?;
+                        return Err(self.unexpected(&t, "expected ':' after the field name"));
+                    }
+                    let (names, mark) = self.group_names(n)?;
+                    for (_, name) in names {
+                        self.group_type(mark);
+                        let ty = self.parse_type()?;
+                        fields.push(FieldDecl { name, ty });
+                    }
                 }
                 _ => break,
             }
@@ -1654,17 +1723,18 @@ impl<'a> Parser<'a> {
         self.bump()?; // '{'
         let mut fields = Vec::new();
         while !matches!(self.peek_kind()?, Kind::RBrace) {
-            // A named field is `name : Type`; anything else is a positional type.
-            let named = matches!(self.peek_kind()?, Kind::Word)
-                && matches!(self.peek_kind_at(1)?, Kind::Colon);
-            if named {
-                let name = self.bump_word()?;
-                self.bump()?; // ':'
-                let ty = self.parse_type()?;
-                fields.push(PayloadField {
-                    name: Some(name),
-                    ty,
-                });
+            // Named fields are `a b : Type`; anything else is a positional type.
+            let n = self.group_len()?;
+            if n > 0 {
+                let (names, mark) = self.group_names(n)?;
+                for (_, name) in names {
+                    self.group_type(mark);
+                    let ty = self.parse_type()?;
+                    fields.push(PayloadField {
+                        name: Some(name),
+                        ty,
+                    });
+                }
             } else {
                 let ty = self.parse_type()?;
                 fields.push(PayloadField { name: None, ty });
@@ -2014,10 +2084,18 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
         let mut tail = None;
         loop {
-            let name = self.expect_word("expected a record field name")?;
-            expect!(self, Kind::Colon, "expected ':' after the field name");
-            let ty = self.parse_type()?;
-            fields.push(RecField { name, ty });
+            let n = self.group_len()?;
+            if n == 0 {
+                self.expect_word("expected a record field name")?;
+                let t = self.peek()?;
+                return Err(self.unexpected(&t, "expected ':' after the field name"));
+            }
+            let (names, mark) = self.group_names(n)?;
+            for (_, name) in names {
+                self.group_type(mark);
+                let ty = self.parse_type()?;
+                fields.push(RecField { name, ty });
+            }
             // `{ x: A, y: B | r }`: `| r` opens the record with a row variable.
             if self.at_op("|")? {
                 self.bump()?;
@@ -2654,7 +2732,7 @@ impl<'a> Parser<'a> {
         if is_record {
             return self.parse_record_expr();
         }
-        if matches!(self.peek_kind()?, Kind::Word) && matches!(self.peek_kind_at(1)?, Kind::Colon) {
+        if self.group_len()? > 0 {
             return self.parse_record_type(start);
         }
         let mut elems = Vec::new();
@@ -2887,9 +2965,7 @@ impl<'a> Parser<'a> {
                 let t = self.peek_at(2)?;
                 Err(self.unexpected(&t, "expected a `.field = value`: a `@ctx` argument supplies at least one field"))
             }
-            "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace)
-                && matches!(self.peek_kind_at(2)?, Kind::Word)
-                && matches!(self.peek_kind_at(3)?, Kind::Colon) =>
+            "ctx" if matches!(self.peek_kind_at(1)?, Kind::LBrace) && self.group_len_at(2)? > 0 =>
             {
                 Err(self.ctx_param_misplaced()?)
             }

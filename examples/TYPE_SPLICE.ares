@@ -15,7 +15,7 @@ $ @import ARESxDERIVE
 $ @import ARESxVEC
 $ @import TYPE_SPLICE_LIB
 
-$ Point : @Type = @struct x: @Int, y: @Int
+$ Point : @Type = @struct x y: @Int
 $ Point3 : @Type = @struct !ARES.fields_of "Point", z: @Int     # x, y, then z
 $ Located : @Type = @struct !ARES.fields_of "Point3", tag: @Int # x, y, z, tag
 
@@ -23,7 +23,7 @@ $ Base : @Type = @union Red: {}, Green: {}
 $ Color : @Type = @union !ARES.variants_of "Base", Blue: {} # Red, Green, then Blue
 
 # A generic struct, copied over the new type's own parameter.
-$ Pair : (a: @Type) -> @Type = @struct fst: a, snd: a
+$ Pair : (a: @Type) -> @Type = @struct fst snd: a
 $ Labeled : (b: @Type) -> @Type = @struct label: @Str, !ARES.fields_of "Pair b"
 
 # Any generator can build the entries: here, one field per name. `@code`

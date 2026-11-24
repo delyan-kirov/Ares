@@ -14,7 +14,7 @@ $ endo : @Type -> @Type = \t => let p = pair t in p -> p
 $ swap : endo @Int = \p => { p.1, p.0 }
 
 # An applied lambda reduces to its body.
-$ Point : @Type = (\t => { x: t, y: t }) @Float64
+$ Point : @Type = (\t => { x y: t }) @Float64
 
 $ origin : Point = { .x = 0.0, .y = 0.0 }
 

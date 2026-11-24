@@ -14,7 +14,7 @@ $ @import ARESxALGO
 $ twice : @ctx { a: @Type } -> (a -> a) -> a -> a = \f x => f (f x)
 
 # A row is a field too: `e` is whatever `f` performs.
-$ apply : @ctx { a: @Type, b: @Type, e: @Row } -> (a -> <e> b) -> a -> <e> b = \f x => f x
+$ apply : @ctx { a b: @Type, e: @Row } -> (a -> <e> b) -> a -> <e> b = \f x => f x
 
 # `t` is fixed by the expected type, or passed by name.
 $ zero_of : @ctx { t: @Type, z: IZero t } -> {} -> t = z.zero

@@ -18,8 +18,7 @@ $ Person : @Type = @struct
     age: @Int,
 
 $ Point : @Type = @struct
-    x: @Int,
-    y: @Int,
+    x y: @Int,
 
 # A literal switch over @Int -- doubles as a `case`.
 $ classify : @Int -> @Str = \n =>

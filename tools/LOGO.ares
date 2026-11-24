@@ -40,18 +40,16 @@ $ @import ARESxVEC
 $ @import ARESxOPT
 
 $ Rgb : @Type = @struct
-    r: @Int,
-    g: @Int,
-    b: @Int,
+    r g b: @Int,
 
 $ Point : @Type = { Real, Real }
 
 # A curve keeps its numbers for the SVG, x0 y0 and then six a cubic segment
 # (two control points and the end), and its flattened corners for the raster.
 $ Figure : @Type = @union
-    Oval: { cx: Real, cy: Real, rx: Real, ry: Real },
-    Poly: { corners: @Vec Point, lo: Point, hi: Point },
-    Curve: { nums: @Vec Real, corners: @Vec Point, lo: Point, hi: Point },
+    Oval: { cx cy rx ry: Real },
+    Poly: { corners: @Vec Point, lo hi: Point },
+    Curve: { nums: @Vec Real, corners: @Vec Point, lo hi: Point },
 
 # `name` becomes the layer's class in the SVG, so a page that inlines the logo
 # can style or animate its parts.
@@ -64,8 +62,7 @@ $ Layer : @Type = @struct
 # The background lies under every layer, erasers included. `style` is CSS
 # the SVG carries, for a design that switches with the color scheme.
 $ Design : @Type = @struct
-    width: Real,
-    height: Real,
+    width height: Real,
     background: Opt Rgb,
     layers: @Vec Layer,
     style: @Str,
@@ -659,11 +656,7 @@ $ favicon : Design = Design.{
 # A TrueType font: its bytes and where the tables the outlines need begin.
 $ Font : @Type = @struct
     bytes: @Str,
-    cmap: @Int,
-    hmtx: @Int,
-    metrics: @Int,
-    loca: @Int,
-    glyf: @Int,
+    cmap hmtx metrics loca glyf: @Int,
     long_loca: Bool,
     cap: Real,
 
@@ -885,8 +878,7 @@ $ text : Font -> Real -> Real -> Real -> Real -> @Str -> @Vec Figure = \f cap tr
     go 0 x (@vec_new {})
 
 $ Fonts : @Type = @struct
-    bold: Font,
-    regular: Font,
+    bold regular: Font,
 
 $ cinzel : {} -> <@IO> Opt Fonts =
     let dir = env "ARES_FONT_CINZEL" in

@@ -175,9 +175,17 @@ type_decl
   | AT_UNION AT_EXTERN STR struct_body  /* C layout */
   ;
 
+/* Several fields of one type share it by juxtaposition, `x y z: @Float64`
+ * (#575), wherever fields are named: struct fields, payload fields, record
+ * types, effect operations and `@ctx` fields. The group is sugar parser.rs
+ * expands into one field per name. Where an expression could stand in the
+ * same place (a payload's positional field, a tuple, a definition's body),
+ * one token of lookahead cannot tell `a b: T` from the application `a b`,
+ * so the grammar reads the names as an `app` there, and parser.rs, which
+ * decides at the `:`, takes only a run of lowercase names. */
 struct_body   : field_decls opt_comma ;
 field_decls   : field_decl | field_decls COMMA field_decl ;
-field_decl    : LIDENT COLON expr | entry_splice ;
+field_decl    : names COLON expr | entry_splice ;
 
 union_body    : variant_decls opt_comma ;
 variant_decls : variant_decl | variant_decls COMMA variant_decl ;
@@ -221,14 +229,14 @@ payload_decl
   ;
 
 payload_fields : payload_field | payload_fields COMMA payload_field ;
-payload_field  : expr | LIDENT COLON expr ;
+payload_field  : expr | app COLON expr ;  /* `app` is a run of names, see struct_body */
 
 effect_body : op_decls opt_comma ;
 op_decls    : op_decl | op_decls COMMA op_decl ;
 /* An operation's type may open with a `@ctx` binding its own variables,
  * chosen by each performer: `throw : @ctx {a: @Type} -> @Str -> a` (#558).
  * `expr` admits `ctx_param ARROW expr`; parser.rs takes only a leading one. */
-op_decl     : LIDENT COLON expr ;
+op_decl     : app COLON expr ;  /* `app` is a run of names, see struct_body */
 
 opt_comma   : /* empty */ | COMMA ;
 
@@ -253,14 +261,17 @@ opt_comma   : /* empty */ | COMMA ;
 ctx_param  : AT_CTX LBRACE use_fields opt_comma RBRACE
            | AT_CTX LBRACE use_fields KW_IF expr RBRACE
            ;
-use_fields : LIDENT COLON expr | use_fields COMMA LIDENT COLON expr ;
+use_fields : names COLON expr | use_fields COMMA names COLON expr ;
 
 rec_field_list
   : rec_field
   | rec_field_list COMMA rec_field
   ;
 
-rec_field : LIDENT COLON expr ;
+rec_field : app COLON expr ;  /* `app` is a run of names, see struct_body */
+
+/* The names of a field group, `a b: T`. */
+names : LIDENT | names LIDENT ;
 
 eff_row
   : ANGLE_EMPTY

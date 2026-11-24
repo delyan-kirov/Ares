@@ -12,7 +12,7 @@ $ @mod FIELD_SCOPE
 $ @import ARESxALGO
 $ @import ARESxVEC
 
-$ Point : @Type = @struct x: @Int, y: @Int
+$ Point : @Type = @struct x y: @Int
 $ Named : @Type = @struct name: @Str, age: @Int
 
 $ p : Point = Point.{ .x = 3, .y = 4 }

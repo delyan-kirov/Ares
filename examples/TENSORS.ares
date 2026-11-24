@@ -85,7 +85,7 @@ $ ck_ext : @Int =
 # `create template f` builds a tensor the same size as `template` (result size is
 # the template's, so it is sound), applying `f` at each index. With `length` and
 # `index` this is enough to write tensor ops in SOURCE: here, transpose.
-$ myT : @ctx { m: @Nat, n: @Nat, a: @Type } -> Matrix m n a -> Matrix n m a = \t =>
+$ myT : @ctx { m n: @Nat, a: @Type } -> Matrix m n a -> Matrix n m a = \t =>
     create (\j => create (\i => t.[i].[j]) t) t.[0]
 $ ck_gen : @Int =
     if (myT mA).[2, 0] == 3 =>
@@ -133,9 +133,8 @@ $ ref_dot : @ctx { a: @Type, n: @Nat, p: IAdd a, m: IMul a, z: IZero a } -> @Ten
     -> @Tensor n a -> a = \x y =>
     let go = \i acc => if i == len x => acc else go (i + 1) (p.add acc (m.mul x.[i] y.[i])) in
     go 0 z.zero
-$ ref_mm : @ctx { m: @Nat, n: @Nat, t: @Type, k: @Nat, p: IAdd t, mul: IMul t, z: IZero t }
-    -> Matrix m k t -> Matrix k n t
-    -> Matrix m n t = \a b =>
+$ ref_mm : @ctx { m n: @Nat, t: @Type, k: @Nat, p: IAdd t, mul: IMul t, z: IZero t } -> Matrix m k t
+    -> Matrix k n t -> Matrix m n t = \a b =>
     let bt = transpose b in create (\i => create (\j => ref_dot a.[i] bt.[j]) (b.[0])) a
 $ kTA : Matrix 3 3 @Int = matmul mT mA             # [[17, 22, 27], [22, 29, 36], [27, 36, 45]]
 $ kAT : Matrix 2 2 @Int = matmul mA (transpose mA) # [[14, 32], [32, 77]]

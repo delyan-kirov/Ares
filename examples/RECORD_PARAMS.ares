@@ -11,7 +11,7 @@ $ @mod RECORD_PARAMS
 #       correct and 1 otherwise.
 
 # Two named fields: one tuple argument, destructured to x and y.
-$ add : { x: @Int, y: @Int } -> @Int = x + y
+$ add : { x y: @Int } -> @Int = x + y
 $ chk_add : @Int = if add { 3, 4 } == 7 => 0 else 1
 
 # Fields may differ in type.
@@ -25,7 +25,7 @@ $ chk_inc : @Int = if inc 5 == 6 => 0 else 1
 
 # Several named parameters in a row, each its own argument. The trailing
 # one-field record collapses, so it takes a bare @Int.
-$ area : { w: @Int, h: @Int } -> { gain: @Int } -> @Int = w * h + gain
+$ area : { w h: @Int } -> { gain: @Int } -> @Int = w * h + gain
 $ chk_area : @Int = if area { 6, 7 } 1 == 43 => 0 else 1
 
 # A leading named parameter followed by a plain one: the named field binds
