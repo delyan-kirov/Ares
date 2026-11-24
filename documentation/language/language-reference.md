@@ -2269,3 +2269,32 @@ proof `x` of `@Bottom` at the type expected. `@Quot A R rr rs rt` is `A`
 quotiented by an equivalence `R`, `@qin a` a class, and `@qelim P f resp q`
 eliminates a class by a function `f` that respects `R`.
 
+
+## 16.5 Booleans, numerals and comparisons
+
+The kernel reads the propositions of 3.13 as the frontend does. Before a
+module, it checks a prelude of CORE's booleans and naturals: `Bool` with
+`true` and `false`, `not`, `&&` and `||`, and `@Nat` with numerals, `+`,
+`*` and the comparisons `<`, `>`, `<=`, `>=`, `==` and `!=`. A `Bool` used
+where a type is expected is the proposition `b ~ true`, so a comparison of
+numerals is proved by `@refl true` when it computes to `true`, and the same
+program checks under either checker:
+
+```ares
+$ small : (n: @Nat) -> n < 10 -> @Nat = \p => n
+$ seven : @Nat = small 7 (@refl true)
+$ Small : (n: @Nat) -> @Type 0 = n < 10
+```
+
+The kernel's `@Nat` is the unary naturals, with the recursor `@Nat.elim`,
+and every comparison is defined by recursion. So `3 < 10` computes, but a
+law the frontend's checker folds for a variable, `n == n` or
+`not (n < n)`, is a lemma in the kernel, proved by induction:
+
+```ares-fragment
+$ refl_eq : (n: @Nat) -> n == n = @Nat.elim (\k => k == k) (@refl true) (\k ih => ih) n
+```
+
+A numeral is its constructor chain, so the kernel takes numerals up to 100.
+A module may define its own `Bool`, `Nat`, `not` and so on; its own name
+then wins, and `n < 10` still means the prelude's comparison.
