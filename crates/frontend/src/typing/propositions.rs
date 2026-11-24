@@ -7,7 +7,8 @@
 //! See Note [Propositions]. A `Bool` where a type is expected
 //! is the proposition `b ~ true`, so `(n: @Nat) -> n < 4 -> T` takes a proof
 //! that `n < 4` computes to `true`. A `let` stays transparent: after
-//! `let n = 3`, `n` is the size `3` in a proposition.
+//! `let n = 3`, `n` is the size `3` in a proposition, and after
+//! `let t = @Int`, an annotation `(x: t)` is `(x: @Int)`.
 //!
 //! Proofs are erased: `@refl a` and `@transp ...` lower to `{}`, and
 //! `@cast A B e x` to `x`.
@@ -126,7 +127,7 @@ impl<'a> Checker<'a> {
 
     /// A value standing where a type is expected: a type as itself, and a
     /// boolean `b` as `b ~ true`.
-    fn as_proposition(&mut self, s: Static, span: Option<Span>) -> Result<Type> {
+    pub(super) fn as_proposition(&mut self, s: Static, span: Option<Span>) -> Result<Type> {
         match s {
             // Rule [Frontend-Bool-Reflection]
             Static::Bool(b) => {
@@ -250,6 +251,9 @@ impl<'a> Checker<'a> {
         }
         if name.as_str() == "_" {
             return Ok(Static::Unknown(self.unifier.fresh()));
+        }
+        if let Some(s) = self.let_bound(name, tvars) {
+            return Ok(s);
         }
         if let Some(&t) = tvars.get(&name) {
             if self.level_names.contains(&t) {
@@ -397,9 +401,20 @@ impl<'a> Checker<'a> {
         self.scopes[1..].iter().rev().find_map(|s| s.get(&name).copied())
     }
 
-    /// Remember the value of `let name = value` for propositions in its body,
+    /// The value of the `let`-bound local `name` that a type mentions, when
+    /// the checker knows it and the type itself binds no `name` of its own
+    /// (`tvars` beyond the enclosing signature's).
+    // Rule [Frontend-Let-Transparent]
+    pub(super) fn let_bound(&self, name: StrId, tvars: &HashMap<StrId, Type>) -> Option<Static> {
+        if tvars.get(&name).is_some_and(|t| self.scoped_tvars.get(&name) != Some(t)) {
+            return None;
+        }
+        self.lookup_local(name).and_then(|t| self.let_statics.get(&t).copied())
+    }
+
+    /// Remember the value of `let name = value` for the types in its body,
     /// keyed by the local's type `local`, when it is a value the checker
-    /// evaluates. See Note [Propositions].
+    /// evaluates: a size, a boolean or a type. See Note [Propositions].
     // Rule [Frontend-Let-Transparent]
     pub(super) fn let_static(&mut self, value: Aol<Expr>, local: Type) {
         if !self.is_static_value(value) {
@@ -408,7 +423,7 @@ impl<'a> Checker<'a> {
         let tvars = self.scoped_tvars.clone();
         let save = self.unifier.save();
         match self.static_of(value, &tvars, &[]) {
-            Ok(s @ (Static::Size(_) | Static::Bool(_))) => {
+            Ok(s @ (Static::Size(_) | Static::Bool(_) | Static::Type(_))) => {
                 self.let_statics.insert(local, s);
             }
             _ => self.unifier.restore(save),
@@ -416,28 +431,43 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether `e` is built only from what a proposition evaluates: numbers,
-    /// `+`, `*`, comparisons, `not`, `&&`, `||`, boolean constants and names
-    /// whose values the checker knows.
+    /// `+`, `*`, comparisons, `not`, `&&`, `||`, boolean constants, types
+    /// and names whose values the checker knows.
     fn is_static_value(&self, e: Aol<Expr>) -> bool {
         match self.node(e) {
             Expr::Int(n) => *n >= 0,
-            Expr::Bool(_) => true,
+            Expr::Bool(_) | Expr::Type(_) => true,
             Expr::BinOp { op, lhs, rhs } => {
                 (matches!(op.as_str(), "+" | "*") || comparison(op.as_str()).is_some())
                     && self.is_static_value(*lhs)
                     && self.is_static_value(*rhs)
             }
-            Expr::App(f, x) => {
-                matches!(self.node(*f), Expr::Var { module: None, name } if name.as_str() == "not") && self.is_static_value(*x)
+            Expr::App(f, x) if matches!(self.node(*f), Expr::Var { module: None, name } if name.as_str() == "not") => {
+                self.is_static_value(*x)
             }
+            Expr::App(f, x) => self.is_type_head(*f) && self.is_static_value(*x),
             Expr::If { cond, then, alt } => {
                 (matches!(self.node(*alt), Expr::Bool(false)) || matches!(self.node(*then), Expr::Bool(true)))
                     && [*cond, *then, *alt].iter().all(|x| self.is_static_value(*x))
             }
             Expr::Var { module: None, name } => match self.lookup_local(*name) {
                 Some(t) => self.size_of_req(t).is_some() || self.let_statics.contains_key(&t),
-                None => matches!(name.as_str(), "true" | "false"),
+                None => matches!(name.as_str(), "true" | "false") || self.is_type_head(e),
             },
+            _ => false,
+        }
+    }
+
+    /// Whether `e` is a type, or a type-level function applied to some of
+    /// its arguments: the head of the spine names a type, `@Tensor` or
+    /// `@Type`.
+    fn is_type_head(&self, e: Aol<Expr>) -> bool {
+        match self.node(e) {
+            Expr::App(f, x) => self.is_type_head(*f) && self.is_static_value(*x),
+            Expr::Var { module: None, name } => {
+                self.lookup_local(*name).is_none()
+                    && (name.as_str() == ty::UNIVERSE || name.as_str() == "@Tensor" || self.is_known_type(*name))
+            }
             _ => false,
         }
     }
@@ -534,25 +564,29 @@ impl<'a> Checker<'a> {
         Ok(result)
     }
 
-    /// `B v` for a motive `\z => B`, a lambda of one variable whose body is a
-    /// proposition: the body with `z` standing for `v`.
+    /// `B v` for a motive `B`: a lambda `\z => P` of one variable whose body
+    /// is a proposition, the body with `z` standing for `v`; or a type-level
+    /// function returning a proposition, applied to all its arguments but the
+    /// last, and then to `v`.
     fn motive_at(&mut self, motive: Aol<Expr>, v: Static, tvars: &HashMap<StrId, Type>) -> Result<Type> {
         let at = self.ast.expr_span(motive).unwrap_or(Span::at(0));
-        let Expr::Lambda { params, body } = *self.node(motive) else {
-            return Err(dependent_only(Some(at), "a `@transp` motive other than a lambda `\\z => ...`"));
+        let shown = match *self.node(motive) {
+            Expr::Lambda { params, body } => {
+                let params = self.ast.slice(params);
+                let [param] = params else {
+                    return Err(diag!(Code::TypeMismatch, at, 0, "a `@transp` motive binds one variable, `\\z => ...`"));
+                };
+                let Pattern::Var(z) = *self.pnode(param.pat) else {
+                    return Err(diag!(Code::TypeMismatch, at, 0, "a `@transp` motive binds one variable, `\\z => ...`"));
+                };
+                let mut tvars = tvars.clone();
+                if let Static::Type(t) | Static::Size(t) = v {
+                    tvars.insert(z, t);
+                }
+                self.static_of(body, &tvars, &[(z, v)])?
+            }
+            _ => self.named_motive_at(motive, v, tvars)?,
         };
-        let params = self.ast.slice(params);
-        let [param] = params else {
-            return Err(diag!(Code::TypeMismatch, at, 0, "a `@transp` motive binds one variable, `\\z => ...`"));
-        };
-        let Pattern::Var(z) = *self.pnode(param.pat) else {
-            return Err(diag!(Code::TypeMismatch, at, 0, "a `@transp` motive binds one variable, `\\z => ...`"));
-        };
-        let mut tvars = tvars.clone();
-        if let Static::Type(t) | Static::Size(t) = v {
-            tvars.insert(z, t);
-        }
-        let shown = self.static_of(body, &tvars, &[(z, v)])?;
         let prop = match shown {
             Static::Bool(b) => {
                 let t = self.unifier.types.bool_lit(true);
@@ -570,6 +604,45 @@ impl<'a> Checker<'a> {
             ));
         }
         Ok(prop)
+    }
+
+    /// `F a.. v` for a motive `F a..` naming a type-level function (`Pos`,
+    /// `Lt 0`) that takes one argument more than it is given.
+    fn named_motive_at(&mut self, motive: Aol<Expr>, v: Static, tvars: &HashMap<StrId, Type>) -> Result<Static> {
+        let span = self.ast.expr_span(motive);
+        let at = span.unwrap_or(Span::at(0));
+        let mut args = Vec::new();
+        let mut head = motive;
+        while let Expr::App(f, x) = *self.node(head) {
+            args.push(x);
+            head = f;
+        }
+        args.reverse();
+        let named = match *self.node(head) {
+            Expr::Var { module: None, name } if self.lookup_local(name).is_none() => Some(name),
+            _ => None,
+        };
+        let Some((name, (params, body))) = named.and_then(|n| self.aliases.get(&n).cloned().map(|a| (n, a))) else {
+            return Err(dependent_only(span, "a `@transp` motive other than a lambda `\\z => ...` or a type-level function")
+                .with_note("a motive names a global returning a proposition, as `$ Pos : (n: @Nat) -> @Type 0 = 0 < n`"));
+        };
+        if params.len() != args.len() + 1 {
+            return Err(diag!(
+                Code::TypeMismatch, at, 0,
+                "a `@transp` motive takes one argument, but `{name}` applied to {} argument(s) does not",
+                args.len();
+                note: "`{name}` takes {} argument(s)", params.len();
+                note: "a motive is a type-level function applied to all its arguments but the last"
+            ));
+        }
+        let mut values = Vec::with_capacity(params.len());
+        for a in &args {
+            values.push(self.static_of(*a, tvars, &[])?.ty());
+        }
+        values.push(v.ty());
+        let mut sub: HashMap<StrId, Type> = params.iter().copied().zip(values.iter().copied()).collect();
+        let expanded = self.ty_of_ast(body, &mut sub);
+        Ok(Static::Type(self.unifier.types.alias(name, values, expanded)))
     }
 
     /// Check that `@refl`'s `a ~ a` is the proposition `expected`, saying

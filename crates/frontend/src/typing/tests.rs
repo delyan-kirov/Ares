@@ -1794,6 +1794,20 @@ fn transport_moves_a_proof_along_an_equality() {
     blocked("$ t : (n: @Nat) -> n ~ 1 = @transp n (\\k => k ~ n) (@refl n) 1 (@refl n)\n", "the body of `t` needs `n` to be `1`");
 }
 
+// Test [Frontend-Transport]
+#[test]
+fn a_transport_motive_may_be_a_type_level_function() {
+    let fns = "$ Pos : (n: @Nat) -> @Type 0 = 0 < n\n$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b\n$ Row : (n: @Nat) -> @Type = @Tensor n @Int\n";
+    let (applies, blocked) = proposition_cases(fns);
+    applies("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> Pos m = \\q p => @transp n Pos p m q\n");
+    applies("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < n -> 0 < m = \\q p => @transp n Pos p m q\n");
+    applies("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 2 < n -> Lt 2 m = \\q p => @transp n (Lt 2) p m q\n");
+    applies("$ t : Pos 3 = @transp 3 Pos (@refl true) 3 (@refl 3)\n");
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < n -> 0 < m = \\q p => @transp n Lt p m q\n", "`Lt` applied to 0 argument(s) does not");
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Int = \\q => @transp n Row 0 m q\n", "this one returns `Row n`");
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < m = \\q => @transp n Pos (@refl true) m q\n", "`0 < n` and `true` do not compute to one value");
+}
+
 // Test [Frontend-Cast]
 #[test]
 fn cast_moves_a_value_along_an_equality_of_types() {
@@ -1848,4 +1862,23 @@ fn a_let_is_transparent_in_a_proposition() {
     applies("$ a : @Int = let n = 4 in let p : n < 5 = @refl true in 0\n");
     blocked("$ a : @Int = let n = 6 in let p : n < 5 = @refl true in 0\n", "`6 < 5` and `true` do not compute to one value");
     blocked("$ a : @Int -> @Int = \\x => let n = x in let p : n ~ n = @refl n in 0\n", "a run-time value in a type");
+}
+
+// Test [Frontend-Let-Transparent]
+#[test]
+fn a_let_of_a_type_names_it_in_annotations() {
+    let (applies, blocked) = proposition_cases("$ id : (t: @Type) -> t -> t = \\x => x\n");
+    applies("$ a : @Int = let t = @Int in let x : t = 3 in x\n");
+    applies("$ a : @Int = let t = @Int in let f = \\(x: t) => x + 1 in f 2\n");
+    applies("$ a : @Int = let t = @Int -> @Int in let f : t = \\x => x + 1 in f 2\n");
+    applies("$ a : @Int = let t = @Str in let u = t in let s : u = \"hi\" in 1\n");
+    applies("$ a : @Int = let t = @Int in id t 5\n");
+    applies("$ a : @Int = let t = @Int in let p : t ~ @Int = @refl @Int in 0\n");
+    applies("$ a : @Int = let n = 2 in let v : @Tensor n @Int = [1, 2] in 0\n");
+    applies("$ a : @Int = let b = 3 < 4 in let p : b = @refl true in 0\n");
+    blocked("$ a : @Int = let t = @Int in let x : t = \"s\" in 0\n", "expected @Int, found @Str");
+    blocked("$ a : @Int = let t = @Int in let p : t ~ @Str = @refl @Int in 0\n", "`@Int` and `@Str` do not compute to one value");
+    blocked("$ a : @Int = let b = 5 < 4 in let p : b = @refl true in 0\n", "`5 < 4` and `true` do not compute to one value");
+    blocked("$ a : @Int = let n = 3 in let x : n = 4 in 0\n", "a size stands where a type is expected");
+    blocked("$ a : @Int -> @Int = \\y => let t = y in let x : t = 4 in 0\n", "a run-time value in a type");
 }

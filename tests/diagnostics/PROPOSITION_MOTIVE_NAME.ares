@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_MOTIVE_NAME
+
+# A motive by name returns a proposition; `Row` returns data.
+$ Row : (n: @Nat) -> @Type = @Tensor n @Int
+$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Int = \q => @transp n Row 0 m q  #~ error[TYPE_MISMATCH]: a `@transp` motive returns a proposition, but this one returns `Row n`

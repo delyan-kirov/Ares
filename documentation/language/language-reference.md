@@ -595,8 +595,9 @@ Three forms build proofs:
 - `@refl a` proves `a ~ a`, and so any `a ~ b` whose sides compute to one
   value: `n + 0 ~ n`, `n + m ~ m + n` (sizes compare as polynomials).
 - `@transp t B u t2 e` moves a proof `u` of `B t` to `B t2` along
-  `e : t ~ t2`, where the motive `B` is a lambda `\z => P` returning a
-  proposition.
+  `e : t ~ t2`, where the motive `B` returns a proposition: a lambda
+  `\z => P`, or a type-level function by name, applied to all its
+  arguments but the last (`Pos`, `Lt 2`).
 - `@cast A B e x` moves `x : A` to `B` along `e : A ~ B`. With one argument,
   `@cast x` is the integer cast (4.11).
 
@@ -605,6 +606,13 @@ $ zero_r : (n: @Nat) -> n + 0 ~ n = @refl n
 $ sym : (n: @Nat) -> (m: @Nat) -> n ~ m -> m ~ n = \e => @transp n (\k => k ~ n) (@refl n) m e
 $ retype : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Tensor n @Int -> @Tensor m @Int = \e v =>
     @cast (@Tensor n @Int) (@Tensor m @Int) (@transp n (\k => @Tensor n @Int ~ @Tensor k @Int) (@refl (@Tensor n @Int)) m e) v
+```
+
+```ares
+$ Pos : (n: @Nat) -> @Type 0 = 0 < n
+$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b
+$ pos_along : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> Pos m = \q p => @transp n Pos p m q
+$ lt_along : (n: @Nat) -> (m: @Nat) -> n ~ m -> 2 < n -> Lt 2 m = \q p => @transp n (Lt 2) p m q
 ```
 
 Booleans come first: `<`, `>`, `<=`, `>=`, `==` and `!=` stay `Bool`
@@ -624,10 +632,15 @@ $ Small : (n: @Nat) -> @Type 0 = n < 10
 ```
 
 A `let` stays transparent: after `let n = 3`, the checker knows `n` is `3` in
-the propositions of the body.
+the propositions of the body. The same holds for a `let` of a type or a
+boolean, and in every annotation of the body: after `let t = @Int`, `(x: t)`
+is `(x: @Int)`, and after `let n = 3`, `@Tensor n @Int` has three elements. A
+`let` of a value known only at run time is not a type (`UNSUPPORTED`).
 
 ```ares
 $ ok : @Int = let n = 4 in let p : n < 5 = @refl true in 0
+$ bump : @Int -> @Int = \y => let t = @Int in let inc = \(x: t) => x + 1 in inc y
+$ row : @Int = let n = 3 in let v : @Tensor n @Int = [1, 2, 3] in 0
 ```
 
 Proofs are erased: a proof is `{}` at run time and `@cast A B e x` is `x`, so

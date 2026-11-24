@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_MOTIVE_ARITY
+
+# A motive by name is a type-level function given all its arguments but the last.
+$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b
+$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < n -> 0 < m = \q p => @transp n Lt p m q  #~ error[TYPE_MISMATCH]: a `@transp` motive takes one argument, but `Lt` applied to 0 argument(s) does not

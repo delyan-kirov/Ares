@@ -791,6 +791,10 @@ impl<'a> Checker<'a> {
     pub(super) fn size_ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
         match self.tnode(ty) {
             Ty::Nat(n) => self.unifier.types.add(TypeNode::Nat(*n)),
+            // Rule [Frontend-Let-Transparent]
+            Ty::Var(name) if matches!(self.let_bound(*name, tvars), Some(propositions::Static::Size(_))) => {
+                self.let_bound(*name, tvars).expect("guarded").ty()
+            }
             Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
                 let name = *name;
                 self.nat_const(name, self.ast.ty_span(ty))
@@ -1028,6 +1032,19 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
+        // A local `let` of a type, or of a boolean, is what it binds.
+        // Rule [Frontend-Let-Transparent]
+        if let Ty::Var(name) = *self.tnode(ty) {
+            if let Some(s) = self.let_bound(name, tvars) {
+                return match self.as_proposition(s, self.ast.ty_span(ty)) {
+                    Ok(t) => t,
+                    Err(d) => {
+                        self.defer_type_error(d);
+                        self.unifier.fresh()
+                    }
+                };
+            }
+        }
         // An alias at the head of an application spine expands first, so `MapInt Bool`
         // substitutes into `Map Int Bool` rather than forming `App(alias, Bool)`.
         if let Some(t) = self.try_expand_alias(ty, tvars) {
@@ -1063,6 +1080,14 @@ impl<'a> Checker<'a> {
                 let b = self.unifier.types.bool_lit(name.as_str() == ty::TRUE);
                 let t = self.unifier.types.bool_lit(true);
                 self.unifier.types.prop_eq(b, t)
+            }
+            // A local the checker cannot evaluate, such as a parameter.
+            Ty::Var(name) if !tvars.contains_key(name) && self.free_names == FreeNames::Report && self.lookup_local(*name).is_some() => {
+                let name = *name;
+                self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a run-time value in a type").with_note(format!(
+                    "the checker evaluates a `let` of a type, a size or a boolean, and `{name}` is known only at run time"
+                )));
+                self.unifier.fresh()
             }
             Ty::Var(name) => {
                 let name = *name;

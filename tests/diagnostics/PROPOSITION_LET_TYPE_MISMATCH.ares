@@ -1,0 +1,4 @@
+$ @mod PROPOSITION_LET_TYPE_MISMATCH
+
+# After `let t = @Int`, an annotation `t` is `@Int`.
+$ a : @Int = let t = @Int in let x : t = "s" in 0  #~ error[TYPE_MISMATCH]: expected @Int, found @Str

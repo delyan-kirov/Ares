@@ -1,0 +1,5 @@
+$ @mod PROPOSITION_MOTIVE_VALUE
+
+# A motive is a lambda or a type-level function, not a function on values.
+$ inc : @Int -> @Int = \x => x + 1
+$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> @Int = \q => @transp n inc 0 m q  #~ error[UNSUPPORTED]: a `@transp` motive other than a lambda `\z => ...` or a type-level function
