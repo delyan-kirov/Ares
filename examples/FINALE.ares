@@ -8,8 +8,8 @@ $ @mod FINALE
 # it pipes, partially applies, and passes around. No IO here, so each case
 # observes its cleanup by performing an effect a handler collects.
 
-$ Y : @Type = @effect yield : @Int -> {},
-$ Exn : @Type = @effect throw : @ctx { a: @Type } -> @Str -> a,
+$ Y : @Effect = yield : @Int -> {},
+$ Exn : @Effect = throw : @ctx { a: @Type } -> @Str -> a,
 
 # Sum every yielded value, plus the body's own result.
 $ sum : ({} -> <Y> @Int) -> @Int = \body =>
@@ -36,7 +36,7 @@ $ Task : @Type = @union
     Fin: {},
     Susp: { {} -> Task },
 
-$ Co : @Type = @effect step : @Int -> {},
+$ Co : @Effect = step : @Int -> {},
 
 $ spawn : ({} -> <Co> {}) -> Task = \t =>
     do t {}

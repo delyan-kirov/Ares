@@ -25,7 +25,7 @@ $ @import ARESxOPT
 # A channel of the group, carrying messages of type `m`.
 $ Chan : (m: @Type) -> @Type = @struct id: @Int,
 
-$ Async : (m: @Type) -> (e: @Row) -> @Type = @effect
+$ Async : (m: @Type) -> (e: @Row) -> @Effect =
     spawn : ({} -> <Async m e | e> {}) -> {},
     yield : {} -> {},
     chan : @Int -> Chan m,

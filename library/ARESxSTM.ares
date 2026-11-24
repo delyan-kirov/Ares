@@ -21,7 +21,7 @@ $ @import ARESxOPT
 
 $ TVar : @Type -> @Type = \a => @TVar a
 
-$ Stm : @Type = @effect
+$ Stm : @Effect =
     read : @ctx { a: @Type } -> TVar a -> a,
     write : @ctx { a: @Type } -> { TVar a, a } -> {},
     retry : @ctx { a: @Type } -> {} -> a,

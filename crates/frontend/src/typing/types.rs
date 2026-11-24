@@ -717,6 +717,10 @@ pub const BASE_TYPES: &[&str] = &[
     "@Chan", "@TVar", "@Type",
 ];
 
+/// The effects the runtime provides, which an effect row names without a
+/// declaration.
+pub const BUILTIN_EFFECTS: &[&str] = &[IO, "@Meta", "@Shell"];
+
 pub(crate) fn is_base_type(name: &str) -> bool {
     BASE_TYPES.contains(&name)
 }

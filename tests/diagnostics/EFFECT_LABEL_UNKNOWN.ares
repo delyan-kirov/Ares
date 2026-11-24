@@ -1,0 +1,6 @@
+$ @mod EFFECT_LABEL_UNKNOWN
+
+$ Boom : @Effect = boom : {} -> @Int,
+
+# A row label names an effect declared here or imported.
+$ g : {} -> <Bom> @Int = 1  #~ error[TYPE_UNBOUND]: unknown effect `Bom`

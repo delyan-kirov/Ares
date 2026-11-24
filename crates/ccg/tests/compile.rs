@@ -1014,7 +1014,7 @@ fn effects_multi_shot_through_a_stored_continuation() {
     // Nothing in the clause bounds the uses of a stashed `k`, so driving the same
     // suspension twice must run the remainder twice (1 + 2 + 2).
     let src = "$ @mod M\n\
-               $ Co : @Type = @effect step : @Int -> {},\n\
+               $ Co : @Effect = step : @Int -> {},\n\
                $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
                $ spawn : ({} -> <Co> {}) -> Task =\n\
                \t\\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
@@ -1203,7 +1203,7 @@ fn walking_a_lazy_list_stops_early() {
     // A List tail is lazy, so an unbounded list is fine as long as the walk
     // stops: only the cells reached are ever built.
     let src = "$ @mod M\n\
-               $ Acc : @Type = @effect add : @Int -> {},\n\
+               $ Acc : @Effect = add : @Int -> {},\n\
                $ from : @Int -> List @Int = \\n => List.Cons.{ n, from (n + 1) }\n\
                $ walk : List @Int -> <Acc> {} = \\l =>\n\
                \tl |> \\ | List.Cons.{ x, t } => (if x > 5 => {} else (Acc.add x; walk t)) | _ => {}\n\
@@ -1347,7 +1347,7 @@ fn tsan_clean(src: &str) {
 /// A continuation captured inside a task and resumed on another thread: a
 /// generator a task suspends and the main thread drains, and one resumed twice.
 const PAR_RESUME_SRC: &str = "$ @mod M\n\
-    $ Yield : @Type = @effect yield : @Int -> {},\n\
+    $ Yield : @Effect = yield : @Int -> {},\n\
     $ Gen : @Type = @union Done: {}, More: {@Int, {} -> Gen},\n\
     $ gen : ({} -> <Yield> {}) -> Gen = \\t =>\n\
     \tdo t {} is k | Yield.yield v => Gen.More.{ v, k } | _ => Gen.Done.{}\n\
@@ -1463,7 +1463,7 @@ fn a_shallow_arm_with_wildcard_fields_binds_the_right_slots() {
 #[test]
 fn direct_functions_match_interpreter() {
     let src = "$ @mod M\n\
-               $ Acc : @Type = @effect add : @Int -> {},\n\
+               $ Acc : @Effect = add : @Int -> {},\n\
                $ fib : @Int -> @Int = \\n => if n < 2 => n else fib (n - 1) + fib (n - 2)\n\
                $ go : @Int -> @Int -> @Int = \\i acc => if i == 0 => acc else go (i - 1) (acc + i % 7)\n\
                $ even : @Int -> Bool = \\n => if n == 0 => true else odd (n - 1)\n\

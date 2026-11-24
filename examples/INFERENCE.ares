@@ -7,7 +7,7 @@ $ @mod INFERENCE
 #       every roll, so it walks every possible world and weighs it, giving the
 #       exact conditional probability as a fraction.
 
-$ Prob : @Type = @effect pick : @Int -> @Int, observe : Bool -> {},
+$ Prob : @Effect = pick : @Int -> @Int, observe : Bool -> {},
 
 # The weight of a set of worlds: `yes` of them made the model true, `all`
 # survived every `observe`, each worth `1 / den`.

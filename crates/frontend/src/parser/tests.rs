@@ -386,7 +386,7 @@ fn one_import_per_item() {
 #[test]
 fn union_effect_import_and_directives() {
     let src = "$ @mod M\n$ @import Foo\n$ @private\n$ Color : @Type = @union Red, Green, Blue\n\
-                   $ State : @Type = @effect get : @Int, put : @Int -> @Int\n$ !1";
+                   $ State : @Effect = get : @Int, put : @Int -> @Int\n$ !1";
     let p = prog(src);
     let items = p.ast.slice(p.program.items);
     assert!(matches!(items[0], Item::Import { .. }));
@@ -581,7 +581,7 @@ fn angle_brackets_are_comparisons_in_expressions() {
 #[test]
 fn effect_rows_still_parse_in_type_position() {
     for sig in ["<E> @Int", "<E | e> @Int", "<| e> @Int", "<> @Int"] {
-        let src = format!("$ @mod M\n$ E : @Type = @effect op : @Int -> @Int\n$ f : @Int -> {sig} = \\n => n");
+        let src = format!("$ @mod M\n$ E : @Effect = op : @Int -> @Int\n$ f : @Int -> {sig} = \\n => n");
         assert!(parse(&src).is_ok(), "signature `{sig}` failed to parse");
     }
 }
@@ -773,11 +773,29 @@ fn else_no_longer_ends_a_match_or_a_handler() {
 
 #[test]
 fn effect_operation_names_must_be_lowercase() {
-    let err = match parse("$ @mod M\n$ E : @Type = @effect Op : @Int -> {},") {
+    let err = match parse("$ @mod M\n$ E : @Effect = Op : @Int -> {},") {
         Err(e) => e.to_string(),
         Ok(_) => panic!("expected a parse error"),
     };
     assert!(err.contains("must start lowercase"), "{err}");
+}
+
+#[test]
+fn effect_declared_by_its_kind() {
+    let ops = |src: &str| {
+        let p = prog(src);
+        let items = p.ast.slice(p.program.items).to_vec();
+        match items.last() {
+            Some(Item::Effect { ops, params, .. }) => (p.ast.slice(*ops).len(), p.ast.slice(*params).len()),
+            _ => panic!("expected an effect"),
+        }
+    };
+    assert_eq!(ops("$ @mod M\n$ E : @Effect = {}"), (0, 0));
+    assert_eq!(ops("$ @mod M\n$ E : @Effect = get : {} -> @Int, put : @Int -> {},"), (2, 0));
+    assert_eq!(ops("$ @mod M\n$ E : (s: @Type) -> (e: @Row) -> @Effect =\n    get : {} -> s,"), (1, 2));
+    assert!(parse("$ @mod M\n$ E : @Type = @effect get : {} -> @Int").is_err());
+    assert!(parse("$ @mod M\n$ E : @Type = get : {} -> @Int").is_err());
+    assert!(parse("$ @mod M\n$ e : @Effect = get : {} -> @Int").is_err());
 }
 
 #[test]
@@ -887,7 +905,7 @@ fn a_multi_arm_lambda_is_a_lambda_over_a_match() {
         assert_eq!(p.ast.slice(*arms).len(), 3);
     }
     // A handler's operation clause still ends the arms of a multi-arm lambda.
-    prog("$ @mod M\n$ E : @Type = @effect op: @Int -> @Int\n$ f = \\u => do u {} is k | op x => \\ | 0 => 1 | _ => 2 | v => v");
+    prog("$ @mod M\n$ E : @Effect = op: @Int -> @Int\n$ f = \\u => do u {} is k | op x => \\ | 0 => 1 | _ => 2 | v => v");
 }
 
 /// `\ | p, q => e` takes one argument per comma-separated pattern: a lambda of

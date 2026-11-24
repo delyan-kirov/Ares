@@ -321,7 +321,7 @@ call may perform: `A -> <E> B`. A bare arrow is pure (empty row). `<| e>` is an
 open row (a row variable), which is what makes a function effect-polymorphic.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
 $ pure : @Int -> @Int = \x => x                       # pure (empty row)
 $ act  : {} -> <State> @Int = get {}                  # may perform State
 $ poly : @ctx {a: @Type, e: @Row, b: @Type} -> (a -> <e> b) -> a -> <e> b = \f x => f x   # effect-polymorphic
@@ -515,7 +515,7 @@ $ n : @Int = let p : {_, Bool} = {3, true} in p.0
 What `_` comes out as may use the signature's own type variables but no new
 one: `$ k : _ -> @Int = \x => 3` is a `TYPE_ANNOTATION_REQUIRED` error, since
 the signature would hide a type variable it never wrote. A type declaration
-(`@struct`, `@union`, `@effect`, a type-level function), a foreign or builtin
+(`@struct`, `@union`, an effect, a type-level function), a foreign or builtin
 signature and a signature with `@use` parameters have no body to solve one, so
 `_` there is an error too. A definition whose signature has `_` cannot recurse
 at another type, as one without a signature cannot.
@@ -557,12 +557,13 @@ $ same_level : @ctx {w: @l} -> (t: @Type w) -> (p: @Type w) -> @Int = 0
 $ check : @ctx {u: @l, v: @l if v <= u} -> (a: @Type u) -> (b: @Type v) -> @Int = same_level (Both a b) a
 ```
 
-A declared type (`@struct`, `@union`, `@effect`) lives in the universe its
+A declared type (`@struct`, `@union`) lives in the universe its
 signature states, and every member must fit in it. A bare `@Type` there is the
 least universe that holds every member, so `List t` is at the level of `t`. A
 constructor or operation that binds a type in its own `@ctx` stores a
-universe, which makes its type large, and an effectful arrow `a -> <E x> b`
-lives at the level of its effects too. A declared type's level names must each
+universe, which makes its type large. An effect has kind `@Effect`, which is no
+universe (8.1), but it has a level, the least that holds its operations, and an
+effectful arrow `a -> <E x> b` lives at the level of its effects too. A declared type's level names must each
 be the universe of one of its parameters.
 
 ```ares
@@ -1268,15 +1269,18 @@ $ sum_to : @Int -> @Int -> @Int = \n acc =>
 
 # 8. Algebraic effects and handlers
 
-## 8.1 Declaring an effect `@effect`
-`$ Name : @Type = @effect op : Arg -> Resume, ...`. Each operation takes one argument
+## 8.1 Declaring an effect
+`$ Name : @Effect = op : Arg -> Resume, ...`. A signature ending in `@Effect`
+declares an effect, and the body lists its operations like a struct's fields.
+Each operation takes one argument
 and names its resume type. An operation whose handler never resumes (an
 exception) names a type variable of its own as its result, `@ctx {a: @Type}`.
+An effect with no operations is `= {}`.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
-$ Exn   : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
-$ Yield : @Type = @effect yield : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
+$ Exn   : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+$ Yield : @Effect = yield : @Int -> {},
 ```
 
 An effect may take parameters, stated in its signature like a struct's.
@@ -1287,9 +1291,17 @@ parameter may be a row, `(e: @Row)`, for an operation that takes an effectful
 function, and a bare mention of the effect inside its own declaration stands for
 its parameters. Arguments left out of a row (`<State>`) are inferred.
 
+`@Effect` is the kind of effects, the labels of a row. It is not a universe and
+does not sit inside `@Type`: an effect is the type of nothing. So a type in a
+row is a kind error (`<@Int>`, `TYPE_MISMATCH`), as is an effect where a type
+belongs (`Boom -> @Int`), and a label that names no effect declared here or
+imported is `TYPE_UNBOUND`. The builtin effects are `@IO`, `@Meta` and
+`@Shell`. A body `= name : Type, ...` under any other kind is a parse error,
+and a variable of kind `@Effect` (`@ctx {l: @Effect}`) is not supported yet.
+
 ```ares
-$ State : (s: @Type) -> @Type = @effect get : {} -> s, put : s -> {},
-$ Async : (m: @Type) -> (e: @Row) -> @Type = @effect spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
+$ State : (s: @Type) -> @Effect = get : {} -> s, put : s -> {},
+$ Async : (m: @Type) -> (e: @Row) -> @Effect = spawn : ({} -> <Async m e | e> {}) -> {}, send : m -> {},
 $ count : {} -> <State @Int> @Int = let n = get {} in put (n + 1); n
 ```
 
@@ -1301,7 +1313,7 @@ store it), but it cannot make one up or inspect it. A clause that needs a
 concrete type takes it from an effect parameter instead.
 
 ```ares
-$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
 $ safe : @Int = do 1 + Exn.throw "no" is k | Exn.throw m => 0     # aborts: fine
 # `| Exn.throw m => k 0` is an error: `k` wants `a` of `Exn.throw`, not @Int
 ```
@@ -1311,7 +1323,7 @@ Just call it; there is no `perform` keyword. A use injects the effect into the
 ambient row.
 
 ```ares
-$ State : @Type = @effect get : {} -> @Int, put : @Int -> {},
+$ State : @Effect = get : {} -> @Int, put : @Int -> {},
 $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x
 ```
 
@@ -1326,7 +1338,7 @@ operation name is qualified in a clause head.
 
 Exception (ignores `k`, so it resumes zero times):
 ```ares
-$ Exn : @Type = @effect throw : @Str -> @Int,
+$ Exn : @Effect = throw : @Str -> @Int,
 $ safeDiv : @Int -> @Int -> @Int = \a b =>
 	do if b == 0 => Exn.throw "div0" else a / b
 	is k | Exn.throw msg => -1
@@ -1334,6 +1346,7 @@ $ safeDiv : @Int -> @Int -> @Int = \a b =>
 
 Generator (resume once per yield, summing results):
 ```ares
+$ Yield : @Effect = yield : @Int -> {},
 $ sumGen : ({} -> <Yield> {}) -> @Int = \gen =>
 	do gen {}
 	is k | Yield.yield v => v + k {}
@@ -1347,6 +1360,7 @@ before use, which is what coroutines need. Handlers are deep (a resumed
 computation is still governed by the same handler).
 
 ```ares
+$ Yield : @Effect = yield : @Int -> {},
 $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task }
 $ spawn : ({} -> <Yield> {}) -> Task = \t =>
 	do t {}
@@ -1358,6 +1372,7 @@ Resuming more than once runs the rest of the computation once per resume, each o
 its own copy, which is what nondeterminism and backtracking are:
 
 ```ares
+$ Amb : @Effect = flip : {} -> Bool,
 $ sum_all : ({} -> <Amb> @Int) -> @Int = \body =>
 	do body {}
 	is k | Amb.flip u => k true + k false        # both branches
@@ -1983,7 +1998,8 @@ A quick index of the `@`-forms and where each is documented above.
 | `@mod` | module header | 2.1 |
 | `@main` | program entry | 2.5 |
 | `@build` | compile-time entry | 11.3 |
-| `@struct` `@union` `@effect` | type declarations | 6, 8.1 |
+| `@struct` `@union` | type declarations | 6 |
+| `@Effect` | the kind of effects, ending an effect declaration's signature | 8.1 |
 | `@extern` | foreign binding, builtin declaration | 10 |
 | `@use` | instance (interface) parameter and explicit argument | 7.4 |
 | `@ctx` | parameters solved by unification, and explicit arguments for them | 3.6, 16 |

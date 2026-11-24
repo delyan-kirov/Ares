@@ -39,7 +39,7 @@ $ PrSpec : @Type = @struct
     title: @Str,
     body: @Str,
 
-$ Forge : @Type = @effect
+$ Forge : @Effect =
     issue : @Int -> Lookup,
     create_issue : @Str -> Opt @Int,
     pr : @Str -> Pr,

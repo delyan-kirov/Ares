@@ -1,0 +1,6 @@
+$ @mod EFFECT_AS_TYPE
+
+$ Boom : @Effect = boom : {} -> @Int,
+
+# An effect is no type: it only labels a row.
+$ f : Boom -> @Int = \_ => 1  #~ error[TYPE_MISMATCH]: `Boom` is an effect, not a type

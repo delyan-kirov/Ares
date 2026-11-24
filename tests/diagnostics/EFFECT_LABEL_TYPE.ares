@@ -1,0 +1,4 @@
+$ @mod EFFECT_LABEL_TYPE
+
+# A row holds effects, of kind `@Effect`: a type there is a kind error.
+$ g : {} -> <@Int> @Int = 1  #~ error[TYPE_MISMATCH]: `@Int` is a type, not an effect

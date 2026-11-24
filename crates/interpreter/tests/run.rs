@@ -1128,7 +1128,7 @@ fn imported_global_does_not_shadow_a_same_named_effect_op() {
     // fallback). Regression for the cross-module glob-resolution gap.
     let a = "$ @mod A\n$ get : @Int -> @Int = \\x => x + 1000";
     let b = "$ @mod B\n\
-        $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
+        $ State : @Effect = get : {} -> @Int, put : @Int -> {},\n\
         $ getit : {} -> <State> @Int = get {}\n\
         $ run : @Int = do getit {} is k | State.get u => k 42 | State.put v => k {} | r => r";
     let root = "$ @mod M\n$ @import A\n$ @import B\n$ r : @Int = B.run";
@@ -1157,8 +1157,8 @@ fn finale_runs_cleanup_on_completion_abort_and_nesting() {
     // A `Y` handler that sums every yielded value; the `@finale` cleanups perform
     // `Y.yield`, so their effects are observable in the total.
     let prelude = "$ @mod M\n\
-        $ Y : @Type = @effect yield : @Int -> {},\n\
-        $ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n\
+        $ Y : @Effect = yield : @Int -> {},\n\
+        $ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,\n\
         $ sum : ({} -> <Y> @Int) -> @Int = \
           \\body => do body {} is k | Y.yield v => v + k {} | x => x\n";
     // Normal completion: body yields 1 and returns 100, cleanup yields 2 -> 103.
@@ -1194,7 +1194,7 @@ fn a_clause_may_resume_its_continuation_more_than_once() {
     // slice. The second `flip` is performed inside a resumed copy and captures
     // again from there: 11 + 1 + 10 + 0.
     let src = "$ @mod M\n\
-        $ Amb : @Type = @effect flip : {} -> Bool,\n\
+        $ Amb : @Effect = flip : {} -> Bool,\n\
         $ sum_all : ({} -> <Amb> @Int) -> @Int = \
           \\body => do body {} is k | Amb.flip u => k true + k false | x => x\n\
         $ one : @Int = sum_all (\\_ => if flip {} => 10 else 1)\n\
@@ -1211,7 +1211,7 @@ fn a_stored_continuation_may_be_resumed_more_than_once() {
     // bounds its uses; driving the SAME suspension twice must run the task's
     // remainder twice (1 + 2 + 2), not fault.
     let src = "$ @mod M\n\
-        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Co : @Effect = step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
@@ -1235,7 +1235,7 @@ fn n_resumes_of_one_continuation_cost_n_minus_one_copies() {
     // The first `k` is not its last use, so that resume copies; the second is,
     // so it takes the slice itself.
     let src = "$ @mod M\n\
-        $ Amb : @Type = @effect flip : {} -> Bool,\n\
+        $ Amb : @Effect = flip : {} -> Bool,\n\
         $ r : @Int = do (if flip {} => 10 else 1) \
           is k | Amb.flip u => k true + k false | x => x";
     assert_eq!(copies_while(src, "r"), ("11".into(), 1));
@@ -1246,7 +1246,7 @@ fn parameter_passing_state_moves_without_an_annotation() {
     // `k` escapes into a lambda in every clause, so nothing static bounds its
     // uses, yet each resumption is uniquely owned when the lambda resumes it.
     let src = "$ @mod M\n\
-        $ St : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
+        $ St : @Effect = get : {} -> @Int, put : @Int -> {},\n\
         $ count : @Int -> <St> @Int = \\n => \
           if n == 0 => get {} else (let s = get {} in let _ = put (s + 1) in count (n - 1))\n\
         $ r : @Int = \
@@ -1261,7 +1261,7 @@ fn parameter_passing_state_moves_without_an_annotation() {
 #[test]
 fn a_stashed_coroutine_continuation_moves_when_driven_once() {
     let src = "$ @mod M\n\
-        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Co : @Effect = step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} is k | step v => Task.Susp.{ v, k } | _ => Task.Fin.{}\n\
@@ -1294,7 +1294,7 @@ fn a_partial_push_applied_twice_does_not_share_its_buffer() {
 #[test]
 fn a_stored_continuation_resumed_twice_copies() {
     let src = "$ @mod M\n\
-        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Co : @Effect = step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { @Int, {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} is k \
@@ -1311,7 +1311,7 @@ fn finale_cleanup_runs_when_a_stored_continuation_completes() {
     // The handler stores the continuation instead of resuming; the cleanup runs
     // only when that continuation is later driven to completion (two steps).
     let src = "$ @mod M\n\
-        $ Co : @Type = @effect step : @Int -> {},\n\
+        $ Co : @Effect = step : @Int -> {},\n\
         $ Task : @Type = @union Fin: {}, Susp: { {} -> Task },\n\
         $ spawn : ({} -> <Co> {}) -> Task = \
           \\t => do t {} is k | step v => Task.Susp.{ k } | _ => Task.Fin.{}\n\

@@ -227,7 +227,7 @@ that the re-check never resolves a name.
 | Frontend-Univ | PT23 | Fig. 2, Univ with 𝒜(𝒰ᵢ, 𝒰ᵢ₊₁); the frontend checker's mirror of Univ, without cumulativity | published | PT23 Consistency | - | yes |
 | Frontend-Level-Polymorphism | ST14 | not checked: not vendored; the frontend checker's mirror of Level-Polymorphism, with constraints between levels stated by an `if` or inferred from the body | published-uncovered | - | - | yes |
 | Frontend-Data-Level | PLT25 | Section 4.1, the fields of an inductive definition in its universe; the frontend checker's mirror of Data-Form and Data-Ctor, for structs and unions | published | PLT25 Consistency | - | yes |
-| Frontend-Effect-Level | - | an effect's universe is the largest of its parameters' and its operations' types', and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
+| Frontend-Effect-Level | - | an effect, of kind `@Effect` and in no universe, has the level of the largest of its parameters' and its operations' types, and an effectful arrow's level includes its effects' arguments | conjecture | - | #544 | yes |
 
 How the deviations differ from their sources:
 

@@ -3,5 +3,5 @@ $ @mod TASK_HANDLED_EFFECT
 # A task runs on another thread, so it cannot perform an effect whose handler
 # sits on the spawning thread's stack.
 $ @import ARESxPAR
-$ Ask : @Type = @effect ask : {} -> @Int,
+$ Ask : @Effect = ask : {} -> @Int,
 $ g : {} -> <@IO, Ask> Future @Int = spawn (\w => Ask.ask {} + 1)  #~ error[TYPE_MISMATCH]: a parallel task performs effect `Ask`

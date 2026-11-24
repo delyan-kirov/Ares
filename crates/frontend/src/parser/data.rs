@@ -400,9 +400,10 @@ pub enum Item {
         sig: Aol<Ty>,
         body: Aol<Expr>,
     },
-    /// `$ Name : sig = @effect op : ty, ...`, `sig` stating the parameters as
-    /// for a struct. An operation's type may mention only the effect's
-    /// parameters: a handler fixes them for every operation it serves.
+    /// `$ Name : sig = op : ty, ...` (or `= {}`), `sig` ending in `@Effect`
+    /// and stating the parameters as for a struct. An operation's type may
+    /// mention only the effect's parameters: a handler fixes them for every
+    /// operation it serves.
     Effect {
         name: StrId,
         sig: Aol<Ty>,

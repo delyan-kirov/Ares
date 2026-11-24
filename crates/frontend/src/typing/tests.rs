@@ -496,7 +496,7 @@ fn effect_operation_is_bound_and_handler_types_result() {
     // its arrow carries the `<State>` row; the `do/is` handler discharges it and
     // types to the clause/`else` bodies' common type.
     let src = "$ @mod M\n\
-                   $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
+                   $ State : @Effect = get : {} -> @Int, put : @Int -> {},\n\
                    $ tick : {} -> <State> @Int = let x = get {} in let _ = put (x + 1) in x\n\
                    $ run : @Int = do tick {} is k | get u => k 0 | put n => k {} | x => x";
     assert_eq!(type_of(src, "tick"), "{} -> <State> @Int");
@@ -587,7 +587,7 @@ fn unhandled_effect_is_a_compile_error() {
     // A function that performs an effect but declares a pure (or too-small) type
     // is rejected: the latent `<State>` cannot be subsumed into the empty ambient.
     let src = "$ @mod M\n\
-                   $ State : @Type = @effect get : {} -> @Int, put : @Int -> {},\n\
+                   $ State : @Effect = get : {} -> @Int, put : @Int -> {},\n\
                    $ bad : {} -> @Int = get {}";
     assert!(
         errors(src).contains("not handled"),
@@ -601,7 +601,7 @@ fn top_level_unhandled_effect_is_rejected() {
     // Performing an effect at the top level (no handler in scope) is a compile
     // error, since a top-level body is typed under the empty closed row.
     let src = "$ @mod M\n\
-                   $ Yield : @Type = @effect yield : @Int -> {},\n\
+                   $ Yield : @Effect = yield : @Int -> {},\n\
                    $ oops : {} = yield 1";
     assert!(
         errors(src).contains("not handled"),
@@ -616,7 +616,7 @@ fn open_row_entry_may_perform_any_effect() {
     // perform any effect without a handler (the runtime is the top handler). A
     // pure `<>` would reject this (see `unhandled_effect_is_a_compile_error`).
     let src = "$ @mod MAIN\n\
-               $ Yell : @Type = @effect shout : @Int -> {},\n\
+               $ Yell : @Effect = shout : @Int -> {},\n\
                $ main : @ctx {e: @Row} -> {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "", "open-row main should type-check");
     assert_eq!(type_of(src, "main"), "{} -> <Yell | a> @Int");
@@ -637,7 +637,7 @@ fn signed_member_recurses_at_another_type() {
 fn signature_row_tail_stays_open() {
     // Unlike a type variable, a row tail may be extended by the body (#270).
     let src = "$ @mod M\n\
-               $ Yell : @Type = @effect shout : @Int -> {},\n\
+               $ Yell : @Effect = shout : @Int -> {},\n\
                $ f : @ctx {e: @Row} -> {} -> <| e> @Int = let _ = Yell.shout 5 in 0";
     assert_eq!(errors(src), "");
 }
@@ -778,8 +778,8 @@ fn same_operation_in_two_effects_resolves_by_result_type() {
     // `ask` is declared by two effects (@Int and @Str result); a bare use is an
     // overload resolved by how the result is used, and `Effect.op` disambiguates.
     let src = "$ @mod M\n\
-                   $ Reader : @Type = @effect ask : {} -> @Int,\n\
-                   $ Config : @Type = @effect ask : {} -> @Str,\n\
+                   $ Reader : @Effect = ask : {} -> @Int,\n\
+                   $ Config : @Effect = ask : {} -> @Str,\n\
                    $ n : @Int = do (ask {}) + 1 is k | Reader.ask u => k 10\n\
                    $ s : @Str = do Config.ask {} is k | Config.ask u => k \"hi\"";
     assert_eq!(type_of(src, "n"), "@Int");
@@ -952,7 +952,7 @@ fn generic_comparison_declares_its_context() {
 /// brackets in type position; a signature carrying a row still parses and checks.
 #[test]
 fn comparison_operators_coexist_with_effect_rows() {
-    let src = "$ @mod M\n$ Fail : @Type = @effect fail : {} -> @Int\n\
+    let src = "$ @mod M\n$ Fail : @Effect = fail : {} -> @Int\n\
                $ f : @ctx {e: @Row} -> @Int -> <Fail | e> Bool = \\n => n < 3\n\
                $ g : @ctx {e: @Row} -> @Int -> <| e> Bool = \\n => n > 3";
     assert_eq!(errors(src), "");
@@ -1231,7 +1231,7 @@ fn unreachable_arms_warn() {
 
 #[test]
 fn handler_value_arms_are_checked() {
-    let src = "$ @mod T\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
+    let src = "$ @mod T\n$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,\n$ M : @Type = @union Hit: {@Int}, Miss,\n\
                $ g : {} -> <Exn> M = M.Miss\n\
                $ f : @Int = do g {} is k | Exn.throw m => 0 | .Hit.{ v } => v\n";
     let (err, _) = coverage(src);
@@ -1430,8 +1430,8 @@ fn a_near_miss_instance_is_named_instead_of_none_in_scope() {
 }
 
 const ROW_EFFECTS: &str = "$ @mod M\n\
-     $ Log : @Type = @effect log : @Int -> {},\n\
-     $ Gpu : @Type = @effect draw : @Int -> {},\n";
+     $ Log : @Effect = log : @Int -> {},\n\
+     $ Gpu : @Effect = draw : @Int -> {},\n";
 
 #[test]
 fn a_row_prints_its_labels_and_an_unhandled_one_by_name() {
@@ -1453,7 +1453,7 @@ fn a_row_names_only_effects() {
 
 // -- effect parameters (#291) ---------------------------------------------
 
-const BOX_EFFECT: &str = "$ @mod M\n$ Box : (a: @Type) -> @Type = @effect take : @Int -> a,\n";
+const BOX_EFFECT: &str = "$ @mod M\n$ Box : (a: @Type) -> @Effect = take : @Int -> a,\n";
 
 #[test]
 fn an_effect_parameter_is_fixed_by_its_row() {
@@ -1472,10 +1472,10 @@ fn one_handler_serves_one_instance() {
 
 #[test]
 fn an_operation_variable_is_opaque_in_the_handler() {
-    let ok = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
+    let ok = "$ @mod M\n$ Put : @Effect = put : @ctx {a: @Type} -> a -> {},\n\
               $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} is k | Put.put x => k {} | u => 0\n";
     assert_eq!(errors(ok), "");
-    let bad = "$ @mod M\n$ Put : @Type = @effect put : @ctx {a: @Type} -> a -> {},\n\
+    let bad = "$ @mod M\n$ Put : @Effect = put : @ctx {a: @Type} -> a -> {},\n\
                $ f : ({} -> <Put> {}) -> @Int = \\b => do b {} is k | Put.put x => x + 0 | u => 0\n";
     assert!(errors(bad).contains("`a` of `Put.put`"), "got: {:?}", errors(bad));
 }
@@ -1591,11 +1591,11 @@ fn an_effectful_arrow_lives_with_its_effects() {
         let e = errors(&format!("{count}{src}"));
         assert!(e.contains("universe"), "{src}: got {e:?}");
     };
-    applies("$ Ask : @Type = @effect ask : {} -> @Int,\n$ c : @Int = count ({} -> <Ask> @Int)\n");
+    applies("$ Ask : @Effect = ask : {} -> @Int,\n$ c : @Int = count ({} -> <Ask> @Int)\n");
     // An operation generic in a type ranges over a universe, so its effect is large.
-    blocked("$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Str -> a,\n$ c : @Int = count ({} -> <Exn> @Int)\n");
+    blocked("$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,\n$ c : @Int = count ({} -> <Exn> @Int)\n");
     // An effect's arguments count.
-    blocked("$ St : (s: @Type) -> @Type = @effect get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
+    blocked("$ St : (s: @Type) -> @Effect = get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
 }
 
 #[test]
@@ -1619,7 +1619,7 @@ fn constructor_and_operation_variables_are_bound_in_their_ctx() {
         fixed(&pair("@ctx {a: @Type} -> {E a, E b} -> E {a, b}")),
         pair("@ctx {a: @Type, b: @Type} -> {E a, E b} -> E {a, b}")
     );
-    let exn = |throw: &str| format!("{m}$ Exn : @Type = @effect throw : {throw},\n");
+    let exn = |throw: &str| format!("{m}$ Exn : @Effect = throw : {throw},\n");
     assert_eq!(fixed(&exn("@Str -> a")), exn("@ctx {a: @Type} -> @Str -> a"));
     // Bound, they check, and a built value carries the size its binder names.
     let src = format!(
@@ -1633,7 +1633,7 @@ fn constructor_and_operation_variables_are_bound_in_their_ctx() {
 
 #[test]
 fn a_handler_cannot_resume_with_a_value_of_its_own() {
-    let src = "$ @mod M\n$ Exn : @Type = @effect throw : @ctx {a: @Type} -> @Int -> a,\n\
+    let src = "$ @mod M\n$ Exn : @Effect = throw : @ctx {a: @Type} -> @Int -> a,\n\
                $ ok : @Int = do Exn.throw 1 + 2 is k | Exn.throw n => n\n\
                $ bad : @Int = do Exn.throw 1 + 2 is k | Exn.throw n => k n\n";
     let e = errors(src);

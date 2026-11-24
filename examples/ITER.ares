@@ -9,7 +9,7 @@ $ @import ARESxALGO
 $ @import ARESxVEC
 $ @import ARESxLIST
 
-$ Yield : @Type = @effect yield : @Int -> {},
+$ Yield : @Effect = yield : @Int -> {},
 $ sumY : ({} -> <Yield> {}) -> @Int = \a =>
     do a {}
     is k | Yield.yield v => v + k {} | _ => 0

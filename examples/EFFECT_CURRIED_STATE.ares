@@ -3,8 +3,8 @@ $ @mod EFFECT_CURRIED_STATE
 # A parameter-passing handler may thread two curried state arguments, while
 # another effect (`Tell`) passes through it to an outer handler.
 
-$ Get : @Type = @effect get : {} -> @Int,
-$ Tell : @Type = @effect tell : @Int -> {},
+$ Get : @Effect = get : {} -> @Int,
+$ Tell : @Effect = tell : @Int -> {},
 
 $ two : ({} -> <Get, Tell> @Int) -> <Tell> @Int = \body =>
     let go =
