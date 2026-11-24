@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::check::tests::accept;
 use crate::recheck;
-use crate::signature::{GlobalKind, Signature};
+use crate::signature::{DataId, GlobalId, GlobalKind, Signature};
 use crate::term::Term;
 
 const NAT: &str = "\n$ Nat : @Type 1 = @union Zero: {}, Succ: Nat\n$ ok : Nat.Zero ~ Nat.Zero = @refl Nat.Zero\n$ bad : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom\n$ two : Nat = Nat.Succ.{ Nat.Succ.{ Nat.Zero } }\n";
@@ -72,4 +72,93 @@ fn a_generated_type_is_the_declarations() {
     let e = recheck(&sig).unwrap_err();
     assert_eq!(e.global, "Nat.Succ");
     assert!(e.message.contains("does not give"), "{e}");
+}
+
+const BOX: &str = "\n$ Box : (a: @Type 1) -> @Type 1 = @union Put: {v: a, w: a}, Empty: {}\n$ t : @Type 1 -> @Type 1 = Box\n$ u : @Type 1 -> @Type 1 = Box\n";
+
+/// The declaration whose type former is `name`.
+fn data_of(sig: &Signature, name: &str) -> DataId {
+    match sig.global(sig.lookup(name).unwrap()).kind {
+        GlobalKind::Data(data) => data,
+        _ => panic!("`{name}` is not a type former"),
+    }
+}
+
+/// Require a re-check to fail at `name` for a reason that mentions `needle`.
+fn rejected(sig: &Signature, name: &str, needle: &str) {
+    match recheck(sig) {
+        Ok(()) => panic!("re-checked `{name}` after tampering"),
+        Err(e) => {
+            assert_eq!(e.global, name);
+            assert!(e.message.contains(needle), "error does not mention `{needle}`: {e}");
+        }
+    }
+}
+
+#[test]
+fn a_declaration_records_its_projections() {
+    let sig = accept(BOX);
+    let ids: Vec<GlobalId> = ["Box.eq_Put_v", "Box.eq_Put_w"].iter().map(|n| sig.lookup(n).unwrap()).collect();
+    assert_eq!(sig.data(data_of(&sig, "Box")).projections, ids);
+    let nat = accept(NAT);
+    assert!(nat.data(data_of(&nat, "Nat")).projections.is_empty());
+    recheck(&sig).unwrap();
+}
+
+#[test]
+fn a_recorded_projection_is_owned() {
+    let mut sig = accept(BOX);
+    let (data, t) = (data_of(&sig, "Box"), sig.lookup("t").unwrap());
+    sig.data_mut(data).projections[1] = t;
+    rejected(&sig, "Box", "not its global");
+}
+
+#[test]
+fn recorded_projections_are_in_order() {
+    let mut sig = accept(BOX);
+    let data = data_of(&sig, "Box");
+    sig.data_mut(data).projections.swap(0, 1);
+    rejected(&sig, "Box", "not its global");
+}
+
+#[test]
+fn recorded_projections_are_contiguous() {
+    let mut sig = accept(BOX);
+    let (data, u) = (data_of(&sig, "Box"), sig.lookup("u").unwrap());
+    sig.global_mut(u).kind = GlobalKind::Projection(data, 0, 1);
+    sig.data_mut(data).projections[1] = u;
+    rejected(&sig, "Box", "apart from its other globals");
+}
+
+#[test]
+fn every_projection_is_recorded() {
+    let mut sig = accept(BOX);
+    let data = data_of(&sig, "Box");
+    sig.data_mut(data).projections.pop();
+    rejected(&sig, "Box", "fields do not give");
+}
+
+#[test]
+fn an_unrecorded_projection_is_not_the_declarations() {
+    let mut sig = accept(BOX);
+    let data = data_of(&sig, "Box");
+    tampered(&mut sig, "t", GlobalKind::Projection(data, 0, 0), "not a projection its declaration has");
+}
+
+#[test]
+fn a_type_without_parameters_records_no_projection() {
+    let mut sig = accept(NAT);
+    let (data, two) = (data_of(&sig, "Nat"), sig.lookup("two").unwrap());
+    sig.data_mut(data).projections.push(two);
+    rejected(&sig, "Nat", "fields do not give");
+}
+
+#[test]
+fn a_recursor_follows_the_projections() {
+    let mut sig = accept(BOX);
+    let (data, elim, u) = (data_of(&sig, "Box"), sig.lookup("Box.elim").unwrap(), sig.lookup("u").unwrap());
+    let recursor = sig.global(elim).kind.clone();
+    sig.global_mut(u).kind = recursor;
+    sig.data_mut(data).recursor = u;
+    rejected(&sig, "Box", "recursor apart from its other globals");
 }

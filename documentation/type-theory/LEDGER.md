@@ -162,7 +162,9 @@ with the solutions, each solution by the re-checker and each argument by
 conversion, so a wrong guess can only reject a script.
 Transitive axioms is graph reachability over the globals each global's type
 and body name, proofs included, with an inductive type resting on the other
-globals its declaration gives, as Lean's `#print axioms` does. That the edges
+globals its declaration gives, as Lean's `#print axioms` does. A declaration
+records those globals in its `DataDecl`, and `recheck` checks the record
+(#583, Note [A declaration's globals are contiguous]). That the edges
 are complete (#480) is argued in Note [The axiom report is complete], in
 `crates/kernel/src/signature.rs`, and checked rather than proved: `recheck`
 fails when re-checking a global reads a global it does not rest on, so
