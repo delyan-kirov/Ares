@@ -31,6 +31,7 @@ with respectful quotient elimination. It is `crates/kernel/scripts/RATIONALS.are
 | `observational` | the computation of `a ~ b` and `@cast` |
 | `conversion` | typed definitional equality |
 | `syntax` | lowering of a module the frontend parsed to the kernel's input |
+| `prelude` | CORE's booleans and naturals, checked before every script |
 | `check` | bidirectional elaboration of scripts into core terms |
 
 No external crates; the parser is the frontend's. Values are `Rc`-shared
@@ -60,6 +61,7 @@ $ four : add two two ~ Nat.Succ.{ Nat.Succ.{ two } } = @refl (add two two)
 - Terms: `\x => e`, `\(x: A) => e`, `(x: A) -> B`, `A -> B`, `let x: T = e in b`, `(e : T)`, `a ~ b`, `f <| x` and `x |> f`. `{a, b}` is a pair where a pair type is expected and otherwise the type of pairs; `{x: A, y: B x}` is a dependent pair type; `p.0` and `p.1` project.
 - Primitives: `@Type l`, `@Top`, `@tt`, `@Bottom`, `x |> @absurd` (at the type expected), `@Eq A a b`, `@refl a`, `@transp t B u t2 e`, `@cast A B e t`, `@Quot A R rr rs rt`, `@qin a`, `@qelim P f resp q`.
 - An argument written `_`, and a level left out of a use, are inferred by local argument synthesis: first-order matching against the expected type and the other arguments' types, such as `trans _ _ _ e f` against `a ~ c` or `Nat.elim (\n => P n) ...`. The checker then checks the application again with the solutions by the ordinary rules, so the elaborated terms are explicit and a wrong guess only rejects (#470). Matching does not see through computation: a step that proves `a ~ b` used as `Nat.Succ.{ a } ~ Nat.Succ.{ b }` needs its endpoints written.
+- The prelude (#595): before a script the kernel checks CORE's `Bool` (`true`, `false`, `not`, `&&`, `||`) and the unary naturals `@Nat` (recursor `@Nat.elim`), with numerals up to 100 and `+`, `*`, `<`, `>`, `<=`, `>=`, `==`, `!=` defined by recursion. Any binary operator is the global of its name applied to both sides. A script's own global may take a prelude name, which is then its own. A `Bool` where a type is expected is `b ~ true` (Rule Bool-Reflection, notation over Eq-Form), as in the frontend (#539), so `$ small : (n: @Nat) -> n < 10 -> @Nat = \p => n` is used as `small 7 (@refl true)` under either checker. The frontend folds `n == n` and `n < n` for a variable `n`; in the kernel they are lemmas proved by induction.
 - `#` starts a comment.
 
 ## 4. The theory as implemented
