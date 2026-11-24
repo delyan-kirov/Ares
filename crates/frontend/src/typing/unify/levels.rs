@@ -289,6 +289,10 @@ impl Unifier {
     fn row_levels(&mut self, row: Type, out: &mut Vec<Type>) {
         let mut cur = row;
         while let TypeNode::RowExtend(label, args, rest) = self.head(cur) {
+            let Some(label) = self.types.label_name(self.resolve(label)) else {
+                cur = rest;
+                continue;
+            };
             if let TypeNode::Tuple(items) = self.head(args) {
                 let items = self.types.items(items).to_vec();
                 if let Some(l) = self.decl_level_of(label, &items) {

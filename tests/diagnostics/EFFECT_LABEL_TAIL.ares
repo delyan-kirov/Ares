@@ -1,0 +1,7 @@
+$ @mod EFFECT_LABEL_TAIL
+
+$ Ask : @Effect = ask : {} -> @Int,
+
+# The tail of a row after `|` stands for any other effects: it is a row, and
+# a variable of kind `@Effect` stands for just one.
+$ g : @ctx {l: @Effect} -> ({} -> <Ask | l> @Int) -> @Int = \_ => 1  #~ error[TYPE_MISMATCH]: `l` is an effect, not a row

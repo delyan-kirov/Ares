@@ -1,0 +1,6 @@
+$ @mod EFFECT_LABEL_UNBOUND
+
+$ Ask : @Effect = ask : {} -> @Int,
+
+# A lowercase entry of a row is a variable of kind `@Effect`, bound in `@ctx`.
+$ m : ({} -> <q, Ask> @Int) -> @Int = \_ => 1  #~ error[TYPE_UNBOUND]: `q` is not bound

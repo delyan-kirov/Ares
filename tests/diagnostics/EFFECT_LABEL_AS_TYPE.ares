@@ -1,0 +1,4 @@
+$ @mod EFFECT_LABEL_AS_TYPE
+
+# A variable of kind `@Effect` stands for one effect of a row: it is no type.
+$ f : @ctx {l: @Effect} -> l -> @Int = \_ => 1  #~ error[TYPE_MISMATCH]: `l` is an effect, not a type

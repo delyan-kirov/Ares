@@ -388,6 +388,19 @@ impl<'a> Checker<'a> {
                         .map_err(|d| d.fill_span(span))?;
                     continue;
                 }
+                if self.is_effect_kind(field.ty) {
+                    let Expr::Type(t) = *self.node(value) else {
+                        return Err(diag!(Code::TypeMismatch, span, 0, "`@ctx` field `{f}` of `{name}` takes an effect, not a value"));
+                    };
+                    let mut scoped = self.scoped_tvars.clone();
+                    let (label, args) = self.label_of_ast(t, span, &mut scoped)?;
+                    let want = tvars[&f];
+                    let want_args = self.unifier.label_args(want);
+                    let where_ = format!("in the `@ctx` field `{f}` of `{name}`");
+                    self.unifier.unify(want, label, &where_).map_err(|d| d.fill_span(span))?;
+                    self.unifier.unify(want_args, args, &where_).map_err(|d| d.fill_span(span))?;
+                    continue;
+                }
                 let Expr::Type(t) = *self.node(value) else {
                     let what = self.kind_of_ast(field.ty).map_or("@Type", ParamKind::written);
                     return Err(diag!(Code::TypeMismatch, span, 0, "`@ctx` field `{f}` of `{name}` takes a `{what}`, not a value"));

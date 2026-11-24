@@ -234,8 +234,8 @@ opt_comma   : /* empty */ | COMMA ;
 
 /* A `@ctx` parameter is a closed record of named fields that call sites do
  * not write, each solved by the sort of its type (#406, #537, #573): types
- * `t: @Type`, sizes `n: @Nat`, rows `e: @Row` and universe levels `u: @l` by
- * unification, and instances `d: IOrd t`, whose type is a `@Class`, by search
+ * `t: @Type`, sizes `n: @Nat`, rows `e: @Row`, effects `l: @Effect` and
+ * universe levels `u: @l` by unification, and instances `d: IOrd t`, whose type is a `@Class`, by search
  * in scope. Levels stand in the signature's first `@ctx`, ahead of its
  * parameters. A signature binds every type variable it names this way. The
  * fields are in scope by name in the body, like a named-record parameter's,
@@ -264,17 +264,20 @@ rec_field : LIDENT COLON expr ;
 
 eff_row
   : ANGLE_EMPTY
-  | LT LIDENT GT
   | LT eff_names GT
   | LT eff_names BAR LIDENT GT
   | PIPE_BACK LIDENT GT
   ;
 
-/* An entry is an effect applied to its arguments (`Chan @Int e`), or
- * entries a generator produces (`!X`, a whole entry). The arguments are
- * atoms, so a `>` inside one is parenthesized. A row has no alias. */
+/* An entry is an effect applied to its arguments (`Chan @Int e`), a
+ * variable of kind `@Effect` standing for one whole effect (`l`, bare,
+ * #585), or entries a generator produces (`!X`, a whole entry). The
+ * arguments are atoms, so a `>` inside one is parenthesized. A row has no
+ * alias. A lone lowercase name, `<e>`, is one entry here; parser.rs reads
+ * it as the row's tail, and the checker as the one effect `e` stands for
+ * when `e` is bound `e: @Effect`. */
 eff_names : row_entry | eff_names COMMA row_entry ;
-row_entry : eff_entry | splice ;
+row_entry : eff_entry | LIDENT | splice ;
 eff_entry : UIDENT | AT_TYCON | eff_entry arg ;
 
 /* Types are expressions (#406): there is no separate type grammar, and a

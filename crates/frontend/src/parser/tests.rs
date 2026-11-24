@@ -799,6 +799,16 @@ fn effect_declared_by_its_kind() {
 }
 
 #[test]
+fn effect_label_variables_in_rows() {
+    let row = |r: &str| parse(&format!("$ @mod M\n$ f : @ctx {{l: @Effect, e: @Row}} -> {{}} -> {r} @Int = 1"));
+    for ok in ["<l | e>", "<l, A | e>", "<A, l>", "<l>", "<e>", "<A | e>"] {
+        assert!(row(ok).is_ok(), "{ok}");
+    }
+    let err = row("<l @Int | e>").err().expect("an error").to_string();
+    assert!(err.contains("an effect variable takes no arguments"), "{err}");
+}
+
+#[test]
 fn negative_literal_patterns() {
     let p = prog("$ @mod M\n$ f = \\ | -1 => 0 | -5 ... -2 => 1 | -1.5 => 2 | 3 ... => 3");
     let Expr::Lambda { body, .. } = p.ast.expr(only_def_body(&p)) else {

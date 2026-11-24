@@ -1598,6 +1598,29 @@ fn an_effectful_arrow_lives_with_its_effects() {
     blocked("$ St : (s: @Type) -> @Effect = get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
 }
 
+// Test [Frontend-Effect-Label-Var]
+#[test]
+fn an_effect_variable_is_one_effect_solved_only_when_unique() {
+    let decls = "$ @mod T\n$ Ask : @Effect = ask : {} -> @Int,\n$ Tell : @Effect = tell : @Int -> {},\n\
+                 $ one : @ctx {l: @Effect} -> ({} -> <l> @Int) -> <l> @Int = \\g => g {}\n\
+                 $ pass : @ctx {l: @Effect, e: @Row} -> ({} -> <l | e> @Int) -> <l | e> @Int = \\g => g {}\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{decls}{src}")), "", "{src}");
+    let blocked = |src: &str, why: &str| {
+        let e = errors(&format!("{decls}{src}"));
+        assert!(e.contains(why), "{src}: got {e:?}");
+    };
+    // A row of one effect decides `l`.
+    applies("$ a : {} -> <Ask> @Int = one <| \\_ => ask {}\n");
+    // A label variable is a whole effect: `<l>` holds one.
+    blocked("$ a : {} -> <Ask, Tell> @Int = one <| \\_ => let n = ask {} in tell n; n\n", "not handled");
+    // Two effects leave `l` open until the use names it.
+    blocked("$ a : {} -> <Ask, Tell> @Int = pass <| \\_ => let n = ask {} in tell n; n\n", "cannot tell which effect");
+    applies("$ a : {} -> <Ask, Tell> @Int = pass @ctx {.l = Tell} <| \\_ => let n = ask {} in tell n; n\n");
+    // Inside its body, `l` is an effect of its own.
+    applies("$ h : @ctx {l: @Effect} -> ({} -> <Ask, l> @Int) -> <l> @Int = \\g => do g {} is k | ask u => k 1\n");
+    blocked("$ h : @ctx {l: @Effect} -> ({} -> <l> @Int) -> <l> @Int = \\g => g {} + ask {}\n", "not handled");
+}
+
 #[test]
 fn constructor_and_operation_variables_are_bound_in_their_ctx() {
     let m = "$ @mod T\n";
