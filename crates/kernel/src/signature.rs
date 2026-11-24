@@ -57,6 +57,10 @@ pub struct DataDecl {
     pub uniform: usize,
     pub level: Level,
     pub constructors: Vec<ConstructorDecl>,
+    /// The projections, constructor by constructor and field by field: none
+    /// for a type without parameters. See Rule [Data-Eq-Projection].
+    /// See Note [A declaration's globals are contiguous].
+    pub projections: Vec<GlobalId>,
     pub recursor: GlobalId,
 }
 
@@ -196,16 +200,16 @@ impl Signature {
         out
     }
 
-    /// The constructors, projections and recursor of inductive type `data`:
-    /// the globals after its type former, up to its recursor.
+    /// The constructors, projections and recursor of inductive type `data`,
+    /// as its declaration records them: those added so far, while the
+    /// elaborator is still adding them.
     fn declared_with(&self, data: DataId) -> impl Iterator<Item = GlobalId> + '_ {
         let decl = &self.datas[data as usize];
-        let last = decl.recursor.min(self.next_global().saturating_sub(1));
-        (decl.global + 1..=last).take_while(move |g| match self.globals[*g as usize].kind {
-            GlobalKind::Constructor(d, _) | GlobalKind::Projection(d, ..) | GlobalKind::Recursor(d) => d == data,
-            _ => false,
-        })
+        let constructors = decl.constructors.iter().map(|c| c.global);
+        let all = constructors.chain(decl.projections.iter().copied()).chain(std::iter::once(decl.recursor));
+        all.filter(|g| (*g as usize) < self.globals.len())
     }
+
 
     /// The globals global `id` rests on, itself included.
     pub fn rests_on(&self, id: GlobalId) -> BTreeSet<GlobalId> {
@@ -277,3 +281,16 @@ impl Signature {
 // claim on that script. `tests/axioms.rs` checks that the modules the
 // re-check runs never resolve a name, which is the third case.
 // See Algorithm [Transitive axioms].
+
+// Note [A declaration's globals are contiguous]
+//
+// An inductive declaration gives a type former, its constructors, its
+// projections and its recursor, added in that order with nothing between
+// them. Its `DataDecl` records each of their ids, so the axiom report reads
+// them off the declaration instead of off the globals around the type former
+// (See Note [Axioms are read off the terms]), and `recheck` checks the
+// record: every recorded id names a global of this declaration of the kind
+// and position it is recorded as, the ids run on from the type former
+// without a gap, and a projection the declaration does not record is
+// rejected. So a declaration cannot leave out one of its globals, claim
+// another's, or have one added after a later global.

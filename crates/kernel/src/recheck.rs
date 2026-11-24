@@ -176,7 +176,7 @@ impl Rechecker<'_> {
                 let decl = self.sig.data(*data);
                 let former = self.former(id, *data)?;
                 let fields = decl.constructors.get(*index).map_or(0, |c| c.fields.len());
-                if decl.params.is_empty() || *field >= fields || global.level_params.len() != former {
+                if decl.params.is_empty() || *field >= fields || !decl.projections.contains(&id) || global.level_params.len() != former {
                     return Err("is not a projection its declaration has".into());
                 }
                 self.generated(&global.ty, projection_type(decl, former, *index, *field))
@@ -234,15 +234,46 @@ impl Rechecker<'_> {
                 return Err(format!("has an index `{}` that depends on an earlier index or is a proof", index.name));
             }
         }
+        self.declared_with(id, data)
+    }
+
+    /// The globals declaration `data` records are its own and follow its
+    /// type former `id` in one run: the constructors, the projections, then
+    /// the recursor.
+    /// See Note [A declaration's globals are contiguous].
+    fn declared_with(&self, id: GlobalId, data: DataId) -> Result<()> {
+        let decl = self.sig.data(data);
+        let owned = |g: GlobalId, kind: &dyn Fn(&GlobalKind) -> bool| (g as usize) < self.sig.len() && kind(&self.sig.global(g).kind);
+        let mut next = id + 1;
         for (index, c) in decl.constructors.iter().enumerate() {
-            let owned = (c.global as usize) < self.sig.len() && matches!(self.sig.global(c.global).kind, GlobalKind::Constructor(d, i) if d == data && i == index);
-            if !owned {
+            if !owned(c.global, &|k| matches!(k, GlobalKind::Constructor(d, i) if *d == data && *i == index)) {
                 return Err(format!("has a constructor `{}` that is not its global", c.name));
             }
+            if c.global != next {
+                return Err(format!("has a constructor `{}` apart from its other globals", c.name));
+            }
+            next += 1;
         }
-        let recursor = decl.recursor;
-        if (recursor as usize) >= self.sig.len() || !matches!(self.sig.global(recursor).kind, GlobalKind::Recursor(d) if d == data) {
+        // A type without parameters has no projections.
+        let with_projections = decl.constructors.iter().enumerate().filter(|_| !decl.params.is_empty());
+        let fields: Vec<(usize, usize)> = with_projections.flat_map(|(i, c)| (0..c.surface.len()).map(move |j| (i, j))).collect();
+        if decl.projections.len() != fields.len() {
+            return Err("records projections its constructors' fields do not give".into());
+        }
+        for (&g, &(index, field)) in decl.projections.iter().zip(&fields) {
+            if !owned(g, &|k| matches!(k, GlobalKind::Projection(d, i, j) if *d == data && *i == index && *j == field)) {
+                return Err(format!("has a projection #{g} that is not its global"));
+            }
+            if g != next {
+                return Err(format!("has a projection `{}` apart from its other globals", self.sig.global(g).name));
+            }
+            next += 1;
+        }
+        if !owned(decl.recursor, &|k| matches!(k, GlobalKind::Recursor(d) if *d == data)) {
             return Err("has no recursor".into());
+        }
+        if decl.recursor != next {
+            return Err("has a recursor apart from its other globals".into());
         }
         Ok(())
     }

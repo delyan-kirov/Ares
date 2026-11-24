@@ -213,6 +213,7 @@ impl Checker<'_> {
             uniform,
             level: level.clone(),
             constructors: Vec::new(),
+            projections: Vec::new(),
             recursor: GlobalId::MAX,
         });
         self.sig.add(Global {
@@ -238,6 +239,8 @@ impl Checker<'_> {
         for (index, c) in ctors.iter().enumerate().filter(|_| has_params) {
             for j in 0..c.fields.len() {
                 let ty = projection_type(self.sig.data(data), level_names.len(), index, j);
+                let id = self.sig.next_global();
+                self.sig.data_mut(data).projections.push(id);
                 self.sig.add(Global {
                     name: projection_name(c, j),
                     level_params: level_names.clone(),
