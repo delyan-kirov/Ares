@@ -1533,6 +1533,31 @@ fn a_signature_binds_its_levels() {
     blocked("$ f : @ctx {u: @l, v: @l if u < v && v < u} -> (t: @Type u) -> @Int = 0\n", "cannot all hold");
 }
 
+/// An explicit `@ctx {.f = e}` argument is the expression written, read by
+/// its field's sort: a type, a size or a level.
+#[test]
+fn ctx_arguments_are_read_by_their_fields_sort() {
+    let decls = "$ @mod T\n$ first : @ctx {t: @Type} -> t -> t -> t = \\x _ => x\n\
+                 $ below : @ctx {n: @Nat} -> @Int = 0\n$ Same : @Type = @Int\n$ ten : @Nat = 10\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{decls}{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("{decls}{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ n : @Int = first @ctx {.t = @Int} 1 2\n");
+    applies("$ n : @Int = first @ctx {.t = Same} 1 2\n");
+    applies("$ p : {@Int, @Int} = first @ctx {.t = {@Int, @Int}} {1, 2} {3, 4}\n");
+    applies("$ f : @Int -> @Int = first @ctx {.t = @Int -> @Int} (\\x => x) (\\x => x)\n");
+    applies("$ g : @ctx {s: @Type} -> s -> s = \\x => first @ctx {.t = s} x x\n");
+    applies("$ v : @Tensor 2 @Int = first @ctx {.t = @Tensor 2 @Int} [1, 2] [3, 4]\n");
+    blocked("$ n : @Int = first @ctx {.t = Nope} 1 2\n", "unknown type `Nope`");
+    blocked("$ n : @Int = first @ctx {.t = 5} 1 2\n", "expected a type");
+    applies("$ a : @Int = below @ctx {.n = 2 + 3}\n");
+    applies("$ a : @Int = below @ctx {.n = ten * 2}\n");
+    applies("$ f : @ctx {m: @Nat} -> @Int = below @ctx {.n = m + 1}\n");
+    blocked("$ f : @Int -> @Int = \\x => below @ctx {.n = x}\n", "a size that is a run-time value");
+}
+
 /// The levels a signature states show in its printed type: a constant level,
 /// the `@ctx` level fields with their `if`, and the levels named there. An
 /// unnamed level stays the bare `@Type` it was written as.

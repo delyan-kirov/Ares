@@ -2,4 +2,4 @@ $ @mod DEPENDENT_ARG_NOT_TYPE
 
 # The argument of a `(t: @Type)` parameter is a type.
 $ ident : (t: @Type) -> t -> t = \x => x
-$ a : @Int = ident 5 5  #~ error[TYPE_MISMATCH]: expected a type for a `(t: @Type)` parameter
+$ a : @Int = ident 5 5  #~ error[TYPE_MISMATCH]: expected a type, as in `@Int`

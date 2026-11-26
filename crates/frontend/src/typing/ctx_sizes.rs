@@ -24,6 +24,7 @@
 //! [`Checker::settle_sizes`], [`Checker::finish_sizes`].
 
 use super::*;
+use super::signatures::SizeError;
 
 /// A size in terms of the caller's own `@Nat` fields: a sum of
 /// `(coefficient, fields multiplied)` terms. `None` when it mentions a size
@@ -119,8 +120,9 @@ impl<'a> Checker<'a> {
     }
 
     /// An expression read as a type: a type written as one, a type variable
-    /// in scope, a declared type applied to types, a size literal or `_`.
-    fn expr_as_type(&mut self, e: Aol<Expr>) -> Result<Type> {
+    /// in scope, a declared type or an alias applied to its arguments, a
+    /// tuple, `{}` or `_`.
+    pub(super) fn expr_as_type(&mut self, e: Aol<Expr>) -> Result<Type> {
         let span = self.ast.expr_span(e);
         if self.is_proposition_shaped(e) {
             let tvars = self.scoped_tvars.clone();
@@ -147,15 +149,119 @@ impl<'a> Checker<'a> {
                 self.as_proposition(s, span)
             }
             Expr::Var { module: None, name } if self.scoped_tvars.contains_key(&name) => Ok(self.scoped_tvars[&name]),
-            Expr::Var { name, .. } if self.is_known_type(name) => Ok(self.unifier.types.con(name)),
-            Expr::App(f, x) => {
-                let (f, x) = (self.expr_as_type(f)?, self.expr_as_type(x)?);
-                Ok(self.unifier.types.app(f, x))
+            Expr::Unit => Ok(self.unifier.types.con(ty::UNIT)),
+            Expr::Tuple(items) => {
+                let items = self.ast.slice(items).to_vec();
+                let tys = items.into_iter().map(|t| self.expr_as_type(t)).collect::<Result<Vec<_>>>()?;
+                Ok(self.unifier.types.tuple(tys))
             }
-            _ => Err(diag!(
-                Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0,
-                "expected a type for a `(t: @Type)` parameter"
-            )),
+            Expr::Var { .. } | Expr::Variant { .. } | Expr::App(..) => self.type_app_of_expr(e),
+            _ => Err(expected_type(span)),
+        }
+    }
+
+    /// A declared type, an alias or a type variable applied to arguments,
+    /// each read as a size where its parameter is one.
+    fn type_app_of_expr(&mut self, e: Aol<Expr>) -> Result<Type> {
+        let span = self.ast.expr_span(e);
+        let mut args = Vec::new();
+        let mut head = e;
+        while let Expr::App(f, x) = *self.node(head) {
+            args.push(x);
+            head = f;
+        }
+        args.reverse();
+        let Some(name) = self.type_name_of_expr(head) else {
+            if args.is_empty() {
+                return Err(expected_type(span));
+            }
+            let mut t = self.expr_as_type(head)?;
+            for a in args {
+                let a = self.expr_as_type(a)?;
+                t = self.unifier.types.app(t, a);
+            }
+            return Ok(t);
+        };
+        if !args.is_empty() && self.scoped_tvars.contains_key(&name) {
+            let mut t = self.scoped_tvars[&name];
+            for a in args {
+                let a = self.expr_as_type(a)?;
+                t = self.unifier.types.app(t, a);
+            }
+            return Ok(t);
+        }
+        if name.as_str() == "@Tensor" && args.len() == 2 {
+            let (size, elem) = (self.expr_as_size(args[0])?, self.expr_as_type(args[1])?);
+            return Ok(tensor_type(&self.unifier.types, size, elem));
+        }
+        if !self.is_known_type(name) {
+            let at = self.ast.expr_span(head).or(span).unwrap_or(Span::at(0));
+            return Err(match name.as_str().starts_with(|c: char| c.is_ascii_uppercase() || c == '@') {
+                true => self.unknown_type(name).fill_span(at),
+                false => expected_type(Some(at)),
+            });
+        }
+        let kinds = self.param_kinds(name).unwrap_or_default();
+        let mut tys = Vec::with_capacity(args.len());
+        for (i, &a) in args.iter().enumerate() {
+            let size = matches!(kinds.get(i), Some(ParamKind::Nat)) || matches!(self.node(a), Expr::Int(_)) || matches!(self.node(a), Expr::BinOp { op, .. } if matches!(op.as_str(), "+" | "*"));
+            tys.push(if size { self.expr_as_size(a)? } else { self.expr_as_type(a)? });
+        }
+        if let Some((params, body)) = self.aliases.get(&name).cloned() {
+            let mut sub: HashMap<StrId, Type> = HashMap::new();
+            for (i, p) in params.iter().enumerate() {
+                let t = tys.get(i).copied().unwrap_or_else(|| self.unifier.fresh());
+                sub.insert(*p, t);
+            }
+            let expanded = self.ty_of_ast(body, &mut sub);
+            self.unifier.note_tensor_sizes(expanded);
+            if tys.len() != params.len() {
+                return Ok(expanded);
+            }
+            return Ok(self.unifier.types.alias(name, tys, expanded));
+        }
+        let mut t = self.unifier.types.con(name);
+        for a in tys {
+            t = self.unifier.types.app(t, a);
+        }
+        Ok(t)
+    }
+
+    /// The name an expression gives a type or an effect: `T`, `M.T`, or a
+    /// lowercase global that computes one.
+    pub(super) fn type_name_of_expr(&self, e: Aol<Expr>) -> Option<StrId> {
+        match *self.node(e) {
+            Expr::Var { name, .. } => Some(name),
+            Expr::Variant { module: None, ty: Some(_), tag, fields } if self.ast.slice(fields).is_empty() => Some(tag),
+            _ => None,
+        }
+    }
+
+    /// An expression read as a size: a literal, a size in scope (a `@Nat`
+    /// field, parameter or transparent `let`), a `@Nat` constant, or `+` and
+    /// `*` of sizes.
+    pub(super) fn expr_as_size(&mut self, e: Aol<Expr>) -> Result<Type> {
+        let span = self.ast.expr_span(e);
+        match *self.node(e) {
+            Expr::Var { module: None, name } if name.as_str() == "_" => Ok(self.unifier.fresh_nat()),
+            Expr::Var { module: None, name } if matches!(self.let_bound(name, &self.scoped_tvars), Some(propositions::Static::Size(_))) => {
+                Ok(self.let_bound(name, &self.scoped_tvars).expect("guarded").ty())
+            }
+            Expr::Var { module: None, name } if self.scoped_tvars.contains_key(&name) && !self.nat_consts.contains_key(&name) => {
+                Ok(self.scoped_tvars[&name])
+            }
+            Expr::BinOp { op, lhs, rhs } if matches!(op.as_str(), "+" | "*") => {
+                let (a, b) = (self.expr_as_size(lhs)?, self.expr_as_size(rhs)?);
+                Ok(self.unifier.types.add(if op.as_str() == "+" { TypeNode::NatAdd(a, b) } else { TypeNode::NatMul(a, b) }))
+            }
+            _ => match self.size_of_expr(e, &mut Vec::new()) {
+                Ok(t) => Ok(t),
+                Err(SizeError::Cycle) => Err(diag!(
+                    Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0,
+                    "a `@Nat` constant defined by itself"
+                )),
+                Err(SizeError::Term(_)) => Err(dependent_only(span, "a size that is a run-time value or a call")),
+            },
         }
     }
 
@@ -311,4 +417,9 @@ fn size_term(terms: &[(u64, Vec<StrId>)]) -> CtxVal {
         });
     }
     sum.unwrap_or(CtxVal::Nat(0))
+}
+
+/// An expression where a type is expected that reads as none.
+fn expected_type(span: Option<Span>) -> Diagnostic {
+    diag!(Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0, "expected a type, as in `@Int` or `List @Int`")
 }

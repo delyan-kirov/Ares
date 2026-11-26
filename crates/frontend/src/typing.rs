@@ -2090,8 +2090,7 @@ fn free_globals(
         Expr::CtxArg(inits) => {
             for init in ast.slice(*inits) {
                 let (FieldInit::Named { value, .. } | FieldInit::Positional(value)) = init;
-                let value = ast.ctx_arg_values.get(*value).copied().unwrap_or(*value);
-                free_globals(ast, value, globals, bound, out);
+                free_globals(ast, *value, globals, bound, out);
             }
         }
         Expr::Ascribe { expr, .. } => free_globals(ast, *expr, globals, bound, out),
