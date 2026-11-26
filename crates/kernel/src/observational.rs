@@ -35,7 +35,7 @@
 
 use std::rc::Rc;
 
-use crate::inductive::{field_type, ConstructorVal};
+use crate::inductive::{expand_numeral, field_type, ConstructorVal};
 use crate::level::Level;
 use crate::nbe::{apply, fst, snd, BindingVal, Closure, Neutral, Val};
 use crate::signature::Signature;
@@ -134,8 +134,17 @@ pub fn eq(sig: &Signature, level: Level, ty: Val, a: Val, b: Val) -> Val {
             and(first, second)
         }
         Val::Sort(k) => eq_types(sig, k, a, b),
+        // Rule [Nat-Literal]
+        Val::Data(_) if matches!((&a_head, &b_head), (Val::Nat(_), Val::Nat(_))) => {
+            let (Val::Nat(x), Val::Nat(y)) = (&a_head, &b_head) else { unreachable!("two numerals") };
+            if x == y {
+                Val::Top
+            } else {
+                Val::Bottom
+            }
+        }
         // Rule [Eq-Ctor]
-        Val::Data(_) => match (&a_head, &b_head) {
+        Val::Data(_) => match (&expand_numeral(sig, a_head.clone()), &expand_numeral(sig, b_head.clone())) {
             (Val::Constructor(x), Val::Constructor(y)) if x.index != y.index => Val::Bottom,
             (Val::Constructor(x), Val::Constructor(y)) => eq_fields(sig, x, y),
             _ => stuck_eq(level, ty, a, b),
@@ -148,7 +157,7 @@ pub fn eq(sig: &Signature, level: Level, ty: Val, a: Val, b: Val) -> Val {
         },
         Val::Neutral(_) => stuck_eq(level, ty, a, b),
         Val::Top | Val::Bottom => unreachable!("a proposition's level is zero"),
-        Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => {
+        Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) | Val::Nat(_) => {
             unreachable!("an equality at a non-type")
         }
         Val::Unfold(_) => unreachable!("forced"),
@@ -314,6 +323,11 @@ pub fn cast(sig: &Signature, a: Val, b: Val, e: Val, t: Val) -> Val {
         }
         // Rule [Cast-Ctor]
         (Val::Data(x), Val::Data(y)) if x.data == y.data => {
+            // Rule [Nat-Literal]
+            // `@Nat` has no parameters, so a numeral casts to itself.
+            if let Val::Nat(_) = t_head {
+                return t;
+            }
             let Val::Constructor(c) = &t_head else {
                 return stuck_cast(a, b, e, t);
             };

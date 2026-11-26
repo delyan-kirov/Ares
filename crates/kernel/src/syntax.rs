@@ -28,11 +28,14 @@
 //! `{a, b}` is a pair, or the type of pairs where a type is expected, and
 //! `{x: A, y: B x}` a dependent pair type; `.0` and `.1` project.
 //!
-//! A numeral is a `@Nat` of the [`crate::prelude`], at most [`MAX_NUMERAL`];
-//! `@Nat` is the prelude's type and `@Nat.elim` its recursor. Any other
-//! binary operator `a op b` is the global named `op` applied to both sides,
-//! and `a && b`, `a || b` (which the parser reads as an `if`) are the
-//! globals `&&` and `||`.
+//! A numeral is a `@Nat` of the [`crate::prelude`], or an `@Int` where one
+//! is expected; `@Nat` and `@Int` are the prelude's types, `@Nat.elim` and
+//! `@Int.elim` their recursors, and `@Nat.Succ.{ n }` a constructor. Any
+//! other binary operator `a op b`, and a prefix `-a` or `not a`, is an
+//! [`RawKind::Operator`] the checker resolves by its operands' type; `a &&
+//! b` and `a || b` (which the parser reads as an `if`) are the globals `&&`
+//! and `||`, and any other `if c => a else b` is the prelude's `@Bool.if`
+//! at the type of its branches.
 //!
 //! Input: source text. Output: [`Item`]s of named, unresolved [`Raw`] terms.
 //!
@@ -83,8 +86,14 @@ pub enum RawKind {
     },
     /// `_`, an argument the checker infers.
     Hole,
-    /// A numeral, a `@Nat`.
+    /// A numeral, a `@Nat`, or an `@Int` where one is expected.
     Nat(u64),
+    /// `a op b` or a prefix `op a`: the global named `op`, or `@Int.op` on
+    /// the prelude's integers. See Note [Operators resolve by their operands].
+    Operator(Name, Vec<Raw>),
+    /// `if c => a else b`: the prelude's `@Bool.if`, at the type of the
+    /// branches.
+    If(Box<Raw>, Box<Raw>, Box<Raw>),
 }
 
 #[derive(Clone, Debug)]
@@ -144,11 +153,7 @@ pub const PRIMITIVES: &[(&str, Primitive, usize)] = &[
 
 /// The types of the kernel's prelude spelled with `@`, as the frontend
 /// spells its builtin types. See [`crate::prelude`].
-pub const BUILTIN_TYPES: &[&str] = &["@Nat"];
-
-/// The largest numeral a script may write: a numeral is its unary
-/// constructor chain, which evaluation and the re-check walk by recursion.
-pub const MAX_NUMERAL: u64 = 100;
+pub const BUILTIN_TYPES: &[&str] = &["@Nat", "@Int"];
 
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -328,7 +333,7 @@ impl Lower<'_> {
                 }
                 return Ok(acc);
             }
-            Ty::Nat(n) => return self.numeral(*n, span),
+            Ty::Nat(n) => RawKind::Nat(*n),
             Ty::SizeAdd(a, b) => return Ok(self.operator("+", self.ty(*a)?, self.ty(*b)?, span)),
             Ty::SizeMul(a, b) => return Ok(self.operator("*", self.ty(*a)?, self.ty(*b)?, span)),
             Ty::Record { .. } | Ty::Unit | Ty::Sized { .. } | Ty::MetaE(_) => {
@@ -392,9 +397,10 @@ impl Lower<'_> {
             Expr::If { cond, then, alt } if matches!(self.ast.expr(*then), Expr::Bool(true)) => {
                 return Ok(self.operator("||", self.expr(*cond)?, self.expr(*alt)?, span))
             }
-            Expr::If { .. } => {
-                return Err(self.error(span, "a kernel term eliminates a boolean with its recursor, `Bool.elim`, not an `if`"))
+            Expr::If { cond, then, alt } => {
+                RawKind::If(Box::new(self.expr(*cond)?), Box::new(self.expr(*then)?), Box::new(self.expr(*alt)?))
             }
+            Expr::UnOp { op, operand } => RawKind::Operator(op.as_str().into(), vec![self.expr(*operand)?]),
             Expr::Lambda { params, body } => return self.lambda(self.ast.slice(*params), *body, span),
             Expr::Let { binding, body } => {
                 let name = self.binder(binding.pat)?;
@@ -427,26 +433,16 @@ impl Lower<'_> {
                     .collect::<Result<_>>()?;
                 RawKind::Ctor { data: ty.map(|t| t.as_str().into()), tag: tag.as_str().into(), fields }
             }
-            Expr::Int(n) => match u64::try_from(*n) {
-                Ok(n) => return self.numeral(n, span),
-                Err(_) => return Err(self.error(span, "a `@Nat` is not negative")),
-            },
+            Expr::Int(n) if *n < 0 => RawKind::Operator("neg".into(), vec![raw(RawKind::Nat(n.unsigned_abs()), span)]),
+            Expr::Int(n) => RawKind::Nat(n.unsigned_abs()),
             _ => return Err(self.error(span, "not a term of the kernel")),
         };
         Ok(raw(kind, span))
     }
 
-    /// `lhs op rhs`: the global named `op` applied to both sides.
+    /// `lhs op rhs`, which the checker resolves by the operands' type.
     fn operator(&self, op: &str, lhs: Raw, rhs: Raw, span: Span) -> Raw {
-        let head = raw(RawKind::Var(op.into(), Vec::new()), span);
-        raw(RawKind::App(Box::new(raw(RawKind::App(Box::new(head), Box::new(lhs)), span)), Box::new(rhs)), span)
-    }
-
-    fn numeral(&self, n: u64, span: Span) -> Result<Raw> {
-        if n > MAX_NUMERAL {
-            return Err(self.error(span, format!("a kernel numeral is unary, so at most {MAX_NUMERAL}")));
-        }
-        Ok(raw(RawKind::Nat(n), span))
+        raw(RawKind::Operator(op.into(), vec![lhs, rhs]), span)
     }
 
     /// Whether `e` names a type of the kernel's prelude, such as `@Nat`.

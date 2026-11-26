@@ -437,3 +437,85 @@ fn a_wrong_proof_is_rejected_with_holes_as_without() {
 fn a_level_left_out_of_a_declaration_is_inferred() {
     accept("$ List : @ctx {u: @l} -> (a: @Type (u + 1)) -> @Type (u + 1) = @union Nil: {}, Cons: {h: a, t: List a}\n");
 }
+
+#[test]
+fn an_if_takes_the_type_of_its_branches() {
+    let sig = accept(
+        r"
+$ a : @Nat = if 3 < 4 => 1 else 2
+$ b : a ~ 1 = @refl 1
+$ max : (m: @Nat) -> (n: @Nat) -> @Nat = if m < n => n else m
+$ c : max 7 12 ~ 12 = @refl 12
+$ t : @Type 1 = if 1 == 1 => @Nat else @Int
+$ d : t = 5
+$ p : (n: @Nat) -> if n == 0 => @Top else n > 0 = @Nat.elim (\k => if k == 0 => @Top else k > 0) @tt (\k ih => @refl true) n
+",
+    );
+    assert_eq!(normal_form(&sig, "a").unwrap(), "1");
+    reject("$ a : @Nat = if 3 => 1 else 2\n", "expected `Bool`, found `@Nat`");
+    reject("$ a : @Nat = if 3 < 4 => 1 else true\n", "expected `@Nat`, found `Bool`");
+}
+
+#[test]
+fn integers_have_their_own_operators() {
+    let sig = accept(
+        r"
+$ a : @Int = -3
+$ b : a + 5 ~ 2 = @refl 2
+$ c : a * -4 ~ 12 = @refl 12
+$ d : 2 - 7 < a = @refl false
+$ e : -a == 3 = @refl true
+$ abs : (x: @Int) -> @Int = if x < 0 => -x else x
+$ f : abs (-7) ~ 7 = @refl 7
+$ g : (x: @Int) -> x + 0 ~ x + 0 = @refl (x + 0)
+$ n : @Nat = 2 - 7
+$ h : -1000000 * 3 + 1 ~ -2999999 = @refl (-2999999)
+",
+    );
+    assert_eq!(normal_form(&sig, "a").unwrap(), "-3");
+    assert_eq!(normal_form(&sig, "n").unwrap(), "0");
+    assert_eq!(crate::type_of(&sig, "g").unwrap(), "(x: @Int) -> (x + 0) ~ (x + 0)");
+    reject("$ a : @Nat = -3\n", "expected `@Nat`, found `@Int`");
+    reject("$ a : @Int = 3\n$ b : @Nat = a + 1\n", "expected `@Nat`, found `@Int`");
+}
+
+#[test]
+fn a_successor_is_written_with_its_constructor() {
+    accept("$ s : (n: @Nat) -> @Nat.Succ.{ n } ~ n + 1 = @refl (n + 1)\n$ z : @Nat.Zero ~ 0 = @refl 0\n");
+    reject("$ s : (n: @Nat) -> @Nat.Succ.{ n } ~ n = @refl n\n", "expected `(n + 1) ~ n`");
+}
+
+// The prelude's arithmetic on numerals gives what its definitions compute:
+// each definition's body, applied to small numerals, unfolds by the
+// recursor to the value `Arithmetic::compute` gives. A body that calls
+// another arithmetic global (`*` calls `+`, `<` calls `@Nat.pred`) relies
+// on that one, which the same loop checks.
+#[test]
+fn arithmetic_on_numerals_agrees_with_the_definitions() {
+    use std::rc::Rc;
+
+    use crate::nbe::{apply, eval, eval_global, quote_unfolded, Env, Val};
+    use crate::signature::{Computed, GlobalKind};
+
+    let sig = accept("");
+    let builtins = sig.builtins().expect("the prelude");
+    for (id, op) in builtins.arithmetic {
+        let GlobalKind::Definition(body) = &sig.global(id).kind else { panic!("an arithmetic global is a definition") };
+        for a in 0..6u64 {
+            for b in 0..6u64 {
+                let args = if op.arity() == 1 { vec![a] } else { vec![a, b] };
+                let defined = args.iter().fold(eval(&sig, &Env::new(), body), |f, n| apply(&sig, f, Val::Nat(*n)));
+                let computed = match op.compute(&args).expect("small numerals fit") {
+                    Computed::Nat(n) => Val::Nat(n),
+                    Computed::Bool(b) => eval_global(&sig, if b { builtins.true_ctor } else { builtins.false_ctor }, Rc::new([])),
+                };
+                assert_eq!(
+                    quote_unfolded(&sig, 0, &defined),
+                    quote_unfolded(&sig, 0, &computed),
+                    "`{}` on {args:?}",
+                    sig.global(id).name
+                );
+            }
+        }
+    }
+}

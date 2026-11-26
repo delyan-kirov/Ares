@@ -84,6 +84,9 @@ pub enum Term {
     /// The irrelevant witness itself, where a value is read back to a term or
     /// a computation rule needs some proof. It cannot be re-checked.
     Irrelevant,
+    /// A numeral: the prelude's `@Nat`, the global, and the number, which
+    /// stands for its unary constructor chain. See Rule [Nat-Literal].
+    Nat(GlobalId, u64),
 }
 
 impl Term {
@@ -152,6 +155,7 @@ impl Printer<'_> {
         match t {
             Term::App(..) | Term::Global(..) if self.numeral(out, prec, t) => {}
             Term::Var(ix) => out.push_str(&self.name_at(*ix)),
+            Term::Nat(_, n) => out.push_str(&n.to_string()),
             Term::Global(id, levels) => {
                 let global = self.sig.global(*id);
                 out.push_str(&global.name);
@@ -347,11 +351,26 @@ impl Printer<'_> {
             && matches!(t, Term::Global(id, _) if *id == b.true_value || *id == b.true_ctor)
     }
 
-    /// A chain of the prelude's `@Nat.Succ` over `@Nat.Zero`, written as its
-    /// numeral, or over another term `t`, written `t + k`. Reports whether
-    /// `t` is one.
+    /// A chain of the prelude's `@Nat.Succ` over `@Nat.Zero` or a numeral,
+    /// written as its numeral, or over another term `t`, written `t + k`; or
+    /// an `@Int` constructor of a numeral, written as the integer. Reports
+    /// whether `t` is one.
     fn numeral(&mut self, out: &mut String, prec: Precedence, t: &Term) -> bool {
         let Some(b) = self.sig.builtins() else { return false };
+        // An integer: `@Int.Pos.{ n }` is `n`, `@Int.NegSucc.{ n }` is `-(n + 1)`.
+        if let Term::App(f, a) = t {
+            if let (Term::Global(id, _), Term::Nat(_, n)) = (&**f, &**a) {
+                if *id == b.int_pos {
+                    out.push_str(&n.to_string());
+                    return true;
+                }
+                if *id == b.int_neg_succ {
+                    let shown = format!("-{}", u128::from(*n) + 1);
+                    out.push_str(&if prec == Precedence::Atom { format!("({shown})") } else { shown });
+                    return true;
+                }
+            }
+        }
         let mut count = 0u64;
         let mut rest = t;
         while let Term::App(f, a) = rest {
@@ -364,6 +383,7 @@ impl Printer<'_> {
         match rest {
             Term::Global(id, _) if *id == b.zero => out.push_str(&count.to_string()),
             _ if count == 0 => return false,
+            Term::Nat(_, n) if n.checked_add(count).is_some() => out.push_str(&(n + count).to_string()),
             _ => {
                 if prec > Precedence::Product {
                     out.push('(');
@@ -384,9 +404,14 @@ impl Printer<'_> {
         let Term::App(f, rhs) = t else { return None };
         let Term::App(op, lhs) = &**f else { return None };
         let Term::Global(id, levels) = &**op else { return None };
+        // A builtin type's operator, `@Int.+`, prints as its operator.
         let name = &self.sig.global(*id).name;
+        let name = match name.strip_prefix('@').and_then(|n| n.rsplit_once('.')) {
+            Some((_, op)) => op,
+            None => name,
+        };
         let symbolic = !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^".contains(c));
-        (levels.is_empty() && symbolic).then(|| (name.clone(), &**lhs, &**rhs))
+        (levels.is_empty() && symbolic).then(|| (Name::from(name), &**lhs, &**rhs))
     }
 
     /// Writes an operator application `a < b`, a side in parentheses unless
@@ -496,7 +521,9 @@ pub fn rename(t: &Term, cutoff: Index, f: &dyn Fn(Index) -> Index) -> Term {
     };
     match t {
         Term::Var(i) if *i >= cutoff => Term::Var(cutoff + f(i - cutoff)),
-        Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => t.clone(),
+        Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant | Term::Nat(..) => {
+            t.clone()
+        }
         Term::Eq(l, ty, a, b) => Term::Eq(l.clone(), go(ty, cutoff), go(a, cutoff), go(b, cutoff)),
         Term::Cast(x, y, e, v) => Term::Cast(go(x, cutoff), go(y, cutoff), go(e, cutoff), go(v, cutoff)),
         Term::Refl(a) => Term::Refl(go(a, cutoff)),
@@ -525,7 +552,9 @@ pub fn children(t: &Term) -> Vec<(&Term, Index)> {
         ts.iter().map(|t| (&***t, 0)).collect()
     }
     match t {
-        Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant => Vec::new(),
+        Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant | Term::Nat(..) => {
+            Vec::new()
+        }
         Term::Pi(b) | Term::Sigma(b) => vec![(&*b.dom, 0), (&*b.cod, 1)],
         Term::Lam(_, dom, body) => dom.iter().map(|d| (&**d, 0)).chain([(&**body, 1)]).collect(),
         Term::Let(_, ty, val, body) => vec![(&**ty, 0), (&**val, 0), (&**body, 1)],
@@ -542,14 +571,14 @@ pub fn children(t: &Term) -> Vec<(&Term, Index)> {
 /// Whether global `id` occurs in `t`.
 pub fn mentions_global(t: &Term, id: GlobalId) -> bool {
     match t {
-        Term::Global(g, _) => *g == id,
+        Term::Global(g, _) | Term::Nat(g, _) => *g == id,
         _ => children(t).into_iter().any(|(c, _)| mentions_global(c, id)),
     }
 }
 
 /// Add every global that occurs in `t` to `out`.
 pub fn globals(t: &Term, out: &mut BTreeSet<GlobalId>) {
-    if let Term::Global(g, _) = t {
+    if let Term::Global(g, _) | Term::Nat(g, _) = t {
         out.insert(*g);
     }
     for (c, _) in children(t) {

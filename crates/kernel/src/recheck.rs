@@ -671,6 +671,13 @@ impl Rechecker<'_> {
                 Ok(ty)
             }
             Term::Irrelevant => Err("contains an erased proof, which cannot be re-checked".into()),
+            // Rule [Nat-Literal]
+            Term::Nat(id, _) => {
+                if self.sig.builtins().map(|b| b.nat) != Some(*id) || *id >= self.current {
+                    return Err("has a numeral of a type other than the prelude's `@Nat`".into());
+                }
+                Ok(eval(self.sig, &Env::new(), &Term::Global(*id, Rc::new([]))))
+            }
         }
     }
 }

@@ -2334,9 +2334,12 @@ eliminates a class by a function `f` that respects `R`.
 ## 16.5 Booleans, numerals and comparisons
 
 The kernel reads the propositions of 3.13 as the frontend does. Before a
-module, it checks a prelude of CORE's booleans and naturals: `Bool` with
-`true` and `false`, `not`, `&&` and `||`, and `@Nat` with numerals, `+`,
-`*` and the comparisons `<`, `>`, `<=`, `>=`, `==` and `!=`. A `Bool` used
+module, it checks a prelude of CORE's booleans, naturals and integers:
+`Bool` with `true` and `false`, `not`, `&&`, `||` and `if`, `@Nat` with
+numerals, `+`, `-` (which stops at `0`), `*` and the comparisons `<`, `>`,
+`<=`, `>=`, `==` and `!=`, and `@Int` with the same operators and `-a`. An
+operator on an `@Int` is the integers' one, and a numeral where an `@Int`
+is expected is an integer. A `Bool` used
 where a type is expected is the proposition `b ~ true`, so a comparison of
 numerals is proved by `@refl true` when it computes to `true`, and the same
 program checks under either checker:
@@ -2356,6 +2359,9 @@ law the frontend's checker folds for a variable, `n == n` or
 $ refl_eq : (n: @Nat) -> n == n = @Nat.elim (\k => k == k) (@refl true) (\k ih => ih) n
 ```
 
-A numeral is its constructor chain, so the kernel takes numerals up to 100.
-A module may define its own `Bool`, `Nat`, `not` and so on; its own name
+A numeral stands for its constructor chain, `@Nat.Succ.{ @Nat.Zero }` for
+`1`, but the kernel keeps it as a number, and `+`, `-`, `*`, `<` and `==`
+on two numerals compute on the numbers, so `4096 * 4096 == 16777216` is
+`true` at once. An `if` in a type computes too, though only the kernel reads
+one there so far. A module may define its own `Bool`, `Nat`, `not` and so on; its own name
 then wins, and `n < 10` still means the prelude's comparison.

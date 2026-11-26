@@ -425,6 +425,22 @@ fn data_iota() {
     blocked("$ p : P (add two two) = @axiom\n$ q : P two = p\n", "expected `P two`, found `P (add two two)`");
 }
 
+// Test [Nat-Literal]
+#[test]
+fn nat_literal() {
+    // Arithmetic on numerals computes on their numbers, however large.
+    applies("$ m : 1000000 * 1000000 ~ 1000000000000 = @refl 1000000000000\n$ l : 123456789 < 123456790 = @refl true\n");
+    blocked("$ m : 1000000 * 1000000 ~ 1000000000001 = @refl 1000000000000\n", "expected `@Bottom`, found `@Top`");
+    // A numeral is its constructor chain, to a constructor and a recursor.
+    applies("$ s : @Nat.Succ.{ 41 } ~ 42 = @refl 42\n$ z : @Nat.Zero ~ 0 = @refl 0\n");
+    blocked("$ s : @Nat.Succ.{ 41 } ~ 41 = @refl 41\n", "expected `@Bottom`, found `@Top`");
+    let sig = applies("$ d : @Nat = @Nat.elim (\\_ => @Nat) 0 (\\_ r => r + 2) 300\n$ t : (n: @Nat) -> n + 3 ~ @Nat.Succ.{ n + 2 } = @refl (n + 3)\n");
+    assert_eq!(normal(&sig, "d"), "600");
+    // `-` stops at zero.
+    applies("$ m : 7 - 9 ~ 0 = @refl 0\n");
+    blocked("$ m : 9 - 7 ~ 0 = @refl 0\n", "expected `@Bottom`, found `@Top`");
+}
+
 // Test [Positivity-Restricted]
 #[test]
 fn positivity_restricted() {
