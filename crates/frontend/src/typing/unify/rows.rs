@@ -93,7 +93,7 @@ impl Unifier {
     /// A copy of `ty` with each variable in `sub` replaced by its mapped type. Used
     /// to instantiate a struct-row scheme's parameters at a bridge site; the stored
     /// scheme is never mutated, so each use is independent.
-    pub(super) fn subst_vars(&self, ty: Type, sub: &std::collections::HashMap<VarId, Type>) -> Type {
+    pub(crate) fn subst_vars(&self, ty: Type, sub: &std::collections::HashMap<VarId, Type>) -> Type {
         match self.head(ty) {
             TypeNode::Var(id) => match sub.get(&id) {
                 Some(t) => *t,

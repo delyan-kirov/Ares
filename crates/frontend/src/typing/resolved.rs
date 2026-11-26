@@ -44,6 +44,8 @@ pub enum CtxVal {
     Expr(Aol<Expr>),
     /// A natural number, part of a `@ctx` size passed at run time.
     Nat(u64),
+    /// A proof of a proposition field, erased to `{}`.
+    Proof,
 }
 
 /// A desugar site's resolved blessed interface: the instance found by type and the

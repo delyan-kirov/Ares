@@ -4,6 +4,8 @@ $ @mod PROPOSITIONS
 # \info Propositions `a ~ b` and their proofs (#539, #596). A `let` of a
 #       type, a size or a boolean stays transparent, so an annotation may
 #       name it, and a `@transp` motive may be a type-level function by name.
+#       A proposition field of `@ctx` is proved at each use, by computing it
+#       or from the hypotheses in scope (#540).
 
 $ @import ARESxALGO
 $ @import ARESxLA
@@ -37,7 +39,24 @@ $ total : @Int =
     let p : small = @refl true in
     v.[0] + v.[1] + v.[2]
 
+# A precondition in `@ctx`: a caller passes no proof.
+$ past_two : @ctx { n: @Nat, a: @Type, ok: 2 < n } -> @Tensor n a -> @Nat = \_ => n - 3
+$ below_four : @ctx { n: @Nat, ok: n < 4 } -> @Nat = 3 - n
+
+# The facts of a branch prove it, as do the definition's own proof fields.
+$ guarded : @ctx { n: @Nat } -> @Nat = if n < 4 => below_four @ctx { .n = n } else 0
+$ negated : @ctx { n: @Nat } -> @Nat = if 4 <= n => 0 else below_four @ctx { .n = n }
+$ passed : @ctx { m: @Nat, p: m < 4 } -> @Nat = below_four @ctx { .n = m }
+$ arms : @ctx { n: @Nat } -> @Nat = n |> \ | 0 => below_four @ctx { .n = n } | 9 => 9 | _ => 1
+$ both : @ctx { n m: @Nat } -> @Nat =
+    if n < 4 && m < 4 => below_four @ctx { .n = n } + below_four @ctx { .n = m } else 0
+
+$ preconditions : @Nat =
+    let early = past_two [1, 2, 3, 4, 5] + guarded @ctx { .n = 1 } + negated @ctx { .n = 7 } in
+    early + passed @ctx { .m = 3 } + arms @ctx { .n = 0 } + both @ctx { .n = 1, .m = 2 }
+
 $ test : @Int =
     (if bump 4 == 5 => 0 else 1) + (if twice 4 == 8 => 0 else 2) + (if total == 6 => 0 else 4)
+        + (if preconditions == 10 => 0 else 8)
 
 $ !assert (test == 0) "PROPOSITIONS: a check failed"

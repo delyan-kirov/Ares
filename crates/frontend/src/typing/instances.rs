@@ -84,7 +84,7 @@ impl<'a> Checker<'a> {
             Some(fs) => self.ast.slice(*fs).to_vec(),
             None => Vec::new(),
         };
-        let mut tvars = HashMap::new();
+        let mut tvars = self.sig_tvars(sig);
         let ty = self.ty_of_ast(ctx, &mut tvars);
         let zonked = self.unifier.zonk(ty);
         // A bundle of several contexts travels as a tuple; each component carries
@@ -102,14 +102,9 @@ impl<'a> Checker<'a> {
                 Some(f) => (format!("`{}`", f.name), f.span, self.ast.ty_source(f.ty)),
                 None => ("a field".to_string(), self.ast.ty_span(ctx).unwrap_or_else(|| Span::at(0)), None),
             };
-            // A proposition field is proved, not searched for: that is #540.
-            if self.unifier.types.prop_eq_sides(self.unifier.resolve(part)).is_some() {
-                return Err(diag!(
-                    Code::Unsupported, span, 0,
-                    "`@ctx` field {field} of `{name}` is a proposition, which `@ctx` does not prove yet";
-                    note: "instance search looks only for `@Class` values; propositions in `@ctx` come with #540";
-                    help: "take the proof as a parameter after the `@ctx`, and pass one such as `@refl true`"
-                ));
+            // A proposition field is proved at each use, not searched for.
+            if self.is_prop(part) {
+                continue;
             }
             match self.ctx_head(part) {
                 Some(h) if self.is_class(h) => {}
@@ -252,6 +247,10 @@ impl<'a> Checker<'a> {
             }
         }
         let locals = self.ctx_locals(req);
+        // Only a proposition field reads the hypotheses, and most contexts
+        // have none, so the scopes are not walked for them.
+        let proves = self.is_prop(req) || self.bundle_items(req).iter().any(|&p| self.is_prop(p));
+        let hyps = (self.checking_def, if proves { self.hypotheses_in_scope() } else { Vec::new() });
         self.ctx_pending.push(PendingCtx {
             site,
             fname,
@@ -259,6 +258,7 @@ impl<'a> Checker<'a> {
             sig: self.current_sig,
             locals,
             given,
+            hyps,
         });
         Ok(())
     }
@@ -725,11 +725,14 @@ impl<'a> Checker<'a> {
             }
             None => HashSet::new(),
         };
-        if p.given.is_empty() {
+        let outer = std::mem::replace(&mut self.proving, p.hyps.clone());
+        let val = if p.given.is_empty() {
             self.resolve_ctx(p.fname, req, &p.locals, &rigid, 0)
         } else {
             self.resolve_partly_given(p.fname, req, &p.locals, &rigid, &p.given)
-        }
+        };
+        self.proving = outer;
+        val
     }
 
     /// A several-field instance bundle some of whose fields an explicit argument
@@ -747,6 +750,7 @@ impl<'a> Checker<'a> {
         for (i, part) in parts.into_iter().enumerate() {
             vals.push(match given.iter().find(|g| g.0 == i) {
                 Some(&(_, value)) => CtxVal::Expr(value),
+                None if self.is_prop(part) => self.prove(fname, self.use_field_at(fname, i), part, rigid)?,
                 None => {
                     let part = self.unifier.zonk(part);
                     self.resolve_ctx(fname, part, locals, rigid, 1)?
@@ -781,11 +785,17 @@ impl<'a> Checker<'a> {
         if let TypeNode::Tuple(parts) = self.unifier.types.node(req) {
             let parts = self.unifier.types.items(parts).to_vec();
             let mut vals = Vec::with_capacity(parts.len());
-            for part in parts {
+            for (i, part) in parts.into_iter().enumerate() {
                 let part = self.unifier.zonk(part);
-                vals.push(self.resolve_ctx(fname, part, locals, rigid, depth + 1)?);
+                vals.push(match self.is_prop(part) {
+                    true => self.prove(fname, self.use_field_at(fname, i), part, rigid)?,
+                    false => self.resolve_ctx(fname, part, locals, rigid, depth + 1)?,
+                });
             }
             return Ok(CtxVal::Tuple(vals));
+        }
+        if self.is_prop(req) {
+            return self.prove(fname, self.use_field_at(fname, 0), req, rigid);
         }
         let Some(head) = self.ctx_head(req) else {
             return Err(self.ctx_unresolved(fname, req));
@@ -1063,6 +1073,13 @@ impl<'a> Checker<'a> {
             _ if fields.len() == 1 => fields[0].name.as_str().to_string(),
             _ => "field".to_string(),
         }
+    }
+
+    /// The name of `fname`'s instance field at position `i` of its bundle.
+    fn use_field_at(&self, fname: StrId, i: usize) -> Option<StrId> {
+        let sig = self.global_ctx.get(&fname).copied()?;
+        let fields = self.ast.use_params.get(sig).copied()?;
+        self.ast.slice(fields).get(i).map(|f| f.name)
     }
 
     /// The constructor a written type is headed by: `IOrd` in `IOrd t`.

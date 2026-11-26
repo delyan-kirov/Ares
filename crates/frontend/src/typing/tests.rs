@@ -1751,12 +1751,12 @@ fn decl_of(src: &str, name: &str) -> String {
 }
 
 /// What a proposition test checks: a module that must check, and one that
-/// must fail with an error containing `want`.
+/// must fail with an error whose rendering, notes included, contains `want`.
 fn proposition_cases(prelude: &str) -> (impl Fn(&str), impl Fn(&str, &str)) {
     let (a, b) = (prelude.to_string(), prelude.to_string());
     let applies = move |src: &str| assert_eq!(errors(&format!("$ @mod T\n{a}{src}")), "", "{src}");
     let blocked = move |src: &str, want: &str| {
-        let e = errors(&format!("$ @mod T\n{b}{src}"));
+        let e = rendered_errors(&format!("$ @mod T\n{b}{src}"));
         assert!(e.contains(want), "{src}: got {e:?}");
     };
     (applies, blocked)
@@ -1777,8 +1777,58 @@ fn an_equality_is_a_proposition() {
     blocked("$ id : (t: @Type) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n", "universe level mismatch in the universe of a type variable");
     applies("$ id : (t: @Type 0) -> t -> t = \\x => x\n$ c : 1 ~ 1 = id (1 ~ 1) (@refl 1)\n");
     blocked("$ (~) : @Int -> @Int -> @Int = \\l r => l - r\n", "cannot be redefined");
-    // A proposition field is not a `@Class` to search for (#540).
-    blocked("$ f : @ctx {n: @Nat, p: n < 4} -> @Int = 1\n", "is a proposition, which `@ctx` does not prove yet");
+}
+
+/// The prelude of the tests of proposition fields: a definition with one.
+const BELOW_FOUR: &str = "$ below : @ctx {n: @Nat, ok: n < 4} -> @Int = 1\n";
+
+// Test [Frontend-Prop-Field]
+#[test]
+fn a_proposition_field_is_proved_at_each_use() {
+    let (applies, blocked) = proposition_cases(BELOW_FOUR);
+    // By computing it.
+    applies("$ a : @Int = below @ctx {.n = 3}\n");
+    applies("$ g : @ctx {n: @Nat, a: @Type, ok: 2 < n} -> @Tensor n a -> @Int = \\_ => 1\n$ a : @Int = g [1, 2, 3]\n");
+    blocked("$ a : @Int = below @ctx {.n = 4}\n", "cannot prove `4 < 4`, the `@ctx` field `ok` of `below`");
+    blocked("$ a : @Int = below @ctx {.n = 4}\n", "it computes to `false`");
+    // From the definition's own proof fields, read as literals.
+    applies("$ f : @ctx {m: @Nat, p: m < 4} -> @Int = below @ctx {.n = m}\n");
+    applies("$ f : @ctx {m k: @Nat, p: m < 4 && k < 2} -> @Int = below @ctx {.n = m}\n");
+    applies("$ f : @ctx {m: @Nat, p: not (4 <= m)} -> @Int = below @ctx {.n = m}\n");
+    applies("$ f : @ctx {m k: @Nat, p: m ~ k, q: k < 4} -> @Int = below @ctx {.n = m}\n");
+    blocked("$ f : @ctx {m: @Nat} -> @Int = below @ctx {.n = m}\n", "no hypothesis is in scope");
+    blocked("$ f : @ctx {m: @Nat, p: m < 2} -> @Int = below @ctx {.n = m + 1}\n", "hypotheses in scope: `m < 2`");
+    blocked("$ f : @ctx {m k: @Nat, p: m < 4 || k < 4} -> @Int = below @ctx {.n = m}\n", "cannot prove `m < 4`");
+    // Contradictory hypotheses prove anything.
+    applies("$ f : @ctx {m: @Nat, p: m < 2, q: 2 <= m} -> @Int = below @ctx {.n = 9}\n");
+    // Given explicitly, it is checked as a proof; a hole shows the goal.
+    applies("$ a : @Int = below @ctx {.n = 2, .ok = @refl true}\n");
+    applies("$ f : @ctx {m: @Nat, p: m < 4} -> @Int = below @ctx {.n = m, .ok = p}\n");
+    blocked("$ a : @Int = below @ctx {.n = 6, .ok = @refl true}\n", "`6 < 4` and `true` do not compute to one value");
+    blocked("$ f : @ctx {m: @Nat, p: m < 4} -> @Int = below @ctx {.n = m, .ok = ???}\n", "hole `???` has type `m < 4`");
+    blocked("$ f : @ctx {m: @Nat, p: m < 4} -> @Int = below @ctx {.n = m, .ok = ???}\n", "hypotheses in scope: `m < 4`");
+    // With an instance field too, each is solved its own way.
+    applies("$ h : @ctx {t: @Type, n: @Nat, o: IOrd t, ok: n < 2} -> t -> t -> Bool = \\x y => x < y\n$ a : Bool = h @ctx {.n = 1} 3 4\n");
+    blocked("$ h : @ctx {t: @Type, n: @Nat, o: IOrd t, ok: n < 2} -> t -> t -> Bool = \\x y => x < y\n$ a : Bool = h @ctx {.n = 2} 3 4\n", "cannot prove `2 < 2`");
+}
+
+// Test [Frontend-Branch-Hypothesis]
+#[test]
+fn a_branch_proves_what_it_tested() {
+    let (applies, blocked) = proposition_cases(BELOW_FOUR);
+    applies("$ f : @ctx {m: @Nat} -> @Int = if m < 4 => below @ctx {.n = m} else 0\n");
+    applies("$ f : @ctx {m: @Nat} -> @Int = if 4 <= m => 0 else below @ctx {.n = m}\n");
+    applies("$ f : @ctx {m k: @Nat} -> @Int = if k < 9 && m < 4 => below @ctx {.n = m} else 0\n");
+    applies("$ f : @ctx {m: @Nat} -> @Int = if m < 4 => (if 4 <= m => below @ctx {.n = 7} else 1) else 0\n");
+    blocked("$ f : @ctx {m: @Nat} -> @Int = if m < 4 => 0 else below @ctx {.n = m}\n", "hypotheses in scope: `(m < 4) ~ false`");
+    // A match arm knows the literal it matched, a catch-all the ones it did not.
+    applies("$ f : @ctx {m: @Nat} -> @Int = m |> \\ | 2 => below @ctx {.n = m} | _ => 0\n");
+    applies("$ f : @ctx {m: @Nat} -> @Int = m |> \\ | 9 => 0 | _ => 1\n");
+    applies("$ f : @ctx {m: @Nat} -> @Int = m |> \\ | _ if m < 4 => below @ctx {.n = m} | _ => 0\n");
+    blocked("$ f : @ctx {m: @Nat} -> @Int = m |> \\ | 7 => below @ctx {.n = m} | _ => 0\n", "it computes to `false`");
+    blocked("$ f : @ctx {m: @Nat} -> @Int = m |> \\ | 2 => 0 | _ => below @ctx {.n = m}\n", "hypotheses in scope: `(m == 2) ~ false`");
+    // A branch on a run-time value adds nothing.
+    blocked("$ f : @ctx {m: @Nat} -> @Int -> @Int = \\x => if x < 4 => below @ctx {.n = m} else 0\n", "no hypothesis is in scope");
 }
 
 // Test [Frontend-Prop-Impredicative]
