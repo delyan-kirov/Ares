@@ -419,6 +419,11 @@ impl<'a> Checker<'a> {
     pub(super) fn size_of_expr(&mut self, e: Aol<Expr>, visiting: &mut Vec<StrId>) -> std::result::Result<Type, SizeError> {
         match self.node(e) {
             Expr::Int(n) if *n >= 0 => Ok(self.unifier.types.add(TypeNode::Nat(*n as u64))),
+            // A `let` of a size at the use site, never inside a constant's body.
+            // Rule [Frontend-Let-Transparent]
+            Expr::Var { module: None, name } if visiting.is_empty() && self.let_size(*name).is_some() => {
+                Ok(self.let_size(*name).expect("guarded"))
+            }
             Expr::Var { module: None, name } if self.nat_consts.contains_key(name) => {
                 let name = *name;
                 if visiting.contains(&name) {

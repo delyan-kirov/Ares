@@ -1,9 +1,10 @@
 $ @mod PROPOSITIONS
 
 # \file PROPOSITIONS.ares
-# \info Propositions `a ~ b` and their proofs (#539, #596). A `let` of a
-#       type, a size or a boolean stays transparent, so an annotation may
-#       name it, and a `@transp` motive may be a type-level function by name.
+# \info Propositions `a ~ b` and their proofs (#539, #596, #608). A `let`
+#       of a type, a size or a boolean stays transparent, so an annotation
+#       may name it and a size may pass as a `(n: @Nat)` argument, and a
+#       `@transp` motive may be a type-level function by name.
 #       A proposition field of `@ctx` is proved at each use, by computing it
 #       or from the hypotheses in scope (#540).
 
@@ -39,6 +40,15 @@ $ total : @Int =
     let p : small = @refl true in
     v.[0] + v.[1] + v.[2]
 
+# A `let` of a size is the size argument of a `(n: @Nat)` parameter.
+$ width : (n: @Nat) -> @Nat = n
+$ same : (n: @Nat) -> n ~ n = @refl n
+$ doubled : @Nat =
+    let n = 3 in
+    let m = n + 1 in
+    let p : 4 ~ 4 = same m in
+    width (m * 2)
+
 # A precondition in `@ctx`: a caller passes no proof.
 $ past_two : @ctx { n: @Nat, a: @Type, ok: 2 < n } -> @Tensor n a -> @Nat = \_ => n - 3
 $ below_four : @ctx { n: @Nat, ok: n < 4 } -> @Nat = 3 - n
@@ -57,6 +67,6 @@ $ preconditions : @Nat =
 
 $ test : @Int =
     (if bump 4 == 5 => 0 else 1) + (if twice 4 == 8 => 0 else 2) + (if total == 6 => 0 else 4)
-        + (if preconditions == 10 => 0 else 8)
+        + (if preconditions == 10 => 0 else 8) + (if doubled == 8 => 0 else 16)
 
 $ !assert (test == 0) "PROPOSITIONS: a check failed"

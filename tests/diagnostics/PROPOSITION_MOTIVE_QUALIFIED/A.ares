@@ -1,0 +1,4 @@
+$ @mod A
+
+$ Pos : (n: @Nat) -> @Type 0 = 0 < n
+$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b
