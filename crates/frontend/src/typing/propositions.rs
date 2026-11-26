@@ -433,7 +433,7 @@ impl<'a> Checker<'a> {
     /// Whether `e` is built only from what a proposition evaluates: numbers,
     /// `+`, `*`, comparisons, `not`, `&&`, `||`, boolean constants, types
     /// and names whose values the checker knows.
-    fn is_static_value(&self, e: Aol<Expr>) -> bool {
+    pub(super) fn is_static_value(&self, e: Aol<Expr>) -> bool {
         match self.node(e) {
             Expr::Int(n) => *n >= 0,
             Expr::Bool(_) | Expr::Type(_) => true,
@@ -675,7 +675,7 @@ impl<'a> Checker<'a> {
 
     /// Show types with the variables of the signature being checked by
     /// their names.
-    fn show_in_def(&self, tys: &[Type]) -> Vec<String> {
+    pub(super) fn show_in_def(&self, tys: &[Type]) -> Vec<String> {
         let names = self.checking_def.map(|d| self.sig_names(d)).unwrap_or_default();
         self.unifier.show_all_named(tys, names)
     }

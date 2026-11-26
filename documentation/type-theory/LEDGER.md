@@ -240,6 +240,8 @@ that the re-check never resolves a name.
 | Frontend-Let-Transparent | PT22 | Fig. 4, β-red; the frontend checker's mirror of Let, for a `let` of a size, a boolean or a type, in propositions and annotations | published | PT22 Normalisation | - | yes |
 | Frontend-Bool-Reflection | - | a boolean `b` where a type is expected is `b ~ true`, as SSReflect's `is_true` coercion; notation over Frontend-Eq-Form at `Bool` | conjecture | - | #406 | yes |
 | Frontend-Bool-Conversion | - | booleans in types compared after folding: comparisons of constant sizes or of a size with itself, and the connectives `not`, `&&` and disjunction of constants | conjecture | - | #406 | yes |
+| Frontend-Prop-Field | - | a `@ctx` field whose type is a proposition is proved at each use, erased: by evaluation, or from the hypotheses in scope read as literals (`&&` and `not` split a hypothesis and the goal, an equation of a size variable substitutes), with contradictory hypotheses proving anything | conjecture | - | #540 | yes |
+| Frontend-Branch-Hypothesis | - | a branch on a value the checker evaluates assumes what it tested: `c ~ true` and `c ~ false` in the branches of `if c`, `s ~ k` in the arm `k` of a match on `s`, the negations of the literal arms above a catch-all, and `g ~ true` under a guard | conjecture | - | #540 | yes |
 
 How the deviations differ from their sources:
 
@@ -286,6 +288,16 @@ check termination yet (#546). Frontend-Bool-Reflection and
 Frontend-Bool-Conversion have no source in the ledger: the first is notation,
 the second evaluation of closed booleans and the two laws `n < n = false` and
 `n == n = true`, which hold in Z/2^64.
+
+Frontend-Prop-Field and Frontend-Branch-Hypothesis (#540) have no source
+either. The first is propositional reasoning over the hypotheses, which a
+proof term could replay with `@transp` and the eliminators of `Bool`; the
+frontend builds no such term, since the proof is erased. The second is the
+typing of a dependent match, which abstracts the scrutinee and gives each
+arm the equation of its pattern (#543); the frontend adds the equation as a
+hypothesis rather than refining the types of the arm. Both hold only while
+the scrutinee or condition is a value the checker evaluates, never a
+run-time value (#594).
 
 Bool-Reflection is the kernel's side of Frontend-Bool-Reflection (#595), and
 notation in the same way: the checker writes the equality out, so the

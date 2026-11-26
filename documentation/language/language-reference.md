@@ -352,8 +352,9 @@ is a dependent function type, which comes with dependent types (#406).
 A signature binds its type variables in a `@ctx` parameter (#537): a type
 `t: @Type`, a size `n: @Nat`, an effect row `e: @Row` or one effect
 `l: @Effect` (8.5), each solved by unification. The same record names the instances the signature needs, fields
-whose type is a `@Class`, which instance search solves (7.4): the sort of a
-field's type decides how it is solved. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
+whose type is a `@Class`, which instance search solves (7.4), and the
+propositions it needs, which the checker proves at each use (3.13): the sort
+of a field's type decides how it is solved. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
 `(t: @Type)` parameter, or a global (3.10). A name nothing binds is a
 `TYPE_UNBOUND` error whose fix adds it to the signature's `@ctx`, with the kind
 its uses give it. A field the signature uses as a size is a `@Nat`.
@@ -655,6 +656,33 @@ is `(x: @Int)`, and after `let n = 3`, `@Tensor n @Int` has three elements. A
 $ ok : @Int = let n = 4 in let p : n < 5 = @refl true in 0
 $ bump : @Int -> @Int = \y => let t = @Int in let inc = \(x: t) => x + 1 in inc y
 $ row : @Int = let n = 3 in let v : @Tensor n @Int = [1, 2, 3] in 0
+```
+
+A `@ctx` field whose type is a proposition is a precondition the checker
+proves at each use, so a caller passes no proof (#540). It proves it by
+computing it (`2 < 5` is `true`), or from the hypotheses in scope there: the
+proof fields of the enclosing definition, a binder whose type is a
+proposition, and the facts of the branches around the use. The then-branch
+of `if c` knows `c ~ true` and the else-branch `c ~ false`, the arm `k` of a
+match on `s` knows `s ~ k` (a catch-all arm knows that the literal arms
+above it did not match), and a guard `if g` adds `g ~ true`. A branch adds a
+fact only when its condition is a value a proposition compares: a branch on a
+run-time value adds none. A hypothesis splits at `&&` and through `not`, the
+goal is split the same way, and a hypothesis `n ~ e` replaces `n` by `e` in
+the goal. The checker does no arithmetic beyond computing: `m < 2` does not
+prove `m + 1 < 4` (#549). Within the definition, a proof field is a local
+like any other. A caller may still give the proof itself, `@ctx {.ok = e}`,
+and `???` there reports the goal with the hypotheses in scope. A goal left
+unproved is an error that shows it, what it computes to, and the hypotheses
+tried.
+
+```ares
+$ past_two : @ctx {n: @Nat, a: @Type, ok: 2 < n} -> @Tensor n a -> @Nat = \_ => n - 3
+$ one : @Nat = past_two [1, 2, 3, 4]
+$ small : @ctx {n: @Nat, ok: n < 4} -> @Nat = 3 - n
+$ guarded : @ctx {n: @Nat} -> @Nat = if n < 4 => small @ctx {.n = n} else 0
+$ passed : @ctx {m: @Nat, p: m < 4} -> @Nat = small @ctx {.n = m}
+$ arms : @ctx {n: @Nat} -> @Nat = n |> \ | 0 => small @ctx {.n = n} | _ => 1
 ```
 
 Proofs are erased: a proof is `{}` at run time and `@cast A B e x` is `x`, so

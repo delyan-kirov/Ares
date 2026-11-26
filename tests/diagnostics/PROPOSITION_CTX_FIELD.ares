@@ -1,5 +1,6 @@
 $ @mod PROPOSITION_CTX_FIELD
 
-# A proposition in `@ctx` is proved from the hypotheses in scope (#540), not
-# searched for like a `@Class` instance.
-$ f : @ctx {n: @Nat, p: n < 4} -> @Int = 1  #~ error[UNSUPPORTED]: `@ctx` field `p` of `f` is a proposition, which `@ctx` does not prove yet
+# A proposition field of `@ctx` is proved at each use; the else-branch of
+# `if m < 4` knows only that `m < 4` is false.
+$ below : @ctx {n: @Nat, ok: n < 4} -> @Int = 1
+$ f : @ctx {m: @Nat} -> @Int = if m < 4 => 0 else below @ctx {.n = m}  #~ error[TYPE_MISMATCH]: cannot prove `m < 4`, the `@ctx` field `ok` of `below`

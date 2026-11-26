@@ -953,6 +953,7 @@ impl<'a> Desugarer<'a> {
             }
             CtxVal::Expr(e) => self.expr(*e),
             CtxVal::Nat(n) => self.add(Term::Int(*n as i64)),
+            CtxVal::Proof => self.unit(),
         }
     }
 

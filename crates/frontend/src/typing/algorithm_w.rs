@@ -498,13 +498,16 @@ impl<'a> Checker<'a> {
                 let tc = self.infer(cond)?;
                 let b = self.unifier.types.con(ty::BOOL);
                 self.unifier.unify(tc, b, "in an 'if' condition")?;
-                self.check(then, expected)?;
-                self.check(alt, expected)
+                let (yes, no) = (self.branch_fact(cond, true), self.branch_fact(cond, false));
+                self.assuming(yes, |this| this.check(then, expected))?;
+                self.assuming(no, |this| this.check(alt, expected))
             }
             Expr::Match { scrut, arms, .. } => {
                 let ts = self.infer(*scrut)?;
-                for arm in self.ast.slice(*arms).iter() {
+                let facts = self.arm_facts(e, *scrut, *arms);
+                for (arm, facts) in self.ast.slice(*arms).iter().zip(facts) {
                     self.enter_scope();
+                    let depth = self.hypotheses.len();
                     let r = (|this: &mut Self| {
                         for pat in this.ast.slice(arm.patterns).iter() {
                             this.type_pattern(*pat, ts)?;
@@ -514,8 +517,9 @@ impl<'a> Checker<'a> {
                             let b = this.unifier.types.con(ty::BOOL);
                             this.unifier.unify(tg, b, "in a match guard")?;
                         }
-                        this.check(arm.body, expected)
+                        this.assuming(facts, |this| this.check(arm.body, expected))
                     })(self);
+                    self.hypotheses.truncate(depth);
                     self.leave_scope();
                     r?;
                 }
@@ -1058,8 +1062,9 @@ impl<'a> Checker<'a> {
                 let tc = self.infer(cond)?;
                 let b = self.unifier.types.con(ty::BOOL);
                 self.unifier.unify(tc, b, "in an 'if' condition")?;
-                let tt = self.infer(then)?;
-                let ta = self.infer(alt)?;
+                let (yes, no) = (self.branch_fact(cond, true), self.branch_fact(cond, false));
+                let tt = self.assuming(yes, |this| this.infer(then))?;
+                let ta = self.assuming(no, |this| this.infer(alt))?;
                 self.unifier
                     .unify(tt, ta, "between the branches of an 'if'")?;
                 Ok(tt)
@@ -1118,7 +1123,8 @@ impl<'a> Checker<'a> {
             Expr::Match { scrut, arms, .. } => {
                 let ts = self.infer(*scrut)?;
                 let result = self.unifier.fresh();
-                for arm in self.ast.slice(*arms).iter() {
+                let facts = self.arm_facts(e, *scrut, *arms);
+                for (arm, facts) in self.ast.slice(*arms).iter().zip(facts) {
                     self.enter_scope();
                     for pat in self.ast.slice(arm.patterns).iter() {
                         self.type_pattern(*pat, ts)?;
@@ -1128,7 +1134,7 @@ impl<'a> Checker<'a> {
                         let b = self.unifier.types.con(ty::BOOL);
                         self.unifier.unify(tg, b, "in a match guard")?;
                     }
-                    let tb = self.infer(arm.body)?;
+                    let tb = self.assuming(facts, |this| this.infer(arm.body))?;
                     self.unifier.unify(result, tb, "between match arms")?;
                     self.leave_scope();
                 }
@@ -1453,6 +1459,7 @@ impl<'a> Checker<'a> {
     /// result check the lambda, so its body (a match's arms) sees both.
     fn check_applied_lambda(&mut self, f: Aol<Expr>, x: Aol<Expr>, result: Type) -> Result<()> {
         let tx = self.infer(x)?;
+        self.note_piped_match(f, x);
         let eff = self.unifier.fresh();
         let want = self.unifier.types.arrow_eff(tx, result, eff);
         self.check(f, want)?;
@@ -1728,7 +1735,8 @@ impl<'a> Checker<'a> {
         if module.is_none() && name == crate::lexer::HOLE {
             let t = self.unifier.fresh();
             let locals = self.scopes[1..].iter().flat_map(|s| s.iter().map(|(n, t)| (*n, *t))).collect();
-            self.holes.push((site, t, locals));
+            let hyps = (self.checking_def, self.hypotheses_in_scope());
+            self.holes.push((site, t, locals, hyps));
             return Ok(t);
         }
         // A blessed interface in VALUE position is a desugar's reference to the single

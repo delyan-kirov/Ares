@@ -36,6 +36,7 @@ mod ctx_sizes;
 mod instances;
 mod patterns;
 mod propositions;
+mod proving;
 pub mod resolved;
 mod signatures;
 pub mod types;
@@ -390,6 +391,16 @@ pub struct Checker<'a> {
     /// The value a `let` binds, as the checker evaluates it, by the local's
     /// type: a `let` stays transparent in a proposition. See Note [Propositions].
     let_statics: HashMap<Type, propositions::Static>,
+    /// The facts the branches enclosing the expression being checked
+    /// establish (`c ~ true` in an `if`'s then-branch), innermost last.
+    /// See Note [Proving propositions].
+    hypotheses: Vec<Type>,
+    /// The value a match lambda applied on the spot (`s |> \ | ...`) is
+    /// matching, by its `Match` node, when the checker evaluates it.
+    match_scruts: HashMap<Aol<Expr>, propositions::Static>,
+    /// The hypotheses at the use being resolved, for its proposition fields,
+    /// and the definition it stands in.
+    proving: (Option<StrId>, Vec<Type>),
     /// Argument sites promoted to a record: a bare scalar `1` or a positional
     /// `{1, 2}` passed where a record is expected, mapped to the target record's
     /// field names (in order). Lowering wraps the value into a name-keyed record.
@@ -452,7 +463,7 @@ pub struct Checker<'a> {
     import_hints: Rc<HashMap<StrId, Vec<StrId>>>,
     /// Every `???` met, with its type and the binders in scope there (the
     /// candidates for filling it), reported once the definition is solved.
-    holes: Vec<(Aol<Expr>, Type, Vec<(StrId, Type)>)>,
+    holes: Vec<(Aol<Expr>, Type, Vec<(StrId, Type)>, (Option<StrId>, Vec<Type>))>,
     /// Each expression's inferred type, kept only when an editor asks
     /// ([`Self::set_record_types`]): hover reads it after the check.
     expr_types: Option<HashMap<Aol<Expr>, Type>>,
@@ -579,6 +590,9 @@ struct PendingCtx {
     /// The fields of a several-field bundle an explicit `@ctx` argument gave, by
     /// position in the bundle, already checked; the rest are searched.
     given: Vec<(usize, Aol<Expr>)>,
+    /// The definition the use stands in, and the hypotheses in scope there,
+    /// which prove its proposition fields.
+    hyps: (Option<StrId>, Vec<Type>),
 }
 
 /// An explicit `@ctx {.f = e}` argument of a call, off the spine: its fields, or
@@ -715,6 +729,9 @@ impl<'a> Checker<'a> {
             type_terms: HashSet::new(),
             proof_casts: HashMap::new(),
             let_statics: HashMap::new(),
+            hypotheses: Vec::new(),
+            match_scruts: HashMap::new(),
+            proving: (None, Vec::new()),
             promotions: HashMap::new(),
             struct_lit_names: HashMap::new(),
             literal_hooks: HashMap::new(),
@@ -1290,9 +1307,12 @@ impl<'a> Checker<'a> {
     /// fill it (GHC's valid hole fits), each offered as a fix.
     fn report_holes(&mut self) {
         let holes = std::mem::take(&mut self.holes);
-        for (site, t, locals) in holes {
+        for (site, t, locals, (def, hyps)) in holes {
             let t = self.unifier.zonk(t);
-            let shown = self.show(t);
+            let goal = self.is_prop(t);
+            // A goal names the variables of its definition, as its hypotheses do.
+            let names = def.filter(|_| goal).map(|d| self.sig_names(d)).unwrap_or_default();
+            let shown = self.unifier.show_all_named(&[t], names.clone()).remove(0);
             let mut tys: Vec<Type> = locals.iter().map(|(_, t)| *t).collect();
             tys.push(t);
             let mut rigid = self.unifier.rigid_generics(&tys, "a type variable of the definition");
@@ -1329,6 +1349,17 @@ impl<'a> Checker<'a> {
                         Applicability::MaybeIncorrect,
                     );
                 }
+            }
+            // A hole where a proof stands is a goal: the hypotheses that
+            // could prove it are what the author needs to see.
+            if goal {
+                d = match hyps.as_slice() {
+                    [] => d.with_note("no hypothesis is in scope"),
+                    _ => {
+                        let shown: Vec<String> = self.unifier.show_all_named(&hyps, names).into_iter().map(|h| format!("`{h}`")).collect();
+                        d.with_note(format!("hypotheses in scope: {}", shown.join(", ")))
+                    }
+                };
             }
             self.errors.push(d);
         }
@@ -1642,7 +1673,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The names `name`'s signature gives its variables.
-    fn sig_names(&self, name: StrId) -> HashMap<VarId, String> {
+    pub(super) fn sig_names(&self, name: StrId) -> HashMap<VarId, String> {
         let mut out = HashMap::new();
         for (t, n) in self.var_names.get(&name).into_iter().flatten() {
             if let TypeNode::Var(id) = self.unifier.types.node(self.unifier.resolve(*t)) {
