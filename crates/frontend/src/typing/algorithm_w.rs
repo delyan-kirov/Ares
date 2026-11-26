@@ -48,7 +48,7 @@ impl<'a> Checker<'a> {
         self.ambient = self.top_level_ambient();
         if let Some(sig) = def.sig {
             let mut tvars = self.sig_tvars(sig);
-            self.unifier.hold_labels(tvars.values().copied());
+            self.unifier.hold_labels(tvars.iter().map(|(n, t)| (*n, *t)));
             self.wildcards.clear();
             let sig_ty = self.ty_of_ast(sig, &mut tvars);
             let wildcards = std::mem::take(&mut self.wildcards);

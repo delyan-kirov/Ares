@@ -284,27 +284,53 @@ impl Unifier {
     }
 
     /// The levels of the effects a row names: each label's universe at its
-    /// arguments. A row variable, or a label whose arguments are unknown,
-    /// adds nothing; a row has no level of its own.
+    /// arguments, and a label variable's own level. A row variable, or a
+    /// label whose arguments are unknown, adds nothing; a row has no level of
+    /// its own. See Note [Label variable levels].
     fn row_levels(&mut self, row: Type, out: &mut Vec<Type>) {
         let mut cur = row;
         while let TypeNode::RowExtend(label, args, rest) = self.head(cur) {
-            let Some(label) = self.types.label_name(self.resolve(label)) else {
-                cur = rest;
-                continue;
-            };
-            if let TypeNode::Tuple(items) = self.head(args) {
-                let items = self.types.items(items).to_vec();
-                if let Some(l) = self.decl_level_of(label, &items) {
+            let label = self.resolve(label);
+            if let Some(name) = self.types.label_name(label) {
+                if let Some(l) = self.effect_level(name, args) {
                     out.push(l);
                 }
-            } else if let Some(l) = self.decl_level_of(label, &[]) {
-                out.push(l);
+            } else if self.is_label(label) {
+                out.push(self.level_of(label));
             }
             cur = rest;
         }
     }
+
+    /// The universe of the effect `name` at `args`, when it has a declared
+    /// one. Arguments not yet known add nothing.
+    fn effect_level(&mut self, name: StrId, args: Type) -> Option<Type> {
+        match self.head(args) {
+            TypeNode::Tuple(items) => {
+                let items = self.types.items(items).to_vec();
+                self.decl_level_of(name, &items)
+            }
+            _ => self.decl_level_of(name, &[]),
+        }
+    }
 }
+
+// Note [Label variable levels]
+//
+// A label variable `l: @Effect` stands for a whole effect, arguments
+// included, so it has a level as a type variable does: the universe of the effect it stands for, a level variable
+// kept in `var_levels` and made when an arrow's level first asks for it. An
+// effectful arrow's level counts it like any other effect of its row, so an
+// arrow over `<l>` is at least as large as whatever `l` turns out to be.
+//
+// Solving `l` to an effect `E` equates the two: `l`'s level with `E`'s
+// universe at `l`'s arguments (`bind_level`). The arguments are unified
+// before the label is bound wherever a label variable is solved, so they are
+// known by then. A rigid `l`, the signature's own, keeps its level variable,
+// which the scheme generalises with `l`; each use's instance of `l` carries a
+// copy and meets its own effect's universe when solved.
+// See Note [Effect label variables].
+// See Note [Declaration levels].
 
 impl Unifier {
     /// The level a type variable stands at, if it was bound with one.
@@ -414,6 +440,15 @@ impl Unifier {
     pub(super) fn bind_level(&mut self, id: VarId, ty: Type) -> Result<()> {
         let Some(level) = self.var_level(id) else { return Ok(()) };
         match self.head(ty) {
+            // Rule [Frontend-Effect-Level]
+            TypeNode::Con(name) if self.is_label_var(id) => {
+                let args = self.label_args(self.types.add(TypeNode::Var(id)));
+                let own = match self.effect_level(name, args) {
+                    Some(l) => l,
+                    None => self.types.add(TypeNode::Level(1)),
+                };
+                self.unify(level, own, &format!("in the universe of `{name}`, which an effect variable stands for"))
+            }
             TypeNode::Var(other) if self.var_level(other).is_none() && !self.is_nat_var(other) => {
                 let other = self.types.add(TypeNode::Var(other));
                 self.set_var_level(other, level);

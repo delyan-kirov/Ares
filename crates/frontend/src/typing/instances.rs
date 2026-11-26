@@ -342,14 +342,18 @@ impl<'a> Checker<'a> {
         let mut tvars = self.sig_tvars(sig);
         let full = self.ty_of_ast(sig, &mut tvars);
         // The signature elaborated afresh has none of the level constraints
-        // the definition's body adds; its scheme does. See Note [Level parameters].
-        if bare && self.ast.level_params.get(sig).is_some() {
+        // the definition's body adds, on its named levels or the levels of its
+        // effect variables; its scheme does. See Note [Level parameters].
+        // See Note [Label variable levels].
+        let effects = fields.iter().any(|f| self.is_effect_kind(f.ty));
+        if bare && (self.ast.level_params.get(sig).is_some() || effects) {
             if let Some(scheme) = self.lookup(name) {
                 let inst = self.unifier.instantiate(scheme);
                 let exposed = match (uses, self.unifier.types.node(full)) {
                     (true, TypeNode::Arrow(_, to, _)) => to,
                     _ => full,
                 };
+                self.unifier.pair_labels(inst, exposed)?;
                 self.unifier.unify(inst, exposed, &format!("against the signature of `{name}`"))?;
             }
         }
@@ -397,8 +401,8 @@ impl<'a> Checker<'a> {
                     let want = tvars[&f];
                     let want_args = self.unifier.label_args(want);
                     let where_ = format!("in the `@ctx` field `{f}` of `{name}`");
-                    self.unifier.unify(want, label, &where_).map_err(|d| d.fill_span(span))?;
                     self.unifier.unify(want_args, args, &where_).map_err(|d| d.fill_span(span))?;
+                    self.unifier.unify(want, label, &where_).map_err(|d| d.fill_span(span))?;
                     continue;
                 }
                 let Expr::Type(t) = *self.node(value) else {

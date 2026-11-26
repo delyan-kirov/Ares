@@ -1,0 +1,4 @@
+$ @mod RUN
+
+$ small : @ctx {t: @Type 1} -> t -> @Int = \_ => 0
+$ run : @ctx {l: @Effect} -> ({} -> <l> @Int) -> @Int = \g => small g
