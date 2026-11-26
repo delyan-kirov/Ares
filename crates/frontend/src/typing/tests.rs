@@ -1596,6 +1596,15 @@ fn an_effectful_arrow_lives_with_its_effects() {
     blocked("$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,\n$ c : @Int = count ({} -> <Exn> @Int)\n");
     // An effect's arguments count.
     blocked("$ St : (s: @Type) -> @Effect = get : {} -> s,\n$ c : @Int = count ({} -> <St (@Type 1)> @Int)\n");
+    // An effect variable counts as the effect it is solved to, at its arguments.
+    let run = "$ small : @ctx {t: @Type 1} -> t -> @Int = \\_ => 0\n\
+               $ run : @ctx {l: @Effect} -> ({} -> <l> @Int) -> @Int = \\g => small g\n";
+    applies(&format!("{run}$ Ask : @Effect = ask : {{}} -> @Int,\n$ c : @Int = run (\\_ => Ask.ask {{}})\n"));
+    blocked(&format!("{run}$ Exn : @Effect = throw : @ctx {{a: @Type}} -> @Str -> a,\n$ c : @Int = run (\\_ => Exn.throw \"no\")\n"));
+    blocked(&format!("{run}$ Exn : @Effect = throw : @ctx {{a: @Type}} -> @Str -> a,\n$ c : @Int = run @ctx {{.l = Exn}} (\\_ => Exn.throw \"no\")\n"));
+    let st = "$ St : (s: @Type) -> @Effect = get : {} -> s,\n";
+    applies(&format!("{run}{st}$ c : @Int = run @ctx {{.l = St @Int}} (\\_ => St.get {{}})\n"));
+    blocked(&format!("{run}{st}$ c : @Int = run @ctx {{.l = St (@Type 1)}} (\\_ => 0)\n"));
 }
 
 // Test [Frontend-Effect-Label-Var]
@@ -1619,6 +1628,8 @@ fn an_effect_variable_is_one_effect_solved_only_when_unique() {
     // Inside its body, `l` is an effect of its own.
     applies("$ h : @ctx {l: @Effect} -> ({} -> <Ask, l> @Int) -> <l> @Int = \\g => do g {} is k | ask u => k 1\n");
     blocked("$ h : @ctx {l: @Effect} -> ({} -> <l> @Int) -> <l> @Int = \\g => g {} + ask {}\n", "not handled");
+    // A rigid label variable shows by its signature's name.
+    blocked("$ h : @ctx {lab: @Effect} -> ({} -> <lab> @Int) -> <Ask> @Int = \\g => g {}\n", "effect `lab` is performed");
 }
 
 #[test]

@@ -1,0 +1,14 @@
+$ @mod UNIVERSE_EFFECT_VARIABLE
+
+# An effect variable counts as the effect it stands for in the level of an
+# effectful arrow (#607). The body of `run` puts `{} -> <l> @Int` in
+# `@Type 1`, so a use may solve `l` to `Ask` but not to `Exn`, whose
+# operation is generic in a type.
+$ Ask : @Effect = ask : {} -> @Int,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+$ small : @ctx {t: @Type 1} -> t -> @Int = \_ => 0
+$ run : @ctx {l: @Effect} -> ({} -> <l> @Int) -> @Int = \g => small g
+
+$ fine : @Int = run (\_ => Ask.ask {})
+$ solved : @Int = run (\_ => Exn.throw "no")  #~ error[TYPE_MISMATCH]: universe of `Exn`, which an effect variable stands for
+$ named : @Int = run @ctx {.l = Exn} (\_ => 0)  #~ error[TYPE_MISMATCH]: universe of `Exn`, which an effect variable stands for

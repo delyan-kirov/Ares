@@ -1,0 +1,11 @@
+$ @mod MAIN
+
+# An imported definition brings the level of its effect variable along with
+# its type.
+$ @import RUN
+
+$ Ask : @Effect = ask : {} -> @Int,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+
+$ fine : @Int = run (\_ => Ask.ask {})
+$ solved : @Int = run (\_ => Exn.throw "no")  #~ error[TYPE_MISMATCH]: universe of `Exn`, which an effect variable stands for

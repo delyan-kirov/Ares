@@ -493,12 +493,13 @@ impl<'a> Checker<'a> {
             }
             TypeNode::RowExtend(label, args, rest) => {
                 let l = self.import_ty(src, label, map);
+                let a = self.import_ty(src, args, map);
                 if let (TypeNode::Var(from), TypeNode::Var(to)) = (src.types.node(label), self.unifier.types.node(l)) {
                     if src.is_label_var(from) {
                         self.unifier.mark_label(to);
+                        self.unifier.set_label_args(l, a);
                     }
                 }
-                let a = self.import_ty(src, args, map);
                 let r = self.import_ty(src, rest, map);
                 self.unifier.types.add(TypeNode::RowExtend(l, a, r))
             }

@@ -97,8 +97,9 @@ pub struct Unifier {
     /// See Note [Effect label variables].
     label_vars: HashSet<VarId>,
     /// The label variables of the signatures being checked, which their
-    /// bodies see as effects of their own, distinct from every other.
-    rigid_labels: HashSet<VarId>,
+    /// bodies see as effects of their own, distinct from every other, with
+    /// the names the signatures give them.
+    rigid_labels: HashMap<VarId, StrId>,
     /// The arguments variable of each label variable a signature names, which
     /// all its occurrences share.
     label_args: HashMap<VarId, Type>,
@@ -176,7 +177,7 @@ impl Unifier {
             scheme_le_by_var: HashMap::new(),
             decl_levels: HashMap::new(),
             label_vars: HashSet::new(),
-            rigid_labels: HashSet::new(),
+            rigid_labels: HashMap::new(),
             label_args: HashMap::new(),
             row_postponed: Vec::new(),
         }
@@ -893,6 +894,10 @@ impl Unifier {
                         let l = self.instantiate_with(l, mapping);
                         self.set_var_level(fresh, l);
                     }
+                    if let Some(&args) = self.label_args.get(&id) {
+                        let args = self.instantiate_with(args, mapping);
+                        self.set_label_args(fresh, args);
+                    }
                     fresh
                 }
                 _ => self.types.add(TypeNode::Var(id)),
@@ -983,8 +988,12 @@ impl Unifier {
     }
 
     /// [`Self::show_all`] with some variables named already, as a signature
-    /// binds them; the rest take the letters those names leave free.
+    /// binds them; the rest take the letters those names leave free. A rigid
+    /// label variable shows its signature's name.
     pub fn show_all_named(&self, tys: &[Type], mut names: HashMap<VarId, String>) -> Vec<String> {
+        for (&id, name) in &self.rigid_labels {
+            names.entry(id).or_insert_with(|| name.to_string());
+        }
         let taken: HashSet<String> = names.values().cloned().collect();
         let named: HashSet<VarId> = names.keys().copied().collect();
         let of = |id: VarId| self.var_level(id).map(|l| self.zonk(l));

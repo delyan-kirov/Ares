@@ -1559,6 +1559,21 @@ $ pass : @ctx {l: @Effect, e: @Row} -> ({} -> <l | e> @Int) -> <l | e> @Int = \g
 $ both : {} -> <Ask, Tell> @Int = pass @ctx {.l = Ask} <| \_ => let n = ask {} in tell n; n
 ```
 
+An effectful function type lives in a universe large enough for its effects
+(3.12), and `l` counts as the effect it stands for: inside the body it is
+a level of its own, and a use that solves it to an effect checks that effect's
+universe against what the body needed (#607). A body that passes
+`{} -> <l> @Int` where `@Type 1` is expected admits `Ask` for `l`, but not
+`Exn`, whose operation is generic in a type:
+
+```ares-fragment
+$ Ask : @Effect = ask : {} -> @Int,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+$ small : @ctx {t: @Type 1} -> t -> @Int = \_ => 0
+$ run : @ctx {l: @Effect} -> ({} -> <l> @Int) -> @Int = \g => small g
+$ bad : @Int = run (\_ => Exn.throw "no")
+```
+
 ## 8.6 `@finale`
 `@finale cleanup body` runs `body {}`, then `cleanup {}` when the body's scope
 exits: on normal completion, on an abort by an outer non-resuming handler, or

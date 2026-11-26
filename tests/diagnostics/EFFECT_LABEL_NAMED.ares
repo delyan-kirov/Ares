@@ -1,0 +1,7 @@
+$ @mod EFFECT_LABEL_NAMED
+
+$ Ask : @Effect = ask : {} -> @Int,
+
+# Inside the body, an error shows a label variable by the name its signature
+# gives it.
+$ f : @ctx {lab: @Effect} -> ({} -> <lab> @Int) -> <Ask> @Int = \g => g {}  #~ error[TYPE_MISMATCH]: effect `lab` is performed but not handled

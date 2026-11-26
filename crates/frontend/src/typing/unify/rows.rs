@@ -287,9 +287,54 @@ impl Unifier {
             return a;
         }
         let a = self.fresh();
-        self.label_args.insert(id, a);
-        self.trail.push(Undo::LabelArgs(id));
+        self.set_label_args(label, a);
         a
+    }
+
+    /// Give the label variable `label` the arguments variable `args`.
+    pub fn set_label_args(&mut self, label: Type, args: Type) {
+        if let TypeNode::Var(id) = self.head(label) {
+            if self.label_args.insert(id, args).is_none() {
+                self.trail.push(Undo::LabelArgs(id));
+            }
+        }
+    }
+
+    /// Unify the label variables at the same places of `a` and `b`, two
+    /// elaborations of one signature, so that unifying them leaves no row
+    /// equation between two unsolved label variables to wait.
+    pub fn pair_labels(&mut self, a: Type, b: Type) -> Result<()> {
+        match (self.head(a), self.head(b)) {
+            (TypeNode::RowExtend(la, aa, ra), TypeNode::RowExtend(lb, ab, rb)) => {
+                if self.is_label(la) && self.is_label(lb) && self.resolve(la) != self.resolve(lb) {
+                    self.unify(aa, ab, "against the signature")?;
+                    self.unify(la, lb, "against the signature")?;
+                }
+                self.pair_labels(ra, rb)
+            }
+            (TypeNode::Arrow(fa, ta, ea), TypeNode::Arrow(fb, tb, eb)) => {
+                self.pair_labels(fa, fb)?;
+                self.pair_labels(ta, tb)?;
+                self.pair_labels(ea, eb)
+            }
+            (TypeNode::App(ha, xa), TypeNode::App(hb, xb)) => {
+                self.pair_labels(ha, hb)?;
+                self.pair_labels(xa, xb)
+            }
+            (TypeNode::Tuple(xs), TypeNode::Tuple(ys)) => {
+                let (xs, ys) = (self.types.items(xs).to_vec(), self.types.items(ys).to_vec());
+                for (x, y) in xs.into_iter().zip(ys) {
+                    self.pair_labels(x, y)?;
+                }
+                Ok(())
+            }
+            (TypeNode::Record(ra), TypeNode::Record(rb)) => self.pair_labels(ra, rb),
+            (TypeNode::RowField(_, ta, ra), TypeNode::RowField(_, tb, rb)) => {
+                self.pair_labels(ta, tb)?;
+                self.pair_labels(ra, rb)
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn is_label_var(&self, id: VarId) -> bool {
@@ -302,12 +347,13 @@ impl Unifier {
     }
 
     /// Make the label variables among `labels` rigid, as a body sees those of
-    /// its own signature, until [`Unifier::release_labels`].
-    pub fn hold_labels(&mut self, labels: impl IntoIterator<Item = Type>) {
-        for l in labels {
+    /// its own signature, until [`Unifier::release_labels`]. Each shows by
+    /// the name the signature gives it.
+    pub fn hold_labels(&mut self, labels: impl IntoIterator<Item = (StrId, Type)>) {
+        for (name, l) in labels {
             if let TypeNode::Var(id) = self.head(l) {
                 if self.is_label_var(id) {
-                    self.rigid_labels.insert(id);
+                    self.rigid_labels.insert(id, name);
                 }
             }
         }
@@ -322,7 +368,7 @@ impl Unifier {
     fn label_key(&self, label: Type) -> (LabelKey, bool) {
         match self.head(label) {
             TypeNode::Var(id) => {
-                let flexible = matches!(self.vars[id as usize], VarState::Unbound { .. }) && !self.rigid_labels.contains(&id);
+                let flexible = matches!(self.vars[id as usize], VarState::Unbound { .. }) && !self.rigid_labels.contains_key(&id);
                 (LabelKey::Var(id), flexible)
             }
             TypeNode::Con(name) => (LabelKey::Name(name), false),
@@ -390,16 +436,18 @@ impl Unifier {
                     self.unify_effect_args(label, args, l_args, where_)?;
                     return Ok(Some(rest));
                 }
+                // The arguments first: binding a label variable reads them for
+                // its level. See Note [Label variable levels].
                 if flexible && !have_flexible && matches!(self.head(rest), TypeNode::RowEmpty) {
                     let LabelKey::Var(id) = want else { unreachable!("a flexible label is a variable") };
-                    self.bind(id, l)?;
                     self.unify_effect_args(label, args, l_args, where_)?;
+                    self.bind(id, l)?;
                     return Ok(Some(rest));
                 }
                 if have_flexible && !flexible && matches!(self.head(rest), TypeNode::RowEmpty) {
                     let LabelKey::Var(id) = have else { unreachable!("a flexible label is a variable") };
-                    self.bind(id, label)?;
                     self.unify_effect_args(label, args, l_args, where_)?;
+                    self.bind(id, label)?;
                     return Ok(Some(rest));
                 }
                 if flexible || have_flexible {
