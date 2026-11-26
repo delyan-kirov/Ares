@@ -1,0 +1,9 @@
+$ @mod MAIN
+
+# A motive may name a type-level function through an import alias, `M.Pos`,
+# and is then held to the same arity as a bare one.
+$ @import M = A
+
+$ pos : (n: @Nat) -> (m: @Nat) -> n ~ m -> M.Pos n -> M.Pos m = \q p => @transp n M.Pos p m q
+$ lt : (n: @Nat) -> (m: @Nat) -> n ~ m -> 2 < n -> M.Lt 2 m = \q p => @transp n (M.Lt 2) p m q
+$ bad : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < n -> 0 < m = \q p => @transp n M.Lt p m q  #~ error[TYPE_MISMATCH]: a `@transp` motive takes one argument, but `M.Lt` applied to 0 argument(s) does not

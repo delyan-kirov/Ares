@@ -1966,3 +1966,37 @@ fn a_let_of_a_type_names_it_in_annotations() {
     blocked("$ a : @Int = let n = 3 in let x : n = 4 in 0\n", "a size stands where a type is expected");
     blocked("$ a : @Int -> @Int = \\y => let t = y in let x : t = 4 in 0\n", "a run-time value in a type");
 }
+
+// Test [Frontend-Let-Transparent]
+#[test]
+fn a_let_of_a_size_is_a_size_argument() {
+    let (applies, blocked) = proposition_cases("$ ident : (n: @Nat) -> @Nat = n\n$ same : (n: @Nat) -> n ~ n = @refl n\n");
+    applies("$ a : @Nat = let k = 3 in ident k\n");
+    applies("$ a : @Nat = let k = 3 in let j = k + 1 in ident (j * 2)\n");
+    applies("$ a : @Int = let k = 2 in let p : 2 ~ 2 = same k in 0\n");
+    applies("$ a : @Int -> @Nat = \\x => let k = 1 in let j = k in ident j\n");
+    blocked("$ a : @Int = let k = 2 in let p : 3 ~ 3 = same k in 0\n", "size mismatch in the size argument: expected `3`, found `2`");
+    blocked("$ a : @Nat -> @Nat = \\x => let k = x in ident k\n", "a size argument that is a run-time value");
+}
+
+/// A module of type-level functions returning propositions, for motives
+/// named across an import.
+const MOTIVES_DEP: &str = "$ @mod A\n$ Pos : (n: @Nat) -> @Type 0 = 0 < n\n$ Lt : (a: @Nat) -> (b: @Nat) -> @Type 0 = a < b\n";
+
+// Test [Frontend-Transport]
+#[test]
+fn a_transport_motive_may_be_qualified() {
+    let applies = |src: &str| assert_eq!(cross_module_errors(MOTIVES_DEP, &format!("$ @mod B\n$ @import A\n{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = cross_module_errors(MOTIVES_DEP, &format!("$ @mod B\n$ @import A\n{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> A.Pos m = \\q p => @transp n A.Pos p m q\n");
+    applies("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 2 < n -> A.Lt 2 m = \\q p => @transp n (A.Lt 2) p m q\n");
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> 0 < n -> 0 < m = \\q p => @transp n A.Lt p m q\n", "but `A.Lt` applied to 0 argument(s) does not");
+    // `B` declares no `Pos`, and `A` no `Lt2`.
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> Pos m = \\q p => @transp n B.Pos p m q\n", "a `@transp` motive other than a lambda");
+    blocked("$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> Pos n -> Pos m = \\q p => @transp n A.Lt2 p m q\n", "a `@transp` motive other than a lambda");
+    // A module may name its own type-level function qualified.
+    applies("$ Neg : (n: @Nat) -> @Type 0 = n < 1\n$ t : (n: @Nat) -> (m: @Nat) -> n ~ m -> Neg n -> Neg m = \\q p => @transp n B.Neg p m q\n");
+}

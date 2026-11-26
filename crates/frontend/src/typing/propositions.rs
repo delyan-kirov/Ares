@@ -412,6 +412,15 @@ impl<'a> Checker<'a> {
         self.lookup_local(name).and_then(|t| self.let_statics.get(&t).copied())
     }
 
+    /// The size a `let`-bound local `name` holds, as after `let n = 3`.
+    // Rule [Frontend-Let-Transparent]
+    pub(super) fn let_size(&self, name: StrId) -> Option<Type> {
+        match self.lookup_local(name).and_then(|t| self.let_statics.get(&t)) {
+            Some(Static::Size(t)) => Some(*t),
+            _ => None,
+        }
+    }
+
     /// Remember the value of `let name = value` for the types in its body,
     /// keyed by the local's type `local`, when it is a value the checker
     /// evaluates: a size, a boolean or a type. See Note [Propositions].
@@ -607,7 +616,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `F a.. v` for a motive `F a..` naming a type-level function (`Pos`,
-    /// `Lt 0`) that takes one argument more than it is given.
+    /// `Lt 0`, `M.Pos`) that takes one argument more than it is given.
     fn named_motive_at(&mut self, motive: Aol<Expr>, v: Static, tvars: &HashMap<StrId, Type>) -> Result<Static> {
         let span = self.ast.expr_span(motive);
         let at = span.unwrap_or(Span::at(0));
@@ -619,19 +628,24 @@ impl<'a> Checker<'a> {
         }
         args.reverse();
         let named = match *self.node(head) {
-            Expr::Var { module: None, name } if self.lookup_local(name).is_none() => Some(name),
+            Expr::Var { module: None, name } if self.lookup_local(name).is_none() => Some((name, name.to_string())),
+            Expr::Var { module: Some(m), name } if self.qualifies_type(m, name) => Some((name, format!("{m}.{name}"))),
+            // `M.F` parses as a variant of `M` with no payload.
+            Expr::Variant { module: None, ty: Some(m), tag, fields } if self.ast.slice(fields).is_empty() && self.qualifies_type(m, tag) => {
+                Some((tag, format!("{m}.{tag}")))
+            }
             _ => None,
         };
-        let Some((name, (params, body))) = named.and_then(|n| self.aliases.get(&n).cloned().map(|a| (n, a))) else {
+        let Some(((name, written), (params, body))) = named.and_then(|n| self.aliases.get(&n.0).cloned().map(|a| (n, a))) else {
             return Err(dependent_only(span, "a `@transp` motive other than a lambda `\\z => ...` or a type-level function")
                 .with_note("a motive names a global returning a proposition, as `$ Pos : (n: @Nat) -> @Type 0 = 0 < n`"));
         };
         if params.len() != args.len() + 1 {
             return Err(diag!(
                 Code::TypeMismatch, at, 0,
-                "a `@transp` motive takes one argument, but `{name}` applied to {} argument(s) does not",
+                "a `@transp` motive takes one argument, but `{written}` applied to {} argument(s) does not",
                 args.len();
-                note: "`{name}` takes {} argument(s)", params.len();
+                note: "`{written}` takes {} argument(s)", params.len();
                 note: "a motive is a type-level function applied to all its arguments but the last"
             ));
         }
@@ -643,6 +657,14 @@ impl<'a> Checker<'a> {
         let mut sub: HashMap<StrId, Type> = params.iter().copied().zip(values.iter().copied()).collect();
         let expanded = self.ty_of_ast(body, &mut sub);
         Ok(Static::Type(self.unifier.types.alias(name, values, expanded)))
+    }
+
+    /// Whether `m.name` names the type or type-level function `name`: `m` is
+    /// this module, an imported one or an import alias, and `name` is its own.
+    fn qualifies_type(&self, m: StrId, name: StrId) -> bool {
+        let module = self.alias_modules.get(&m).copied().unwrap_or(m);
+        (m == self.module_name || self.module_scopes.contains(&m))
+            && self.type_home.get(&name).copied().unwrap_or(self.module_name) == module
     }
 
     /// Check that `@refl`'s `a ~ a` is the proposition `expected`, saying

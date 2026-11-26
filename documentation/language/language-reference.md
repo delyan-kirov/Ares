@@ -612,7 +612,7 @@ Three forms build proofs:
 - `@transp t B u t2 e` moves a proof `u` of `B t` to `B t2` along
   `e : t ~ t2`, where the motive `B` returns a proposition: a lambda
   `\z => P`, or a type-level function by name, applied to all its
-  arguments but the last (`Pos`, `Lt 2`).
+  arguments but the last (`Pos`, `Lt 2`, or `M.Pos` through an import).
 - `@cast A B e x` moves `x : A` to `B` along `e : A ~ B`. With one argument,
   `@cast x` is the integer cast (4.11).
 
@@ -649,13 +649,16 @@ $ Small : (n: @Nat) -> @Type 0 = n < 10
 A `let` stays transparent: after `let n = 3`, the checker knows `n` is `3` in
 the propositions of the body. The same holds for a `let` of a type or a
 boolean, and in every annotation of the body: after `let t = @Int`, `(x: t)`
-is `(x: @Int)`, and after `let n = 3`, `@Tensor n @Int` has three elements. A
-`let` of a value known only at run time is not a type (`UNSUPPORTED`).
+is `(x: @Int)`, and after `let n = 3`, `@Tensor n @Int` has three elements
+and `n` is the size argument `3` of a `(n: @Nat) ->` parameter. A `let` of a
+value known only at run time is not a type (`UNSUPPORTED`).
 
 ```ares
 $ ok : @Int = let n = 4 in let p : n < 5 = @refl true in 0
 $ bump : @Int -> @Int = \y => let t = @Int in let inc = \(x: t) => x + 1 in inc y
 $ row : @Int = let n = 3 in let v : @Tensor n @Int = [1, 2, 3] in 0
+$ same : (n: @Nat) -> n ~ n = @refl n
+$ three : @Int = let n = 3 in let p : 3 ~ 3 = same n in 0
 ```
 
 A `@ctx` field whose type is a proposition is a precondition the checker
