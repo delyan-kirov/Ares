@@ -107,6 +107,26 @@ fn folding_laws_are_lemmas_in_the_kernel() {
     assert_eq!(kernel(&irreflexive), None);
 }
 
+// Numerals of any size (#609): the kernel computes on their numbers.
+#[test]
+fn large_numerals_compute() {
+    both_accept("$ big : (n: @Nat) -> n < 1000000 -> @Nat = \\p => n\n$ k : @Nat = big 999999 (@refl true)\n");
+    both_reject("$ big : (n: @Nat) -> n < 1000000 -> @Nat = \\p => n\n$ k : @Nat = big 1000000 (@refl true)\n");
+    both_accept("$ m : 4096 * 4096 == 16777216 = @refl true\n");
+    both_reject("$ m : 4096 * 4096 == 16777217 = @refl true\n");
+}
+
+// The kernel computes an `if` in a type (#609); the frontend's propositions
+// compare sizes, booleans and types, and an `if` is none of them yet.
+#[test]
+fn an_if_in_a_type_is_the_kernels() {
+    let src = module("$ k : (if 3 < 4 => 1 else 2) ~ 1 = @refl 1\n");
+    assert!(frontend(&src).is_some_and(|e| e.contains("UNSUPPORTED")), "{:?}", frontend(&src));
+    assert_eq!(kernel(&src), None);
+    let wrong = module("$ k : (if 3 > 4 => 1 else 2) ~ 1 = @refl 1\n");
+    assert!(kernel(&wrong).is_some_and(|e| e.contains("expected `@Bottom`")), "{:?}", kernel(&wrong));
+}
+
 #[test]
 fn transport_moves_a_comparison() {
     both_accept(

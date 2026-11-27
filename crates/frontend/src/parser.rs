@@ -2510,7 +2510,13 @@ impl<'a> Parser<'a> {
                 }
             }
             Kind::Word if is_upper(self.text(ahead)) => {
-                let ty = self.expect_bare_type_name(base, &ahead, "a variant constructor")?;
+                // A builtin type's constructor, such as the kernel's
+                // `@Nat.Succ.{ n }`.
+                let builtin = self.bare_var_name(base).filter(|n| self.ast.text(*n).strip_prefix('@').is_some_and(is_upper));
+                let ty = match builtin {
+                    Some(name) => name,
+                    None => self.expect_bare_type_name(base, &ahead, "a variant constructor")?,
+                };
                 self.bump()?; // the tag / type name
                 let ahead_name = self.intern(self.text(ahead));
                 // `Module.Type.Tag`: another uppercase `.Name` follows.

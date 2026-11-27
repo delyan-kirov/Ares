@@ -29,10 +29,10 @@
 use std::cell::OnceCell;
 use std::rc::Rc;
 
-use crate::inductive::{canonical, constructor_value, data_value, recursor_value, ConstructorVal, DataVal, RecursorArgs};
+use crate::inductive::{canonical, constructor_value, data_value, numeral_value, recursor_value, ConstructorVal, DataVal, RecursorArgs};
 use crate::level::Level;
 use crate::observational::{cast, eq};
-use crate::signature::{GlobalId, GlobalKind, Signature};
+use crate::signature::{Computed, GlobalId, GlobalKind, Signature};
 use crate::term::{Binding, Index, Name, Term};
 
 /// A de Bruijn level: the number of binders outside a variable's own.
@@ -59,6 +59,9 @@ pub enum Val {
     QIn(Rc<Val>),
     /// A definition applied to arguments, not yet unfolded.
     Unfold(Rc<Unfold>),
+    /// A numeral of the prelude's `@Nat`, its constructor chain unexpanded.
+    /// See Rule [Nat-Literal].
+    Nat(u64),
 }
 
 /// A definition applied to zero or more arguments, with its unfolding
@@ -93,7 +96,27 @@ impl Unfold {
                 };
                 eval(sig, &Env::with_levels(self.levels.clone()), body)
             }
-            Some((f, a)) => apply(sig, f.unfolded(sig).clone(), a.clone()),
+            Some((f, a)) => match self.computed(sig) {
+                Some(v) => v,
+                None => apply(sig, f.unfolded(sig).clone(), a.clone()),
+            },
+        })
+    }
+
+    // Rule [Nat-Literal]
+    /// An arithmetic global of the prelude applied to numerals: its value,
+    /// computed on the numbers. See Note [Numerals compute on numbers].
+    fn computed(&self, sig: &Signature) -> Option<Val> {
+        let builtins = sig.builtins()?;
+        let op = builtins.arithmetic(self.global)?;
+        let args = self.spine();
+        if args.len() != op.arity() {
+            return None;
+        }
+        let numbers: Vec<u64> = args.iter().map(|a| numeral_value(sig, a)).collect::<Option<_>>()?;
+        Some(match op.compute(&numbers)? {
+            Computed::Nat(n) => Val::Nat(n),
+            Computed::Bool(b) => eval_global(sig, if b { builtins.true_ctor } else { builtins.false_ctor }, Rc::new([])),
         })
     }
 
@@ -277,6 +300,7 @@ pub fn eval(sig: &Signature, env: &Env, t: &Term) -> Val {
             let (motive, method) = (eval(sig, env, p), eval(sig, env, f));
             qelim(sig, motive, method, env.level(level), eval(sig, env, q))
         }
+        Term::Nat(_, n) => Val::Nat(*n),
     }
 }
 
@@ -398,6 +422,7 @@ fn read_back(sig: &Signature, mode: Unfolding, depth: Lvl, v: &Val) -> Term {
             Term::Quot(Rc::new(quote(sig, depth, &q.carrier)), Rc::new(quote(sig, depth, &q.relation)), q.level.clone(), proofs)
         }
         Val::QIn(a) => Term::QIn(Rc::new(quote(sig, depth, a))),
+        Val::Nat(n) => Term::Nat(sig.builtins().expect("only a script, after the prelude, has a numeral").nat, *n),
         Val::Data(d) => {
             let head = Term::Global(sig.data(d.data).global, d.levels.clone());
             quote_spine(sig, depth, head, &d.params)
@@ -503,3 +528,28 @@ fn quote_neutral(sig: &Signature, mode: Unfolding, depth: Lvl, n: &Neutral) -> T
 // No rule changes: unfolding is the definition's own equation, applied later,
 // and equal arguments give equal applications by congruence.
 // See Algorithm [Glued evaluation].
+
+// Note [Numerals compute on numbers]
+//
+// A numeral of the prelude's `@Nat` is the value `Val::Nat(n)`, not a chain
+// of `n` constructors, as Lean keeps its `Nat` literals. It stands for that
+// chain, and every rule that looks at a constructor sees it one step at a
+// time: the recursor runs `n` steps up from `0` (`inductive::iota`),
+// conversion and Eq-Ctor expand a numeral only against a constructor, and a
+// constructor of `@Nat` over a numeral is a numeral again. Two numerals
+// compare by their numbers, and a cast of one is itself, since `@Nat` has no
+// parameters.
+//
+// The prelude's `+`, `-`, `*`, `<`, `==`, `@Nat.pred` and `@Nat.is_zero`,
+// applied to numerals (or `@Nat.Succ` over one), give the numeral or boolean
+// their definitions compute, without unfolding them (`Unfold::computed`).
+// That is the value the
+// definitions reach by Data-Iota, so no new equation holds; what changes is
+// the cost, which no longer grows with the numbers. A result that does not
+// fit 64 bits unfolds by the definition instead.
+//
+// What still walks the chain: a recursor on a numeral, and arithmetic with
+// one side a variable, such as `n + 500`, which builds 500 constructors
+// around `n`; comparing two such values recurses once per constructor, so
+// that depth is bounded by the stack, as any deep term is.
+// See Rule [Nat-Literal].

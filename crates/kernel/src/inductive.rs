@@ -34,7 +34,7 @@ use std::rc::Rc;
 use crate::level::Level;
 use crate::nbe::{apply, eval, Closure, Env, Neutral, Val};
 use crate::observational::cast;
-use crate::signature::{ConstructorDecl, DataDecl, DataId, Param, Signature};
+use crate::signature::{ConstructorDecl, DataDecl, DataId, GlobalKind, Param, Signature};
 use crate::term::{rename, shift, Binding, Index, Name, Term};
 
 // ## Types of the generated globals
@@ -400,9 +400,67 @@ pub fn constructor_value(sig: &Signature, data: DataId, index: usize, levels: Rc
     let names: Rc<[Name]> = decl.params[..u].iter().chain(fields).map(|p| p.name.clone()).collect();
     let done = Rc::new(move |sig: &Signature, mut args: Vec<Val>| {
         let fields = args.split_off(u);
+        if let Some(n) = as_numeral(sig, data, index, &fields) {
+            return Val::Nat(n);
+        }
         Val::Constructor(Rc::new(canonical(sig, data, index, levels.clone(), args, fields)))
     });
     curry(names, Vec::new(), done, sig)
+}
+
+// Rule [Nat-Literal]
+/// The numeral a constructor of the prelude's `@Nat` is, given its fields:
+/// `@Nat.Zero` is `0`, and `@Nat.Succ` of numeral `n` is `n + 1`.
+fn as_numeral(sig: &Signature, data: DataId, index: usize, fields: &[Val]) -> Option<u64> {
+    let builtins = sig.builtins()?;
+    let ctor = sig.data(data).constructors[index].global;
+    if ctor == builtins.zero {
+        return Some(0);
+    }
+    match fields {
+        [Val::Nat(n)] if ctor == builtins.succ => n.checked_add(1),
+        _ => None,
+    }
+}
+
+// Rule [Nat-Literal]
+/// Numeral `n` as the constructor it stands for: `@Nat.Zero`, or
+/// `@Nat.Succ` of numeral `n - 1`.
+pub fn numeral_constructor(sig: &Signature, n: u64) -> Rc<ConstructorVal> {
+    let builtins = sig.builtins().expect("only a script, after the prelude, has a numeral");
+    let (ctor, fields) = match n.checked_sub(1) {
+        None => (builtins.zero, Vec::new()),
+        Some(pred) => (builtins.succ, vec![Val::Nat(pred)]),
+    };
+    let GlobalKind::Constructor(data, index) = sig.global(ctor).kind else { unreachable!("`@Nat.Succ` is a constructor") };
+    Rc::new(canonical(sig, data, index, Rc::new([]), Vec::new(), fields))
+}
+
+/// The number `v` is, when it is a numeral or `@Nat.Succ` over one, such as
+/// `@Nat.Succ.{ @Nat.pred 5 }`.
+pub fn numeral_value(sig: &Signature, v: &Val) -> Option<u64> {
+    let builtins = sig.builtins()?;
+    let mut succs = 0u64;
+    let mut v = v.force(sig).clone();
+    loop {
+        match v {
+            Val::Nat(n) => return n.checked_add(succs),
+            Val::Constructor(c) if sig.data(c.data).constructors[c.index].global == builtins.succ => {
+                succs = succs.checked_add(1)?;
+                v = c.fields[0].force(sig).clone();
+            }
+            Val::Constructor(c) if sig.data(c.data).constructors[c.index].global == builtins.zero => return Some(succs),
+            _ => return None,
+        }
+    }
+}
+
+/// `v`, with a numeral at its head expanded to its constructor.
+pub fn expand_numeral(sig: &Signature, v: Val) -> Val {
+    match v {
+        Val::Nat(n) => Val::Constructor(numeral_constructor(sig, n)),
+        v => v,
+    }
 }
 
 /// Constructor `index` at the uniform parameters `params` and its written
@@ -472,6 +530,15 @@ pub fn iota(sig: &Signature, rec: Rc<RecursorArgs>, major: Val) -> Val {
             cast(sig, from, to, Val::Irrelevant, result)
         }
         Val::Neutral(n) => Val::neutral(Neutral::Recursor(rec, n)),
+        // Rule [Nat-Literal]
+        // The recursor on numeral `n`, by `n` steps up from `0` rather than
+        // `n` nested calls down to it.
+        Val::Nat(n) => {
+            let zero = iota(sig, rec.clone(), Val::Constructor(numeral_constructor(sig, 0)));
+            let succ = numeral_constructor(sig, 1);
+            let method = &rec.args[sig.data(rec.data).uniform + 1 + succ.index];
+            (0..n).fold(zero, |below, k| apply(sig, apply(sig, method.clone(), Val::Nat(k)), below))
+        }
         _ => unreachable!("the recursor's major premise is not a value of its type"),
     }
 }

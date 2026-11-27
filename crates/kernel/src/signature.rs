@@ -98,16 +98,74 @@ pub struct Global {
 }
 
 /// The prelude's globals the checker builds terms from, and the printer
-/// reads back: the booleans a type may be, and the naturals a numeral is.
+/// reads back: the booleans a type may be, `if`, the naturals a numeral is,
+/// the integers, and the functions on `@Nat` that compute on numerals.
 /// See [`crate::prelude`].
 #[derive(Clone, Copy, Debug)]
 pub struct Builtins {
     pub bool: GlobalId,
     pub true_ctor: GlobalId,
+    pub false_ctor: GlobalId,
     pub true_value: GlobalId,
+    pub bool_if: GlobalId,
     pub nat: GlobalId,
     pub zero: GlobalId,
     pub succ: GlobalId,
+    pub int: GlobalId,
+    pub int_pos: GlobalId,
+    pub int_neg_succ: GlobalId,
+    pub arithmetic: [(GlobalId, Arithmetic); 7],
+}
+
+impl Builtins {
+    /// What global `id` computes on numerals, if it is one that does.
+    pub fn arithmetic(&self, id: GlobalId) -> Option<Arithmetic> {
+        self.arithmetic.iter().find(|(g, _)| *g == id).map(|(_, op)| *op)
+    }
+}
+
+/// A prelude function on `@Nat` that numeral arguments compute directly.
+/// See Rule [Nat-Literal].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Arithmetic {
+    Add,
+    Sub,
+    Mul,
+    Lt,
+    Eq,
+    Pred,
+    IsZero,
+}
+
+/// What an arithmetic global gives on numerals.
+pub enum Computed {
+    Nat(u64),
+    Bool(bool),
+}
+
+impl Arithmetic {
+    /// How many arguments it takes.
+    pub fn arity(self) -> usize {
+        match self {
+            Arithmetic::Pred | Arithmetic::IsZero => 1,
+            _ => 2,
+        }
+    }
+
+    /// Its value on the numerals `args`, or `None` when the result does not
+    /// fit a numeral. `-` stops at `0`, as the prelude's definition does.
+    pub fn compute(self, args: &[u64]) -> Option<Computed> {
+        Some(match (self, args) {
+            (Arithmetic::Add, [a, b]) => Computed::Nat(a.checked_add(*b)?),
+            (Arithmetic::Sub, [a, b]) => Computed::Nat(a.saturating_sub(*b)),
+            (Arithmetic::Mul, [a, b]) => Computed::Nat(a.checked_mul(*b)?),
+            (Arithmetic::Lt, [a, b]) => Computed::Bool(a < b),
+            (Arithmetic::Eq, [a, b]) => Computed::Bool(a == b),
+            (Arithmetic::Pred, [a]) => Computed::Nat(a.saturating_sub(1)),
+            (Arithmetic::IsZero, [a]) => Computed::Bool(*a == 0),
+            _ => unreachable!("an arithmetic global applied to the wrong number of numerals"),
+        })
+    }
 }
 
 #[derive(Default)]

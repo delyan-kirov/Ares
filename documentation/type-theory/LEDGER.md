@@ -108,6 +108,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | Ahm17 | Ahman. Fibred Computational Effects. PhD thesis, University of Edinburgh 2017 | https://arxiv.org/abs/1710.02594 | - | - | arXiv non-exclusive licence, link only |
 | Vak15 | Vákár. A Framework for Dependent Types and Effects. arXiv 2015 | https://arxiv.org/abs/1512.08009 | - | - | arXiv non-exclusive licence, link only |
 | Bra13 | Brady. Programming and Reasoning with Algebraic Effects and Dependent Types. ICFP 2013 | https://doi.org/10.1145/2500365.2500581 | - | - | ACM copyright, link only |
+| GM10 | Gonthier, Mahboubi. An Introduction to Small Scale Reflection in Coq. Journal of Formalized Reasoning 3(2) 2010 | https://doi.org/10.6092/issn.1972-5787/1979 | - | - | not fetched, link only |
 
 ## Theorems
 
@@ -123,7 +124,7 @@ redistributed, or that is not fetched yet, has `-` for its path and hash.
 | PLT25 Decidability | PLT25 | Theorem 5.6 | CIC^obs restricted to Π, N and universes, with Cast-Refl in conversion | Agda |
 | PLT25 Consistency | PLT25 | Theorem 6.5 | CIC^obs with its scheme of parameterised inductive types (Section 4.1) | paper |
 | Puj22 Cast-Refl decidability | Puj22 | Theorem 5.1.2, Section 5.1.4 | CC^obs with Cast-Refl decided during conversion | Agda |
-| Lean Consistency | - | `consistency-proof/Proofs/Consistency.lean`, `consistent₁` to `consistent₄` and `consistent_poly` | every rule below that names it, at once, as `Deriv` in `consistency-proof/Proofs/Typing.lean`, over any signature of inductive declarations (`SigOk`), for each bound on the universes with a model (four are built); levels are numbers, and a level-polymorphic derivation is its instances; the differences from the kernel are listed in `consistency-proof/Proofs/Syntax.lean` | Lean |
+| Lean Consistency | - | `consistency-proof/Proofs/Consistency.lean`, `consistent₁` to `consistent₄` and `consistent_poly` | every rule below that names it, at once, as `Deriv` in `consistency-proof/Proofs/Typing.lean` (Bool-Reflection as a rule derived from it, in `consistency-proof/Proofs/Booleans.lean`), over any signature of inductive declarations (`SigOk`), for each bound on the universes with a model (four are built); levels are numbers, and a level-polymorphic derivation is its instances; the differences from the kernel are listed in `consistency-proof/Proofs/Syntax.lean` | Lean |
 | Lean Level comparison soundness | - | `consistency-proof/Proofs/Levels.lean`, `Lvl.leq_sound` | Algorithm [Level comparison by case split], with fuel bounding its depth: a yes holds under every assignment | Lean |
 | AC20 Non-normalisation | AC20 | Introduction and Section 2 | an impredicative Prop, proof-irrelevant equality, and a cast that reduces when its two types are definitionally equal: normalisation fails for open terms | paper |
 
@@ -215,7 +216,8 @@ that the re-check never resolves a name.
 | Cast-Quot | PT22 | Section 4.1, cast of π(t) | published | PT22 Quotients, Lean Consistency | - | yes |
 | Cast-Refl | PLT25 | Fig. 3, Cast-Refl, a conversion rule | published | PLT25 Decidability, Puj22 Cast-Refl decidability, Lean Consistency | - | yes |
 | Proof-Witness | PT22, AC20 | PT22 Fig. 2, the proof terms of Refl, Transport-Ω and every other proof, which the kernel keeps but never evaluates; AC20 Section 2, the loops that evaluating them would cause | deviation | Lean Consistency | - | yes |
-| Bool-Reflection | - | a value of the prelude's `Bool` where a type is expected is `b ~ true`, as SSReflect's `is_true` coercion; written out as Eq-Form at `Bool`, so the re-check and the computation rules never see it | conjecture | - | #406 | yes |
+| Bool-Reflection | GM10 | not checked: not vendored; `is_true`, the coercion from `bool` to `Prop`, `b = true`. A value of the prelude's `Bool` where a type is expected is `b ~ true`, written out as Eq-Form at `Bool`, so the re-check and the computation rules never see it; in Lean the derived rule `Deriv.boolReflect` | published | Lean Consistency | - | yes |
+| Nat-Literal | Lean4-type-checker, Lean4-inductive | type_checker.cpp:596-690, `reduce_nat`: `Nat` literals, with `Nat.succ`, `Nat.add`, `Nat.sub`, `Nat.mul`, `Nat.beq` and `Nat.ble` of two literals computed on their numbers; inductive.cpp:1347-1354, `nat_lit_to_constructor`, a literal seen as `Nat.zero` or `Nat.succ` of a literal; the kernel computes the prelude's `+`, `-`, `*`, `<`, `==`, `@Nat.pred` and `@Nat.is_zero` so | published-uncovered | - | #617 | yes |
 | Data-Form | Dyb94, PLT25 | PLT25 Section 4.1, inductive definitions without indices, outside Ω (with indices, see Data-Ford); Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ford | PLT25 | Section 4.2, Fordism: indices as parameters with one equality field per index, and a cast in each branch of a match; index types restricted to depend on the parameters only | published | PLT25 Consistency, Lean Consistency | - | yes |
 | Data-Ctor | Dyb94, PLT25 | PLT25 Section 4.1; Dyb94 not checked | published | PLT25 Consistency, Lean Consistency | - | yes |
@@ -302,13 +304,29 @@ run-time value (#594).
 Bool-Reflection is the kernel's side of Frontend-Bool-Reflection (#595), and
 notation in the same way: the checker writes the equality out, so the
 elaborated term is an ordinary equality at the `Bool` of the kernel's prelude
-(`crates/kernel/src/prelude.rs`). The prelude adds no rule. Its `Bool`, its
-unary `@Nat` and the comparisons on it are ordinary globals the kernel checks
+(`crates/kernel/src/prelude.rs`). So Lean Consistency covers it as a derived
+rule (#609): `Deriv.boolReflect` in `consistency-proof/Proofs/Booleans.lean`
+types `b ~ true` by Eq-Form in any signature with a type of booleans. The
+prelude adds no rule. Its `Bool`, its unary `@Nat`, its `@Int`, `if` and the
+arithmetic and comparisons on them are ordinary globals the kernel checks
 before every script, defined by their recursors, so `3 < 10` computes by
 Data-Iota. Frontend-Bool-Conversion's two laws are not conversions in the
 kernel: there `n < n ~ false` and `n == n ~ true` are lemmas, proved by
 induction over `n`. The kernel's naturals are unbounded where the frontend's
 sizes are modular, so the two agree only where no size wraps past 2^64.
+
+Nat-Literal (#609) keeps a numeral as a number, as Lean's kernel keeps its
+`Nat` literals: it stands for its constructor chain, which a recursor,
+conversion and Eq-Ctor see one constructor at a time, and the prelude's
+arithmetic on two numerals gives the value its definition computes by
+Data-Iota, by machine arithmetic. So it adds no equation to the theory, only
+a faster way to the same normal form; the Lean model does not state it,
+since there a numeral is its chain and the definitions compute it. That the
+machine arithmetic agrees with each definition is checked, not proved (#617):
+`arithmetic_on_numerals_agrees_with_the_definitions` in
+`crates/kernel/src/check/tests.rs` compares the two on small numerals, where
+the definitions can still be unfolded. A result past 2^64 is left to the
+definition.
 
 Positivity-Branching admits a recursive field `(a: A) -> D params ys`, whose
 induction hypothesis is `(a: A) -> P ys (f a)`. PLT25's model covers it, but

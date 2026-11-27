@@ -28,9 +28,33 @@ use crate::level::Level;
 use crate::nbe::{apply, eval, fst, global_type, quote, BindingVal, Closure, Env, Lvl, Neutral, QuotVal, Val};
 use crate::observational::{cast, eq, native_pi, relation_type};
 use crate::inductive::{constructor_type, ford, projection_type, recursive_shape, recursor_type};
-use crate::signature::{ConstructorDecl, DataDecl, DataId, Global, GlobalId, GlobalKind, Param, Signature};
+use crate::signature::{Builtins, ConstructorDecl, DataDecl, DataId, Global, GlobalId, GlobalKind, Param, Signature};
 use crate::syntax::{error, parse_script, Item, ItemBody, LevelArg, Primitive, Raw, RawConstructor, RawKind, RawLevel};
 use crate::term::{mentions, mentions_global, Binding, Name, Term, TermDisplay};
+
+/// The operators whose result has the type of their operands, so an `@Int`
+/// expected chooses `@Int.op` when every operand is a numeral.
+const ARITHMETIC_OPERATORS: [&str; 3] = ["+", "-", "*"];
+
+/// Whether `raw` is numerals under arithmetic, such as `2 - 7` or `-3`,
+/// whose type is the one around it.
+fn numerals_only(raw: &Raw) -> bool {
+    match &raw.kind {
+        RawKind::Nat(_) => true,
+        RawKind::Operator(op, args) => {
+            (ARITHMETIC_OPERATORS.contains(&&**op) || &**op == "neg") && args.iter().all(numerals_only)
+        }
+        _ => false,
+    }
+}
+
+/// Whether numerals under arithmetic negate one, and so are integers.
+fn negates(raw: &Raw) -> bool {
+    match &raw.kind {
+        RawKind::Operator(op, args) => &**op == "neg" || args.iter().any(negates),
+        _ => false,
+    }
+}
 
 /// Check every global of a script, after the prelude's.
 pub fn check_script(src: &str) -> Result<Signature> {
@@ -594,9 +618,7 @@ impl Checker<'_> {
 
     /// Whether `ty` is the prelude's `Bool`.
     fn is_bool(&self, ctx: &mut Context, ty: &Val) -> bool {
-        let Some(builtins) = self.sig.builtins() else { return false };
-        let bool = eval(&self.sig, &Env::new(), &Term::Global(builtins.bool, Rc::new([])));
-        self.conversion(ctx).conv_type(ty, &bool)
+        self.is_builtin(ctx, ty, |b| b.bool)
     }
 
     // Rule [Bool-Reflection]
@@ -674,22 +696,118 @@ impl Checker<'_> {
                 ctx.env = env;
                 Ok(Term::Let(name.clone(), Rc::new(ty), Rc::new(val), Rc::new(body?)))
             }
+            // A numeral where an `@Int` is expected is `@Int.Pos` of it.
+            (RawKind::Nat(n), _) if self.is_builtin(ctx, expected, |b| b.int) => {
+                let builtins = self.sig.builtins().expect("the prelude declares `@Int`");
+                Ok(Term::app(Term::Global(builtins.int_pos, Rc::new([])), Term::Nat(builtins.nat, *n)))
+            }
+            (RawKind::If(c, a, b), _) => {
+                let level = self.sort_of(ctx, expected, raw.span)?;
+                let then = self.check(ctx, a, expected)?;
+                self.if_then_else(ctx, level, expected, c, then, b)
+            }
+            (RawKind::Operator(op, args), _) => match self.plain_operator(op, args, raw.span) {
+                Some(spine) => self.check_relevant(ctx, &spine, expected),
+                None => {
+                    let (t, found) = self.operator(ctx, raw.span, op, args, Some(expected))?;
+                    self.accept(ctx, raw, t, &found, expected)
+                }
+            },
             _ if self.is_open_spine(ctx, raw) => Ok(self.spine(ctx, raw, Some(expected))?.0),
             _ => {
                 let (t, found) = self.infer(ctx, raw)?;
-                if self.conversion(ctx).conv_type(&found, expected) {
-                    Ok(t)
-                } else if matches!(expected.force(&self.sig), Val::Sort(_)) && self.is_bool(ctx, &found) {
-                    if self.conversion(ctx).conv_type(&Val::Sort(Level::Zero), expected) {
-                        Ok(self.reflect(t))
-                    } else {
-                        Err(self.mismatch(ctx, raw.span, expected, &Val::Sort(Level::Zero)))
-                    }
-                } else {
-                    Err(self.mismatch(ctx, raw.span, expected, &found))
-                }
+                self.accept(ctx, raw, t, &found, expected)
             }
         }
+    }
+
+    /// `t`, elaborated from `raw` with type `found`, where `expected` is
+    /// expected: as it is, or as the proposition a boolean stands for.
+    fn accept(&self, ctx: &mut Context, raw: &Raw, t: Term, found: &Val, expected: &Val) -> Result<Term> {
+        if self.conversion(ctx).conv_type(found, expected) {
+            Ok(t)
+        } else if matches!(expected.force(&self.sig), Val::Sort(_)) && self.is_bool(ctx, found) {
+            if self.conversion(ctx).conv_type(&Val::Sort(Level::Zero), expected) {
+                Ok(self.reflect(t))
+            } else {
+                Err(self.mismatch(ctx, raw.span, expected, &Val::Sort(Level::Zero)))
+            }
+        } else {
+            Err(self.mismatch(ctx, raw.span, expected, found))
+        }
+    }
+
+    /// The operator `op` applied to `args` as an ordinary application, when
+    /// its operands' type does not choose the global: when the script
+    /// defines `op` itself, or the prelude has it for one type only.
+    /// See Note [Operators resolve by their operands].
+    fn plain_operator(&self, op: &Name, args: &[Raw], span: Span) -> Option<Raw> {
+        let int_op = format!("@Int.{op}");
+        let prelude_op = self.sig.lookup(op).map(|id| self.sig.is_prelude(id));
+        let name: Name = match (prelude_op, self.sig.lookup(&int_op).is_some()) {
+            (Some(true), true) => return None,
+            (None, true) => int_op.into(),
+            _ => op.clone(),
+        };
+        let head = Raw { kind: RawKind::Var(name, Vec::new()), span };
+        Some(args.iter().fold(head, |f, a| Raw { kind: RawKind::App(Box::new(f), Box::new(a.clone())), span }))
+    }
+
+    /// `op args` where the prelude has `op` on `@Nat` and `@Int`: the one of
+    /// the first operand that is not a numeral, or with only numerals, the
+    /// `@Int` one when its result is the `@Int` expected.
+    /// See Note [Operators resolve by their operands].
+    fn operator(&self, ctx: &mut Context, span: Span, op: &Name, args: &[Raw], expected: Option<&Val>) -> Result<(Term, Val)> {
+        let mut first = None;
+        for (i, a) in args.iter().enumerate() {
+            if !numerals_only(a) {
+                first = Some((i, self.infer(ctx, a)?));
+                break;
+            }
+        }
+        let on_int = match &first {
+            Some((_, (_, ty))) => self.is_builtin(ctx, ty, |b| b.int),
+            None => {
+                args.iter().any(negates)
+                    || ARITHMETIC_OPERATORS.contains(&&**op) && expected.is_some_and(|e| self.is_builtin(ctx, e, |b| b.int))
+            }
+        };
+        let name: Name = if on_int { format!("@Int.{op}").into() } else { op.clone() };
+        let (mut term, mut ty) = self.infer_var(ctx, span, &name, &[])?;
+        for (i, a) in args.iter().enumerate() {
+            let Val::Pi(pi) = ty.force(&self.sig).clone() else { unreachable!("an operator of the prelude takes its operands") };
+            let arg = match &first {
+                Some((j, (t, found))) if *j == i => {
+                    if !self.conversion(ctx).conv_type(found, &pi.dom) {
+                        return Err(self.mismatch(ctx, a.span, &pi.dom, found));
+                    }
+                    t.clone()
+                }
+                _ => self.check(ctx, a, &pi.dom)?,
+            };
+            ty = pi.cod.apply(&self.sig, self.eval(ctx, &arg));
+            term = Term::app(term, arg);
+        }
+        Ok((term, ty))
+    }
+
+    /// `if c => then else alt` at type `ty` in `@Type level`: the prelude's
+    /// `@Bool.if`, a definition by `Bool`'s recursor, applied.
+    fn if_then_else(&self, ctx: &mut Context, level: Level, ty: &Val, c: &Raw, then: Term, alt: &Raw) -> Result<Term> {
+        let builtins = self.sig.builtins().expect("only a script, after the prelude, has an `if`");
+        let bool = eval(&self.sig, &Env::new(), &Term::Global(builtins.bool, Rc::new([])));
+        let c = self.check(ctx, c, &bool)?;
+        let alt = self.check(ctx, alt, ty)?;
+        let head = Term::Global(builtins.bool_if, Rc::new([level]));
+        let ty = quote(&self.sig, ctx.depth(), ty);
+        Ok([ty, c, then, alt].into_iter().fold(head, Term::app))
+    }
+
+    /// Whether `ty` is the prelude's type `which`.
+    fn is_builtin(&self, ctx: &mut Context, ty: &Val, which: impl Fn(&Builtins) -> GlobalId) -> bool {
+        let Some(builtins) = self.sig.builtins() else { return false };
+        let builtin = eval(&self.sig, &Env::new(), &Term::Global(which(&builtins), Rc::new([])));
+        self.conversion(ctx).conv_type(ty, &builtin)
     }
 
     fn infer(&self, ctx: &mut Context, raw: &Raw) -> Result<(Term, Val)> {
@@ -697,10 +815,21 @@ impl Checker<'_> {
             return self.spine(ctx, raw, None);
         }
         match &raw.kind {
+            // Rule [Nat-Literal]
             RawKind::Nat(n) => {
                 let builtins = self.sig.builtins().expect("the prelude declares no numeral");
                 let nat = eval(&self.sig, &Env::new(), &Term::Global(builtins.nat, Rc::new([])));
-                Ok((crate::prelude::numeral(builtins, *n), nat))
+                Ok((Term::Nat(builtins.nat, *n), nat))
+            }
+            RawKind::Operator(op, args) => match self.plain_operator(op, args, raw.span) {
+                Some(spine) => self.infer(ctx, &spine),
+                None => self.operator(ctx, raw.span, op, args, None),
+            },
+            // The branches' type is the first's.
+            RawKind::If(c, a, b) => {
+                let (then, ty) = self.infer(ctx, a)?;
+                let level = self.sort_of(ctx, &ty, a.span)?;
+                Ok((self.if_then_else(ctx, level, &ty, c, then, b)?, ty))
             }
             RawKind::Hole => Err(self.error(
                 Code::TypeAnnotationRequired,
@@ -1178,6 +1307,23 @@ impl Checker<'_> {
 // hypothesis, or an induction over `n` (See Rule [Data-Elim]).
 // Only the prelude's `Bool` is read so: a script's own boolean type is
 // data, not notation.
+
+// Note [Operators resolve by their operands]
+//
+// The kernel has no interfaces, so `a + b` is a global applied to `a` and
+// `b`, chosen by name. The prelude has `+`, `-`, `*` and the comparisons on
+// `@Nat` under the operator's own name and on `@Int` as `@Int.+` and so on;
+// the frontend picks between such instances by the operands' type, and so
+// does the checker: it infers the first operand that is not numerals under
+// arithmetic (`2 - 7`) and takes the `@Int` global when that operand is an
+// `@Int`, the `@Nat` one otherwise. With numerals alone, `2 + 3` is an
+// `@Int` where one is expected or where a numeral is negated (`-2 + 3`),
+// and a `@Nat` anywhere else. The other operands are then checked
+// against the global's type, so a numeral among them is an `@Int` if the
+// global is. A script that defines the operator itself gets its own global,
+// whatever the operands, and an operator the prelude has for one type only
+// (`&&`, `not`, `-a`) is that global. Either way the result is an ordinary
+// application, so the choice adds no rule.
 
 // Note [Equality is not formed at a proposition]
 //

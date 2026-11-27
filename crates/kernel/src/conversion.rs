@@ -20,7 +20,7 @@
 
 use std::rc::Rc;
 
-use crate::inductive::{data_level, field_type, param_type};
+use crate::inductive::{data_level, expand_numeral, field_type, param_type};
 use crate::level::Level;
 use crate::nbe::{apply, fst, global_type, snd, Lvl, Neutral, Val};
 use crate::observational::{native_pi, relation_type};
@@ -90,7 +90,7 @@ impl ConversionChecker<'_> {
                 Val::Sort(l) => Some(l.clone()),
                 _ => None,
             },
-            Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => None,
+            Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) | Val::Nat(_) => None,
             Val::Unfold(_) => unreachable!("forced"),
         }
     }
@@ -139,7 +139,7 @@ impl ConversionChecker<'_> {
                 _ => self.conv_by_structure(a, b),
             },
             Val::Top | Val::Bottom => unreachable!("propositions were handled above"),
-            Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) => {
+            Val::Lam(..) | Val::Pair(_) | Val::Tt | Val::Constructor(_) | Val::Irrelevant | Val::QIn(_) | Val::Nat(_) => {
                 unreachable!("not a type")
             }
             Val::Unfold(_) => unreachable!("forced"),
@@ -179,6 +179,12 @@ impl ConversionChecker<'_> {
             // looked like.
             (Val::Irrelevant, _) | (_, Val::Irrelevant) => true,
             (Val::Neutral(x), Val::Neutral(y)) => self.conv_neutral(x, y).is_some(),
+            // Rule [Nat-Literal]
+            (Val::Nat(x), Val::Nat(y)) => x == y,
+            (Val::Nat(_), Val::Constructor(_)) | (Val::Constructor(_), Val::Nat(_)) => {
+                let (a, b) = (expand_numeral(self.sig, a.clone()), expand_numeral(self.sig, b.clone()));
+                self.conv_by_structure(&a, &b)
+            }
             (Val::Constructor(x), Val::Constructor(y)) => {
                 x.data == y.data
                     && x.index == y.index
