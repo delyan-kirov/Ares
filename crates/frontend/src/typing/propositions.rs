@@ -17,6 +17,7 @@
 //! type), [`Checker::proof_form`] (a proof in a term), [`Checker::let_static`].
 
 use super::*;
+use super::signatures::Written;
 
 /// A value a proposition compares, evaluated: a size, a boolean, a type, or
 /// a `_` not known yet.
@@ -114,15 +115,17 @@ impl<'a> Checker<'a> {
     }
 
     /// `not b` written in a type, which reads as a type application.
-    pub(super) fn negation_of(&mut self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Result<Type> {
+    pub(super) fn negation_of(&mut self, ty: Written, tvars: &HashMap<StrId, Type>) -> Result<Type> {
+        let Written::Ty(ty) = ty else { unreachable!("an expression `not b` is a proposition") };
         let s = self.static_of_ty(ty, tvars)?;
         self.as_proposition(s, self.ast.ty_span(ty))
     }
 
-    /// Whether `ty` is `not b` written in a type.
-    pub(super) fn is_negation(&self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> bool {
-        matches!(self.tnode(ty), Ty::App(head, _)
-            if matches!(self.tnode(*head), Ty::Var(n) if n.as_str() == "not" && !tvars.contains_key(n)))
+    /// Whether `ty` is `not b` written in type syntax. An expression `not b`
+    /// is a proposition already ([`Self::is_proposition_shaped`]).
+    pub(super) fn is_negation(&self, ty: Written, tvars: &HashMap<StrId, Type>) -> bool {
+        matches!(ty, Written::Ty(ty) if matches!(self.tnode(ty), Ty::App(head, _)
+            if matches!(self.tnode(*head), Ty::Var(n) if n.as_str() == "not" && !tvars.contains_key(n))))
     }
 
     /// A value standing where a type is expected: a type as itself, and a
@@ -152,7 +155,7 @@ impl<'a> Checker<'a> {
             Ty::Var(name) if !tvars.contains_key(&name) && matches!(name.as_str(), ty::TRUE | ty::FALSE) => {
                 Ok(Static::Bool(self.unifier.types.bool_lit(name.as_str() == ty::TRUE)))
             }
-            Ty::App(_, x) if self.is_negation(ty, tvars) => {
+            Ty::App(_, x) if self.is_negation(Written::Ty(ty), tvars) => {
                 match self.static_of_ty(x, tvars)? {
                     Static::Bool(b) | Static::Unknown(b) => Ok(Static::Bool(self.unifier.types.bool_op(BoolOp::Not, &[b]))),
                     s => Err(diag!(

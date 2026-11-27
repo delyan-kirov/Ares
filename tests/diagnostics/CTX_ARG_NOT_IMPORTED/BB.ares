@@ -1,0 +1,6 @@
+$ @mod BB
+
+$ @import AA
+
+$ Outer : @Type = @struct items : @Vec Inner,
+$ first : @ctx {t: @Type} -> t -> t -> t = \x _ => x

@@ -1556,6 +1556,29 @@ fn ctx_arguments_are_read_by_their_fields_sort() {
     applies("$ a : @Int = below @ctx {.n = ten * 2}\n");
     applies("$ f : @ctx {m: @Nat} -> @Int = below @ctx {.n = m + 1}\n");
     blocked("$ f : @Int -> @Int = \\x => below @ctx {.n = x}\n", "a size that is a run-time value");
+    // The checks of a written type apply: names, arity, imports, levels.
+    applies("$ n : @Int = let k = 2 in below @ctx {.n = k + 1}\n");
+    applies("$ v : {@Str, @Int} = first @ctx {.t = {@Str, @Int}} {\"a\", 1} {\"b\", 2}\n");
+    blocked("$ n : @Int = first @ctx {.t = elem} 1 2\n", "`elem` is not bound");
+    blocked("$ Box : (t: @Type) -> @Type = @struct val: t,\n$ n : @Int = first @ctx {.t = Box} 1 2\n", "takes 1 parameter(s) but 0 were given");
+}
+
+/// An argument at a declared type's `@Nat` parameter is read as a size, so
+/// a transparent `let` of a size stands there, in an annotation as in an
+/// explicit `@ctx` argument.
+// Test [Frontend-Let-Transparent]
+#[test]
+fn a_let_of_a_size_is_a_declared_size_argument() {
+    let decls = "$ @mod T\n$ Sized : (n: @Nat) -> @Type = @struct v: @Tensor n @Int,\n\
+                 $ first : @ctx {t: @Type} -> t -> t -> t = \\x _ => x\n";
+    let applies = |src: &str| assert_eq!(errors(&format!("{decls}{src}")), "", "{src}");
+    let blocked = |src: &str, want: &str| {
+        let e = errors(&format!("{decls}{src}"));
+        assert!(e.contains(want), "{src}: got {e:?}");
+    };
+    applies("$ a : @Int = let k = 2 in let s : Sized k = Sized.{ .v = [1, 2] } in 0\n");
+    applies("$ a : @Int = let k = 2 in let s = first @ctx {.t = Sized k} Sized.{ .v = [1, 2] } Sized.{ .v = [3, 4] } in 0\n");
+    blocked("$ a : @Int = let k = 3 in let s : Sized k = Sized.{ .v = [1, 2] } in 0\n", "expected `3`, found `2`");
 }
 
 /// The levels a signature states show in its printed type: a constant level,
@@ -2001,7 +2024,7 @@ fn a_let_of_a_size_is_a_size_argument() {
     applies("$ a : @Int = let k = 2 in let p : 2 ~ 2 = same k in 0\n");
     applies("$ a : @Int -> @Nat = \\x => let k = 1 in let j = k in ident j\n");
     blocked("$ a : @Int = let k = 2 in let p : 3 ~ 3 = same k in 0\n", "size mismatch in the size argument: expected `3`, found `2`");
-    blocked("$ a : @Nat -> @Nat = \\x => let k = x in ident k\n", "a size argument that is a run-time value");
+    blocked("$ a : @Nat -> @Nat = \\x => let k = x in ident k\n", "a size that is a run-time value");
 }
 
 /// A module of type-level functions returning propositions, for motives

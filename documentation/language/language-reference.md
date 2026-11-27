@@ -387,7 +387,10 @@ an annotation names the signature's variables, `\(x: a) => ...`.
 
 A `(t: @Type)` or `(n: @Nat)` parameter is bound explicitly instead: the
 result may name it, and each call passes it, a type (erased at run time) or a
-size (passed as the `@Nat` it is).
+size (passed as the `@Nat` it is). Such an argument, like a type or size in an
+explicit `@ctx {.t = ...}`, is read as an annotation is: a name nothing binds
+is unbound, a declared type takes all its parameters at the levels they
+state, and a `let` of a size stands for that size.
 
 ```ares
 $ ident : (t: @Type) -> t -> t = \x => x

@@ -1,0 +1,9 @@
+$ @mod DEPENDENT_ARG_LET_SIZE
+
+# A `(n: @Nat)` argument is read as a size by the elaborator of written types
+# (#618): a transparent `let` of a size is that size, and a run-time value is
+# not one.
+$ same : (n: @Nat) -> n ~ n = @refl n
+$ ok : @Int = let k = 2 in let p : 2 ~ 2 = same k in 0
+$ bad : @Int = let k = 2 in let p : 3 ~ 3 = same k in 0  #~ error[TYPE_MISMATCH]: size mismatch in the size argument: expected `3`, found `2`
+$ dyn : @Nat -> @Int = \x => let k = x in let p = same k in 0  #~ error[UNSUPPORTED]: a size that is a run-time value

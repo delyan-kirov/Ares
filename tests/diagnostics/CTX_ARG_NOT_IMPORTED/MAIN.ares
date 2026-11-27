@@ -1,0 +1,7 @@
+$ @mod MAIN
+
+# An explicit `@ctx` argument names only the types this module sees (#618):
+# `Inner` reaches it through `BB`'s declarations, not an import.
+$ @import BB
+
+$ a : @Int = first @ctx {.t = Inner} 1 2  #~ error[TYPE_UNBOUND]: type `Inner` is not imported

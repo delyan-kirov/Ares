@@ -1,0 +1,8 @@
+$ @mod CTX_ARG_UNBOUND
+
+# A lowercase name nothing binds, in an explicit `@ctx` argument or a
+# `(t: @Type)` argument, is an unbound type variable (#618).
+$ first : @ctx {t: @Type} -> t -> t -> t = \x _ => x
+$ ident : (t: @Type) -> t -> t = \x => x
+$ a : @Int = first @ctx {.t = elem} 1 2  #~ error[TYPE_UNBOUND]: `elem` is not bound
+$ b : @Int = ident elem 1  #~ error[TYPE_UNBOUND]: `elem` is not bound
