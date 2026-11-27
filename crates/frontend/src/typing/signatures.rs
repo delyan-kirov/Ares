@@ -1,14 +1,19 @@
-//! Written types: turning type syntax into [`Type`]s.
+//! Written types: turning type syntax, and expressions read as types, into
+//! [`Type`]s.
 //!
-//! [`Checker::ty_of_ast`] elaborates a type expression from a signature, a
-//! field or an alias body. It validates names (an unknown or hidden type is an
-//! error with a fix), checks arities, expands aliases, turns `<...>` effect rows
-//! into row types, and turns tensor shapes into sizes.
+//! [`Checker::elaborate`] elaborates a [`Written`] type: type syntax from a
+//! signature, a field or an alias body, or an expression standing where a
+//! type or a size is expected (an explicit `@ctx` argument, a `(t: @Type)` or
+//! `(n: @Nat)` argument). It validates names (an unknown or hidden type is an
+//! error with a fix), checks arities and parameter levels, expands aliases,
+//! turns `<...>` effect rows into row types, and turns tensor shapes and the
+//! arguments of `@Nat` parameters into sizes.
 //!
-//! Entry point: [`Checker::ty_of_ast`].
+//! Entry points: [`Checker::ty_of_ast`], [`Checker::written_reporting`].
 
 use super::*;
 use super::unify::levels::ParamLevel;
+use crate::parser::data::RecField;
 
 // ## Binding type variables
 
@@ -27,6 +32,163 @@ pub(super) struct Unbound {
     span: Option<Span>,
     ty: Type,
     row: bool,
+}
+
+// ## Written types
+
+/// A type as written: type syntax from a signature, a field or an alias body,
+/// or an expression standing where a type or a size is expected (an explicit
+/// `@ctx {.f = e}` argument, the argument of a `(t: @Type)` or `(n: @Nat)`
+/// parameter). Types are expressions (#406): one elaborator reads both,
+/// through [`Checker::shape`], so both get the same checks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Written {
+    Ty(Aol<Ty>),
+    Expr(Aol<Expr>),
+}
+
+impl From<Aol<Ty>> for Written {
+    fn from(t: Aol<Ty>) -> Written {
+        Written::Ty(t)
+    }
+}
+
+/// What a written type is, with its parts still written. An arrow and a
+/// record type are type syntax only: an expression spells them `Expr::Type`.
+pub(super) enum Shape {
+    Con { module: Option<StrId>, name: StrId },
+    Var(StrId),
+    Nat(u64),
+    SizeAdd(Written, Written),
+    SizeMul(Written, Written),
+    Sized { size: Written, elem: Written },
+    App(Written, Written),
+    MetaE(Aol<Expr>),
+    Arrow { binder: Option<StrId>, from: Aol<Ty>, effect: Option<EffectRow>, to: Aol<Ty> },
+    Unit,
+    Tuple(Vec<Written>),
+    /// An expression no other shape spells: a proposition, `_`, or a value.
+    Term(Aol<Expr>),
+    Record { fields: Slice<RecField>, tail: Option<StrId> },
+}
+
+impl<'a> Checker<'a> {
+    /// `at` with an expression that is a type written as one (`Expr::Type`)
+    /// read as that type syntax.
+    pub(super) fn written(&self, at: Written) -> Written {
+        match at {
+            Written::Expr(e) => match *self.node(e) {
+                Expr::Type(t) => Written::Ty(t),
+                _ => at,
+            },
+            Written::Ty(_) => at,
+        }
+    }
+
+    pub(super) fn written_span(&self, at: Written) -> Option<Span> {
+        match at {
+            Written::Ty(t) => self.ast.ty_span(t),
+            Written::Expr(e) => self.ast.expr_span(e),
+        }
+    }
+
+    /// The shape of a written type. An expression reads as the parser reads
+    /// one in type position: a lowercase name is a variable, any other a
+    /// constructor, `M.T` a qualified one, `@Tensor n T` a sized tensor, a
+    /// literal or `+`/`*` a size, and what reads as none of these a term.
+    pub(super) fn shape(&self, at: Written) -> Shape {
+        let e = match at {
+            Written::Ty(t) => {
+                return match self.tnode(t) {
+                    Ty::Con { module, name } => Shape::Con { module: *module, name: *name },
+                    Ty::Var(name) => Shape::Var(*name),
+                    Ty::Nat(n) => Shape::Nat(*n),
+                    Ty::SizeAdd(a, b) => Shape::SizeAdd((*a).into(), (*b).into()),
+                    Ty::SizeMul(a, b) => Shape::SizeMul((*a).into(), (*b).into()),
+                    Ty::Sized { size, elem } => Shape::Sized { size: (*size).into(), elem: (*elem).into() },
+                    Ty::App(h, a) => Shape::App((*h).into(), (*a).into()),
+                    Ty::MetaE(e) => Shape::MetaE(*e),
+                    Ty::Arrow { binder, from, effect, to } => {
+                        Shape::Arrow { binder: *binder, from: *from, effect: effect.clone(), to: *to }
+                    }
+                    Ty::Unit => Shape::Unit,
+                    Ty::Tuple(items) => Shape::Tuple(self.ast.slice(*items).iter().map(|&t| t.into()).collect()),
+                    Ty::Term(e) => Shape::Term(*e),
+                    Ty::Record { fields, tail } => Shape::Record { fields: *fields, tail: *tail },
+                };
+            }
+            Written::Expr(e) => e,
+        };
+        if self.is_proposition_shaped(e) {
+            return Shape::Term(e);
+        }
+        let is_tensor = |c: &Self, h: Aol<Expr>| matches!(c.node(h), Expr::Var { module: None, name } if name.as_str() == "@Tensor");
+        match *self.node(e) {
+            Expr::Type(t) => self.shape(Written::Ty(t)),
+            Expr::Var { module: None, name } if name.as_str() == "_" || name.as_str() == "@Tensor" => Shape::Term(e),
+            Expr::Var { module: None, name } if name.as_str().starts_with(|c: char| c.is_ascii_lowercase()) => Shape::Var(name),
+            Expr::Var { module, name } => Shape::Con { module, name },
+            Expr::Variant { module: None, ty: Some(m), tag, fields } if self.ast.slice(fields).is_empty() => {
+                Shape::Con { module: Some(m), name: tag }
+            }
+            Expr::App(f, x) => {
+                let mut head = f;
+                let mut args = 1;
+                while let Expr::App(h, _) = *self.node(head) {
+                    head = h;
+                    args += 1;
+                }
+                match *self.node(f) {
+                    Expr::App(_, size) if args == 2 && is_tensor(self, head) => {
+                        Shape::Sized { size: Written::Expr(size), elem: Written::Expr(x) }
+                    }
+                    _ if args < 2 && is_tensor(self, head) => Shape::Term(e),
+                    _ if matches!(self.node(head), Expr::Lambda { .. }) => Shape::Term(e),
+                    _ => Shape::App(Written::Expr(f), Written::Expr(x)),
+                }
+            }
+            Expr::Int(n) if n >= 0 => Shape::Nat(n as u64),
+            Expr::BinOp { op, lhs, rhs } if op.as_str() == "+" => Shape::SizeAdd(Written::Expr(lhs), Written::Expr(rhs)),
+            Expr::BinOp { op, lhs, rhs } if op.as_str() == "*" => Shape::SizeMul(Written::Expr(lhs), Written::Expr(rhs)),
+            Expr::Unit => Shape::Unit,
+            Expr::Tuple(items) => Shape::Tuple(self.ast.slice(items).iter().map(|&t| Written::Expr(t)).collect()),
+            Expr::Splice(x) => Shape::MetaE(x),
+            _ => Shape::Term(e),
+        }
+    }
+
+    /// The head of an application spine and its arguments, in order.
+    pub(super) fn written_spine(&self, at: Written) -> (Written, Vec<Written>) {
+        let mut args = Vec::new();
+        let mut head = at;
+        while let Shape::App(h, a) = self.shape(head) {
+            args.push(a);
+            head = h;
+        }
+        args.reverse();
+        (head, args)
+    }
+
+    /// Elaborate an expression standing where a type (`size` false) or a
+    /// size is expected inside a body, as an annotation there is: a name
+    /// nothing binds is reported unbound, and the first other error met is
+    /// the result.
+    pub(super) fn written_reporting(&mut self, e: Aol<Expr>, size: bool) -> Result<Type> {
+        let mut tvars = self.scoped_tvars.clone();
+        let outer = self.unknown_type.take();
+        let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
+        let t = match size {
+            true => self.size_ty_of_ast(Written::Expr(e), &mut tvars),
+            false => self.elaborate(Written::Expr(e), &mut tvars),
+        };
+        self.free_names = saved;
+        self.mark_sizes(t);
+        self.report_unbound(None);
+        match std::mem::replace(&mut self.unknown_type, outer) {
+            Some(d) => Err(d),
+            None => Ok(t),
+        }
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -305,10 +467,10 @@ impl<'a> Checker<'a> {
 
     /// A type this module wrote naming a hidden type: one only an import's
     /// declarations reach. Deferred like the other type-name errors.
-    pub(super) fn check_hidden_type(&mut self, ty: Aol<Ty>, name: StrId) {
+    pub(super) fn check_hidden_type(&mut self, at: Written, name: StrId) {
         if let (Some(owners), true) = (self.ambiguous_imports.get(&name), self.imported_types.contains_key(&name)) {
-            let qualified = matches!(self.tnode(ty), Ty::Con { module: Some(_), .. });
-            if qualified || self.foreign_tys.contains(&ty) || self.unknown_type.is_some() {
+            let qualified = matches!(self.shape(at), Shape::Con { module: Some(_), .. });
+            if qualified || self.is_foreign(at) || self.unknown_type.is_some() {
                 return;
             }
             let list = owners.iter().map(|m| format!("`{m}.{name}`")).collect::<Vec<_>>().join(" or ");
@@ -318,15 +480,15 @@ impl<'a> Checker<'a> {
                 note: "types and values share one namespace: a type is a global of type `@Type`";
                 help: "qualify it as {list}"
             );
-            if let Some(span) = self.ast.ty_span(ty) {
+            if let Some(span) = self.written_span(at) {
                 d = d.fill_span(span);
             }
             self.unknown_type = Some(d);
             return;
         }
         if let Some(&alias) = self.alias_types.get(&name) {
-            let qualified = matches!(self.tnode(ty), Ty::Con { module: Some(_), .. });
-            if qualified || self.foreign_tys.contains(&ty) || self.unknown_type.is_some() {
+            let qualified = matches!(self.shape(at), Shape::Con { module: Some(_), .. });
+            if qualified || self.is_foreign(at) || self.unknown_type.is_some() {
                 return;
             }
             let mut d = diag!(
@@ -334,7 +496,7 @@ impl<'a> Checker<'a> {
                 "type `{name}` is imported qualified-only";
                 note: "`$ @import {alias} = {}` brings in no bare names", self.alias_modules[&alias]
             );
-            if let Some(span) = self.ast.ty_span(ty) {
+            if let Some(span) = self.written_span(at) {
                 d = d.fill_span(span).with_fix(
                     format!("write `{alias}.{name}`"),
                     vec![Edit::new(span, format!("{alias}.{name}"))],
@@ -347,12 +509,12 @@ impl<'a> Checker<'a> {
         let Some(&home) = self.hidden_types.get(&name) else {
             return;
         };
-        if self.foreign_tys.contains(&ty) || self.unknown_type.is_some() {
+        if self.is_foreign(at) || self.unknown_type.is_some() {
             return;
         }
         let mut d = diag!(Code::TypeUnbound, Span::at(0), 0, "type `{name}` is not imported");
         d = self.with_import_fix(d, home.as_str());
-        if let Some(span) = self.ast.ty_span(ty) {
+        if let Some(span) = self.written_span(at) {
             d = d.fill_span(span);
         }
         self.unknown_type = Some(d);
@@ -493,8 +655,8 @@ impl<'a> Checker<'a> {
     /// Why an expression in type position that did not reduce to a type is
     /// rejected. Choosing a type by a value (`if`, a match) is a large
     /// elimination, which needs the kernel; any other expression is a value.
-    fn not_a_type(&self, ty: Aol<Ty>, e: Aol<Expr>) -> Diagnostic {
-        let span = self.ast.ty_span(ty);
+    fn not_a_type(&self, at: Written, e: Aol<Expr>) -> Diagnostic {
+        let span = self.written_span(at);
         let d = match self.ast.expr(e) {
             Expr::If { .. } | Expr::Match { .. } => return dependent_only(span, "a type chosen by a value"),
             Expr::Lambda { .. } => diag!(
@@ -541,15 +703,10 @@ impl<'a> Checker<'a> {
     /// struct or union is only ever a type once fully applied, but an alias may be
     /// left under-applied (its missing parameters become fresh variables).
     /// Deferred like other type-name errors.
-    pub(super) fn check_type_arity(&mut self, ty: Aol<Ty>, exact: bool) {
-        let mut count = 0;
-        let mut cur = ty;
-        while let Ty::App(h, _) = self.tnode(cur) {
-            count += 1;
-            cur = *h;
-        }
-        if let Ty::Con { name, .. } | Ty::Var(name) = self.tnode(cur) {
-            let name = *name;
+    pub(super) fn check_type_arity(&mut self, at: Written, exact: bool) {
+        let (head, args) = self.written_spine(at);
+        let count = args.len();
+        if let Shape::Con { name, .. } | Shape::Var(name) = self.shape(head) {
             if let Some(params) = self.type_params(name) {
                 let arity = params.len();
                 if count < arity && exact && self.unknown_type.is_none() {
@@ -561,7 +718,7 @@ impl<'a> Checker<'a> {
                         help: "write `{name} {}`, with a type for each parameter",
                             params.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" ")
                     );
-                    if let Some(span) = self.ast.ty_span(ty) {
+                    if let Some(span) = self.written_span(at) {
                         d = d.fill_span(span);
                     }
                     self.unknown_type = Some(d);
@@ -571,7 +728,7 @@ impl<'a> Checker<'a> {
                         Code::TypeMismatch, Span::at(0), 0,
                         "type `{name}` takes {arity} parameter(s) but {count} were given"
                     );
-                    if let Some(span) = self.ast.ty_span(ty) {
+                    if let Some(span) = self.written_span(at) {
                         d = d.fill_span(span);
                     }
                     self.unknown_type = Some(d);
@@ -584,38 +741,33 @@ impl<'a> Checker<'a> {
     /// alias's parameters to the arguments (a fresh variable for any not supplied,
     /// so an under-applied alias stays polymorphic, as for structs) and elaborate
     /// the body under that binding. Returns None when the spine head is not an alias.
-    pub(super) fn try_expand_alias(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Option<Type> {
-        let mut args = Vec::new();
-        let mut cur = ty;
-        while let Ty::App(h, a) = self.tnode(cur) {
-            args.push(*a);
-            cur = *h;
-        }
+    pub(super) fn try_expand_alias(&mut self, ty: Written, tvars: &mut HashMap<StrId, Type>) -> Option<Type> {
+        let (cur, args) = self.written_spine(ty);
         // A lowercase name is a global in scope before it is a type variable,
         // unless the type already binds it (a parameter, or a variable met
         // earlier in the same signature).
-        let name = match self.tnode(cur) {
-            Ty::Con { name, .. } => *name,
-            Ty::Var(name) if !tvars.contains_key(name) => *name,
+        let name = match self.shape(cur) {
+            Shape::Con { name, .. } => name,
+            Shape::Var(name) if !tvars.contains_key(&name) => name,
             _ => return None,
         };
         let (params, body) = self.aliases.get(&name)?.clone();
         self.check_hidden_type(cur, name);
-        args.reverse();
         self.check_type_arity(ty, false);
         let mut sub: HashMap<StrId, Type> = HashMap::new();
         let mut written = Vec::new();
         let levels = self.alias_param_levels.get(&name).cloned().unwrap_or_default();
+        let kinds = self.param_kinds(name).unwrap_or_default();
         for (i, p) in params.iter().enumerate() {
             let t = match args.get(i) {
-                Some(&a) => self.ty_of_ast(a, tvars),
+                Some(&a) => self.arg_of_ast(a, kinds.get(i), tvars),
                 None => self.unifier.fresh(),
             };
             if let Some(Some(n)) = levels.get(i) {
                 let own = self.unifier.level_of(t);
                 let at = self.unifier.types.add(TypeNode::Level(*n));
                 if let Err(d) = self.unifier.unify(at, own, "in a type argument") {
-                    let span = args.get(i).and_then(|a| self.ast.ty_span(*a)).unwrap_or(Span::at(0));
+                    let span = args.get(i).and_then(|a| self.written_span(*a)).unwrap_or(Span::at(0));
                     self.universe_errors.push(d.fill_span(span));
                 }
             }
@@ -632,6 +784,20 @@ impl<'a> Checker<'a> {
             return Some(expanded);
         }
         Some(self.unifier.types.alias(name, written, expanded))
+    }
+
+    /// An argument of a declared type or an alias: a size where its
+    /// parameter `kind` is a `@Nat`, else a type.
+    fn arg_of_ast(&mut self, arg: Written, kind: Option<&ParamKind>, tvars: &mut HashMap<StrId, Type>) -> Type {
+        match kind {
+            Some(ParamKind::Nat) => self.size_ty_of_ast(arg, tvars),
+            _ => self.elaborate(arg, tvars),
+        }
+    }
+
+    /// Whether `at` is a type an import's declarations wrote.
+    fn is_foreign(&self, at: Written) -> bool {
+        matches!(at, Written::Ty(t) if self.foreign_tys.contains(&t))
     }
 
     /// Keep the first type error met while elaborating a type, reported once the
@@ -879,48 +1045,54 @@ impl<'a> Checker<'a> {
 impl<'a> Checker<'a> {
     /// Elaborate a tensor size: a `Nat` literal, or a (Nat-kinded) size variable
     /// bound by name in `tvars` so `@Tensor n T -> @Tensor n U` shares the one size.
-    pub(super) fn size_ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
-        match self.tnode(ty) {
-            Ty::Nat(n) => self.unifier.types.add(TypeNode::Nat(*n)),
+    pub(super) fn size_ty_of_ast(&mut self, ty: Written, tvars: &mut HashMap<StrId, Type>) -> Type {
+        let ty = self.written(ty);
+        let span = self.written_span(ty);
+        match self.shape(ty) {
+            Shape::Nat(n) => self.unifier.types.add(TypeNode::Nat(n)),
             // Rule [Frontend-Let-Transparent]
-            Ty::Var(name) if matches!(self.let_bound(*name, tvars), Some(propositions::Static::Size(_))) => {
-                self.let_bound(*name, tvars).expect("guarded").ty()
+            Shape::Var(name) if matches!(self.let_bound(name, tvars), Some(propositions::Static::Size(_))) => {
+                self.let_bound(name, tvars).expect("guarded").ty()
             }
-            Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
-                let name = *name;
-                self.nat_const(name, self.ast.ty_span(ty))
+            Shape::Var(name) if !tvars.contains_key(&name) && self.nat_consts.contains_key(&name) => self.nat_const(name, span),
+            // A `@Nat` field or `(n: @Nat)` parameter in scope holds its size.
+            Shape::Var(name) if !tvars.contains_key(&name) && self.lookup_local(name).and_then(|t| self.size_of_req(t)).is_some() => {
+                let t = self.lookup_local(name).expect("looked up");
+                self.size_of_req(t).expect("a size field")
             }
-            Ty::Var(name) => {
-                let name = *name;
-                self.free_name(name, self.ast.ty_span(ty), tvars, ParamKind::Nat)
+            // A local the checker cannot evaluate, such as a parameter.
+            Shape::Var(name) if !tvars.contains_key(&name) && self.free_names == FreeNames::Report && self.lookup_local(name).is_some() => {
+                self.defer_type_error(dependent_only(span, "a size that is a run-time value").with_note(format!(
+                    "the checker evaluates a `let` of a size, and `{name}` is known only at run time"
+                )));
+                self.unifier.fresh_nat()
             }
-            Ty::SizeAdd(a, b) => {
-                let (a, b) = (*a, *b);
+            Shape::Var(name) => self.free_name(name, span, tvars, ParamKind::Nat),
+            Shape::SizeAdd(a, b) => {
                 let (x, y) = (
                     self.size_ty_of_ast(a, tvars),
                     self.size_ty_of_ast(b, tvars),
                 );
                 self.unifier.types.add(TypeNode::NatAdd(x, y))
             }
-            Ty::SizeMul(a, b) => {
-                let (a, b) = (*a, *b);
+            Shape::SizeMul(a, b) => {
                 let (x, y) = (
                     self.size_ty_of_ast(a, tvars),
                     self.size_ty_of_ast(b, tvars),
                 );
                 self.unifier.types.add(TypeNode::NatMul(x, y))
             }
-            Ty::Term(e) if is_wildcard(self.ast, *e) => {
+            Shape::Term(e) if is_wildcard(self.ast, e) => {
                 let t = self.unifier.fresh_nat();
-                self.wildcards.push((self.ast.ty_span(ty).unwrap_or(Span::at(0)), t));
+                self.wildcards.push((span.unwrap_or(Span::at(0)), t));
                 t
             }
             // Anything else conversion cannot evaluate: a call (`f n`), `-`.
-            Ty::Term(_) | Ty::App(..) => {
-                self.defer_type_error(dependent_only(self.ast.ty_span(ty), UNEVALUATED_SIZE));
+            Shape::Term(_) | Shape::App(..) => {
+                self.defer_type_error(dependent_only(span, UNEVALUATED_SIZE));
                 self.unifier.fresh_nat()
             }
-            _ => self.ty_of_ast(ty, tvars),
+            _ => self.elaborate(ty, tvars),
         }
     }
 
@@ -942,31 +1114,26 @@ impl<'a> Checker<'a> {
     /// An application spine whose arity the caller has already checked: the
     /// partial applications inside it (`Pair @Int` in `Pair @Int @Str`) are not
     /// types of their own, so they are not checked again.
-    pub(super) fn spine_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
-        match self.tnode(ty) {
-            Ty::App(head, arg) => {
-                let (head, arg) = (*head, *arg);
-                let h = self.spine_of_ast(head, tvars);
-                let a = self.ty_of_ast(arg, tvars);
-                self.unifier.types.app(h, a)
-            }
-            Ty::Con { .. } => self.con_of_ast(ty),
-            _ => self.ty_of_ast(ty, tvars),
+    /// Each argument is a size where the head's parameter is a `@Nat`.
+    pub(super) fn spine_of_ast(&mut self, ty: Written, tvars: &mut HashMap<StrId, Type>) -> Type {
+        let (head, args) = self.written_spine(ty);
+        let (mut t, kinds) = match self.shape(head) {
+            Shape::Con { name, .. } => (self.con_of_ast(head), self.param_kinds(name).unwrap_or_default()),
+            _ => (self.elaborate(head, tvars), Vec::new()),
+        };
+        for (i, a) in args.into_iter().enumerate() {
+            let a = self.arg_of_ast(a, kinds.get(i), tvars);
+            t = self.unifier.types.app(t, a);
         }
+        t
     }
 
     /// A written application of a declared type puts each argument at the
     /// level its parameter takes. See Note [Declaration levels].
-    fn check_decl_args(&mut self, ty: Aol<Ty>, applied: Type) {
-        let mut written = Vec::new();
-        let mut cur = ty;
-        while let Ty::App(h, a) = self.tnode(cur) {
-            written.push(*a);
-            cur = *h;
-        }
-        written.reverse();
-        let Ty::Con { name, .. } = self.tnode(cur) else { return };
-        let Some(decl) = self.unifier.decl_levels.get(name).cloned() else { return };
+    fn check_decl_args(&mut self, ty: Written, applied: Type) {
+        let (cur, written) = self.written_spine(ty);
+        let Shape::Con { name, .. } = self.shape(cur) else { return };
+        let Some(decl) = self.unifier.decl_levels.get(&name).cloned() else { return };
         let mut args = Vec::new();
         let mut t = applied;
         while let TypeNode::App(h, a) = self.unifier.types.node(t) {
@@ -975,7 +1142,7 @@ impl<'a> Checker<'a> {
         }
         args.reverse();
         for ((param, &arg), &at) in decl.params.iter().zip(&args).zip(&written) {
-            let span = self.ast.ty_span(at).unwrap_or(Span::at(0));
+            let span = self.written_span(at).unwrap_or(Span::at(0));
             match *param {
                 ParamLevel::Stated(n) => {
                     let own = self.unifier.level_of(arg);
@@ -1023,11 +1190,10 @@ impl<'a> Checker<'a> {
         );
     }
 
-    pub(super) fn con_of_ast(&mut self, ty: Aol<Ty>) -> Type {
-        let Ty::Con { name, .. } = self.tnode(ty) else {
+    pub(super) fn con_of_ast(&mut self, ty: Written) -> Type {
+        let Shape::Con { name, .. } = self.shape(ty) else {
             unreachable!("con_of_ast on a non-constructor");
         };
-        let name = *name;
         if !self.is_known_type(name) && self.unknown_type.is_none() {
             let mut d = match self.effect_arity.contains_key(&name) || BUILTIN_EFFECTS.contains(&name.as_str()) {
                 true => diag!(
@@ -1037,7 +1203,7 @@ impl<'a> Checker<'a> {
                 ),
                 false => self.unknown_type(name),
             };
-            if let Some(span) = self.ast.ty_span(ty) {
+            if let Some(span) = self.written_span(ty) {
                 d = d.fill_span(span);
             }
             self.unknown_type = Some(d);
@@ -1048,54 +1214,52 @@ impl<'a> Checker<'a> {
 
     /// Elaborate the level of `@Type l`: a number, a level `tvars` binds, a
     /// level plus a number, or `@max a b`. See Note [Level parameters].
-    fn level_of_ast(&mut self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Type {
-        let is_max = |c: &Self, t: Aol<Ty>| matches!(c.tnode(t), Ty::Con { module: None, name } if name.as_str() == "@max");
-        match self.tnode(ty) {
-            Ty::Nat(n) => match u32::try_from(*n) {
+    fn level_of_ast(&mut self, ty: Written, tvars: &HashMap<StrId, Type>) -> Type {
+        let is_max = |c: &Self, t: Written| matches!(c.shape(t), Shape::Con { module: None, name } if name.as_str() == "@max");
+        let span = self.written_span(ty).unwrap_or(Span::at(0));
+        match self.shape(ty) {
+            Shape::Nat(n) => match u32::try_from(n) {
                 Ok(n) => self.unifier.types.add(TypeNode::Level(n)),
                 Err(_) => {
                     self.defer_type_error(diag!(
-                        Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                        Code::TypeMismatch, span, 0,
                         "the level {n} is too large";
                         note: "a level is below 2^32"
                     ));
                     self.unifier.fresh()
                 }
             },
-            Ty::Var(name) => {
-                let name = *name;
+            Shape::Var(name) => {
                 match tvars.get(&name) {
                     Some(&l) if self.level_names.contains(&l) => l,
                     _ => {
-                        let d = self.unbound_level(name, self.ty_span_or_none(ty), tvars);
+                        let d = self.unbound_level(name, span, tvars);
                         self.defer_type_error(d);
                         self.unifier.fresh()
                     }
                 }
             }
-            Ty::SizeAdd(l, k) => {
-                let (l, k) = (*l, *k);
+            Shape::SizeAdd(l, k) => {
                 let l = self.level_of_ast(l, tvars);
-                match self.tnode(k) {
-                    Ty::Nat(k) if u32::try_from(*k).is_ok() => self.unifier.types.add(TypeNode::LevelAdd(l, *k as u32)),
+                match self.shape(k) {
+                    Shape::Nat(k) if u32::try_from(k).is_ok() => self.unifier.types.add(TypeNode::LevelAdd(l, k as u32)),
                     _ => {
                         self.defer_type_error(diag!(
-                            Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                            Code::TypeMismatch, span, 0,
                             "a level is a number, a level name, `l + n` or `@max a b`"
                         ));
                         self.unifier.fresh()
                     }
                 }
             }
-            Ty::App(f, b) if matches!(self.tnode(*f), Ty::App(m, _) if is_max(self, *m)) => {
-                let (f, b) = (*f, *b);
-                let Ty::App(_, a) = *self.tnode(f) else { unreachable!("matched above") };
+            Shape::App(f, b) if matches!(self.shape(f), Shape::App(m, _) if is_max(self, m)) => {
+                let Shape::App(_, a) = self.shape(f) else { unreachable!("matched above") };
                 let (a, b) = (self.level_of_ast(a, tvars), self.level_of_ast(b, tvars));
                 self.unifier.types.add(TypeNode::LevelMax(a, b))
             }
             _ => {
                 self.defer_type_error(diag!(
-                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    Code::TypeMismatch, span, 0,
                     "a level is a number, a level name, `l + n` or `@max a b`"
                 ));
                 self.unifier.fresh()
@@ -1118,11 +1282,18 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn ty_of_ast(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>) -> Type {
+        self.elaborate(Written::Ty(ty), tvars)
+    }
+
+    /// Elaborate a written type: type syntax, or an expression read as one.
+    pub(super) fn elaborate(&mut self, ty: Written, tvars: &mut HashMap<StrId, Type>) -> Type {
+        let ty = self.written(ty);
+        let span = self.written_span(ty);
         // A local `let` of a type, or of a boolean, is what it binds.
         // Rule [Frontend-Let-Transparent]
-        if let Ty::Var(name) = *self.tnode(ty) {
+        if let Shape::Var(name) = self.shape(ty) {
             if let Some(s) = self.let_bound(name, tvars) {
-                return match self.as_proposition(s, self.ast.ty_span(ty)) {
+                return match self.as_proposition(s, span) {
                     Ok(t) => t,
                     Err(d) => {
                         self.defer_type_error(d);
@@ -1136,59 +1307,50 @@ impl<'a> Checker<'a> {
         if let Some(t) = self.try_expand_alias(ty, tvars) {
             return t;
         }
-        match self.tnode(ty) {
+        match self.shape(ty) {
             // A bare `@Type` is a universe at a fresh level, which the
             // definition's scheme generalises. See Note [Universe levels].
-            Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE => self.unifier.fresh_universe(),
-            Ty::App(head, level) if matches!(self.tnode(*head), Ty::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {
-                let level = self.level_of_ast(*level, tvars);
+            Shape::Con { module: None, name } if name.as_str() == ty::UNIVERSE => self.unifier.fresh_universe(),
+            Shape::App(head, level) if matches!(self.shape(head), Shape::Con { module: None, name } if name.as_str() == ty::UNIVERSE) => {
+                let level = self.level_of_ast(level, tvars);
                 self.unifier.types.universe(level)
             }
-            Ty::Con { .. } => {
+            Shape::Con { .. } => {
                 self.check_type_arity(ty, true);
                 self.con_of_ast(ty)
             }
-            Ty::Var(name) if !tvars.contains_key(name) && self.nat_consts.contains_key(name) => {
-                let name = *name;
-                self.nat_const(name, self.ast.ty_span(ty))
-            }
-            Ty::Var(name) if tvars.get(name).is_some_and(|t| self.level_names.contains(t)) => {
-                let name = *name;
+            Shape::Var(name) if !tvars.contains_key(&name) && self.nat_consts.contains_key(&name) => self.nat_const(name, span),
+            Shape::Var(name) if tvars.get(&name).is_some_and(|t| self.level_names.contains(t)) => {
                 self.defer_type_error(diag!(
-                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0,
                     "`{name}` is a level, which stands only in a universe";
                     help: "write `@Type {name}` for the universe at level `{name}`"
                 ));
                 self.unifier.fresh()
             }
-            Ty::Var(name) if tvars.get(name).is_some_and(|t| self.unifier.is_label(*t)) => {
-                let name = *name;
+            Shape::Var(name) if tvars.get(&name).is_some_and(|t| self.unifier.is_label(*t)) => {
                 self.defer_type_error(diag!(
-                    Code::TypeMismatch, self.ty_span_or_none(ty), 0,
+                    Code::TypeMismatch, span.unwrap_or(Span::at(0)), 0,
                     "`{name}` is an effect, not a type";
                     note: "a variable of kind `@Effect` stands for one effect of a row, as in `A -> <{name} | e> B`"
                 ));
                 self.unifier.fresh()
             }
             // Rule [Frontend-Bool-Reflection]
-            Ty::Var(name) if !tvars.contains_key(name) && matches!(name.as_str(), ty::TRUE | ty::FALSE) => {
+            Shape::Var(name) if !tvars.contains_key(&name) && matches!(name.as_str(), ty::TRUE | ty::FALSE) => {
                 let b = self.unifier.types.bool_lit(name.as_str() == ty::TRUE);
                 let t = self.unifier.types.bool_lit(true);
                 self.unifier.types.prop_eq(b, t)
             }
             // A local the checker cannot evaluate, such as a parameter.
-            Ty::Var(name) if !tvars.contains_key(name) && self.free_names == FreeNames::Report && self.lookup_local(*name).is_some() => {
-                let name = *name;
-                self.defer_type_error(dependent_only(self.ast.ty_span(ty), "a run-time value in a type").with_note(format!(
+            Shape::Var(name) if !tvars.contains_key(&name) && self.free_names == FreeNames::Report && self.lookup_local(name).is_some() => {
+                self.defer_type_error(dependent_only(span, "a run-time value in a type").with_note(format!(
                     "the checker evaluates a `let` of a type, a size or a boolean, and `{name}` is known only at run time"
                 )));
                 self.unifier.fresh()
             }
-            Ty::Var(name) => {
-                let name = *name;
-                self.free_name(name, self.ast.ty_span(ty), tvars, ParamKind::Type)
-            }
-            Ty::App(..) if self.is_negation(ty, tvars) => match self.negation_of(ty, tvars) {
+            Shape::Var(name) => self.free_name(name, span, tvars, ParamKind::Type),
+            Shape::App(..) if self.is_negation(ty, tvars) => match self.negation_of(ty, tvars) {
                 Ok(t) => t,
                 Err(d) => {
                     self.defer_type_error(d);
@@ -1196,12 +1358,12 @@ impl<'a> Checker<'a> {
                     self.unifier.types.prop_eq(a, b)
                 }
             },
-            Ty::App(head, size) if matches!(self.tnode(*head), Ty::Con { module: None, name } if *name == SIZE_OF) => {
-                let size = self.size_ty_of_ast(*size, tvars);
+            Shape::App(head, size) if matches!(self.shape(head), Shape::Con { module: None, name } if name == SIZE_OF) => {
+                let size = self.size_ty_of_ast(size, tvars);
                 let head = self.unifier.types.con(StrId::intern(SIZE_OF));
                 self.unifier.types.app(head, size)
             }
-            Ty::App(..) => {
+            Shape::App(..) => {
                 self.check_type_arity(ty, true);
                 let applied = self.spine_of_ast(ty, tvars);
                 self.check_decl_args(ty, applied);
@@ -1217,35 +1379,32 @@ impl<'a> Checker<'a> {
             // name the operand mentions takes the lenient branch here even though
             // lowering resolves it. Those are not deferred sites: holding the
             // operand back for them would hold it forever.
-            Ty::MetaE(expr) => {
-                let expr = *expr;
+            Shape::MetaE(expr) => {
                 self.meta_splice_operand(expr);
                 self.unifier.fresh()
             }
-            Ty::Nat(n) => self.unifier.types.add(TypeNode::Nat(*n)),
+            Shape::Nat(n) => self.unifier.types.add(TypeNode::Nat(n)),
             // A size expression written in type position (only well-formed inside a
             // `[..]`); elaborate it as a size so kind-checking flags any misuse.
-            Ty::SizeAdd(..) | Ty::SizeMul(..) => self.size_ty_of_ast(ty, tvars),
-            Ty::Sized { size, elem } => {
-                let (size, elem) = (*size, *elem);
+            Shape::SizeAdd(..) | Shape::SizeMul(..) => self.size_ty_of_ast(ty, tvars),
+            Shape::Sized { size, elem } => {
                 let size_ty = self.size_ty_of_ast(size, tvars);
-                let elem_ty = self.ty_of_ast(elem, tvars);
+                let elem_ty = self.elaborate(elem, tvars);
                 tensor_type(&self.unifier.types, size_ty, elem_ty)
             }
             // `_`: a type left to elaboration, a fresh variable whatever uses it
             // solves.
-            Ty::Term(e) if is_wildcard(self.ast, *e) => {
+            Shape::Term(e) if is_wildcard(self.ast, e) => {
                 let t = self.unifier.fresh();
-                self.wildcards.push((self.ast.ty_span(ty).unwrap_or(Span::at(0)), t));
+                self.wildcards.push((span.unwrap_or(Span::at(0)), t));
                 t
             }
             // A proposition, or a boolean standing for `b ~ true`.
-            Ty::Term(e) if self.is_proposition_shaped(*e) => {
-                let e = *e;
+            Shape::Term(e) if self.is_proposition_shaped(e) => {
                 match self.proposition_of(e, tvars) {
                     Ok(t) => t,
                     Err(d) => {
-                        let d = match self.ast.ty_span(ty) {
+                        let d = match span {
                             Some(span) => d.fill_span(span),
                             None => d,
                         };
@@ -1257,14 +1416,14 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            Ty::Term(e) => {
+            Shape::Term(e) => {
                 if self.unknown_type.is_none() {
-                    self.unknown_type = Some(self.not_a_type(ty, *e));
+                    self.unknown_type = Some(self.not_a_type(ty, e));
                 }
                 self.unifier.fresh()
             }
-            Ty::Arrow { from, effect, to, binder } => {
-                let (from, to, binder) = (*from, *to, *binder);
+            Shape::Arrow { from, effect, to, binder } => {
+                let Written::Ty(ty) = ty else { unreachable!("an arrow is type syntax") };
                 // `(t: @Type) -> B` and `(n: @Nat) -> B`: `B` may name the
                 // parameter, whose argument fixes it at each call.
                 let singleton = match (binder, self.kind_of_ast(from)) {
@@ -1300,25 +1459,21 @@ impl<'a> Checker<'a> {
                 let t = self.ty_of_ast(to, tvars);
                 self.unifier.types.arrow_eff(f, t, eff)
             }
-            Ty::Unit => self.unifier.types.con(ty::UNIT),
-            Ty::Tuple(items) => {
-                let items = self.ast.slice(*items);
+            Shape::Unit => self.unifier.types.con(ty::UNIT),
+            Shape::Tuple(items) => {
                 let mapped: Vec<Type> =
-                    items.iter().map(|t| self.ty_of_ast(*t, tvars)).collect();
+                    items.into_iter().map(|t| self.elaborate(t, tvars)).collect();
                 self.unifier.types.tuple(mapped)
             }
-            Ty::Record { fields, tail } => {
+            Shape::Record { fields, tail } => {
                 // A record type: `{ x: A | r }` is open (row variable tail), `{ x: A,
                 // y: B }` is closed (empty tail). Records are real, name-keyed types;
                 // positional/scalar values promote to them at call sites.
                 let rest = match tail {
-                    Some(tvar) => {
-                        let tvar = *tvar;
-                        self.free_name(tvar, self.ast.ty_span(ty), tvars, ParamKind::Row)
-                    }
+                    Some(tvar) => self.free_name(tvar, span, tvars, ParamKind::Row),
                     None => self.unifier.types.row_empty(),
                 };
-                let decls: Vec<_> = self.ast.slice(*fields).to_vec();
+                let decls: Vec<_> = self.ast.slice(fields).to_vec();
                 let mut row = rest;
                 for f in decls.iter().rev() {
                     let fty = self.ty_of_ast(f.ty, tvars);

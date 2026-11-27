@@ -1,0 +1,10 @@
+$ @mod CTX_ARG_LEVEL
+
+# A type argument in an explicit `@ctx` argument or a `(t: @Type)` argument
+# fits the level its parameter states (#618).
+$ Holder : (t: @Type 1) -> @Type 1 = @struct v: t,
+$ Big : (t: @Type 2) -> @Type 2 = @struct v: t,
+$ probe : @ctx {t: @Type 1} -> @Int = 0
+$ kind : (t: @Type 2) -> @Int = 0
+$ a : @Int = probe @ctx {.t = Holder (@Type 1)}  #~ error[TYPE_MISMATCH]: universe level mismatch in a type argument: expected 1, found 2
+$ b : @Int = kind (Big @Int)  #~ error[TYPE_MISMATCH]: universe level mismatch in a type argument: expected 2, found 1

@@ -1,0 +1,3 @@
+$ @mod AA
+
+$ Inner : @Type = @struct v : @Int,
