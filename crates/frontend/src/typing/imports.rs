@@ -249,6 +249,12 @@ impl<'a> Checker<'a> {
         for (sig, fields) in &other.own_runtime_sizes {
             self.runtime_sizes.insert(*sig, fields.clone());
         }
+        for (sig, scheme) in &other.own_ctx_schemes {
+            if !self.ctx_schemes.contains_key(sig) {
+                let imported = self.import_scheme(&other.unifier, *scheme);
+                self.ctx_schemes.insert(*sig, imported);
+            }
+        }
         for (name, sig) in &other.own_ctx_sigs {
             if other.private_names.contains(name) {
                 continue;
@@ -459,6 +465,15 @@ impl<'a> Checker<'a> {
                     if let Some(l) = src.var_level(id) {
                         let l = self.import_ty(src, src.zonk(l), map);
                         self.unifier.set_var_level(fresh, l);
+                    }
+                    if src.is_label_var(id) {
+                        if let TypeNode::Var(to) = self.unifier.types.node(fresh) {
+                            self.unifier.mark_label(to);
+                        }
+                        if let Some(args) = src.known_label_args(id) {
+                            let args = self.import_ty(src, src.zonk(args), map);
+                            self.unifier.set_label_args(fresh, args);
+                        }
                     }
                     fresh
                 }

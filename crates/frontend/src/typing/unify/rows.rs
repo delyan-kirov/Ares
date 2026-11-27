@@ -291,6 +291,11 @@ impl Unifier {
         a
     }
 
+    /// The arguments variable of the label variable `id`, if it has one yet.
+    pub fn known_label_args(&self, id: VarId) -> Option<Type> {
+        self.label_args.get(&id).copied()
+    }
+
     /// Give the label variable `label` the arguments variable `args`.
     pub fn set_label_args(&mut self, label: Type, args: Type) {
         if let TypeNode::Var(id) = self.head(label) {

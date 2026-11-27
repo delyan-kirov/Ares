@@ -1,0 +1,5 @@
+$ @mod COUNT
+
+$ count : (t: @Type 1) -> @Int = 0
+$ countt : @ctx {t: @Type} -> {} -> @Int = count t
+$ counte : @ctx {l: @Effect} -> {} -> @Int = count ({} -> <l> @Int)

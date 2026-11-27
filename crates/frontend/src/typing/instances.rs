@@ -212,6 +212,28 @@ impl<'a> Checker<'a> {
     }
 }
 
+// Note [Context schemes]
+//
+// A use with explicit `@ctx {.f = v}` arguments, or of a signature with
+// `@Nat` fields, elaborates the signature afresh (`infer_ctx_given`) to name
+// its fields. That copy has none of the level constraints the body adds: on
+// a named level, on the level of a `@ctx` type variable, or on the level of
+// an effect variable. The definition's scheme generalises only the type a
+// use sees, so it loses a `@ctx` variable that type does not mention, with
+// its bounds: `countt : @ctx {t: @Type} -> {} -> @Int = count t` would take
+// `.t = @Type 1` (#613).
+//
+// So a definition whose `@ctx` binds levels or fields has a context scheme
+// besides: the tuple of its exposed type and its `@ctx` variables, levels
+// first, in the order `ctx_scheme_names` gives. Settling its levels keeps
+// them all, and it is generalised with the definition, so the constraints
+// on them go with it. It is keyed by the signature, the same for a bare, a
+// qualified and an imported use. Each use instantiates it, and equates the
+// exposed type and each variable with the fresh elaboration's, which then
+// meets the body's bounds.
+// See Note [Level constraints].
+// See Note [Label variable levels].
+
 // ## Resolution
 
 impl<'a> Checker<'a> {
@@ -325,7 +347,6 @@ impl<'a> Checker<'a> {
         name: StrId,
         sig: Option<Aol<Ty>>,
         uses: bool,
-        bare: bool,
         given: &[UseOverride],
     ) -> Result<Type> {
         let Some(sig) = sig else {
@@ -340,20 +361,24 @@ impl<'a> Checker<'a> {
         }
         let mut tvars = self.sig_tvars(sig);
         let full = self.ty_of_ast(sig, &mut tvars);
-        // The signature elaborated afresh has none of the level constraints
-        // the definition's body adds, on its named levels or the levels of its
-        // effect variables; its scheme does. See Note [Level parameters].
-        // See Note [Label variable levels].
-        let effects = fields.iter().any(|f| self.is_effect_kind(f.ty));
-        if bare && (self.ast.level_params.get(sig).is_some() || effects) {
-            if let Some(scheme) = self.lookup(name) {
-                let inst = self.unifier.instantiate(scheme);
-                let exposed = match (uses, self.unifier.types.node(full)) {
-                    (true, TypeNode::Arrow(_, to, _)) => to,
-                    _ => full,
-                };
-                self.unifier.pair_labels(inst, exposed)?;
-                self.unifier.unify(inst, exposed, &format!("against the signature of `{name}`"))?;
+        // See Note [Context schemes].
+        if let Some(&scheme) = self.ctx_schemes.get(&sig) {
+            let inst = self.unifier.instantiate(scheme);
+            let TypeNode::Tuple(items) = self.unifier.types.node(inst) else {
+                unreachable!("a context scheme is a tuple")
+            };
+            let items = self.unifier.types.items(items).to_vec();
+            let exposed = match (uses, self.unifier.types.node(full)) {
+                (true, TypeNode::Arrow(_, to, _)) => to,
+                _ => full,
+            };
+            let where_ = format!("against the signature of `{name}`");
+            self.unifier.pair_labels(items[0], exposed)?;
+            self.unifier.unify(items[0], exposed, &where_)?;
+            let names = self.ctx_scheme_names(sig, &tvars);
+            assert_eq!(names.len() + 1, items.len(), "a context scheme has one item per `@ctx` variable");
+            for (f, &item) in names.iter().zip(&items[1..]) {
+                self.unifier.unify(item, tvars[f], &where_)?;
             }
         }
         let mut seen: Vec<StrId> = Vec::new();
@@ -421,6 +446,23 @@ impl<'a> Checker<'a> {
             }
             _ => Ok(full),
         }
+    }
+
+    /// The `@ctx` levels and variables of `sig` that `tvars` binds, in the
+    /// order its context scheme lists them. See Note [Context schemes].
+    pub(super) fn ctx_scheme_names(&self, sig: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Vec<StrId> {
+        let levels = self.ast.level_params.get(sig).map(|fs| self.ast.slice(*fs)).unwrap_or(&[]);
+        let fields = self.ast.ctx_params.get(sig).map(|fs| self.ast.slice(*fs)).unwrap_or(&[]);
+        levels.iter().chain(fields).map(|f| f.name).filter(|n| tvars.contains_key(n)).collect()
+    }
+
+    /// The variables a context scheme lists after the exposed type, for a
+    /// signature with a `@ctx` that binds levels or fields.
+    pub(super) fn ctx_scheme_items(&self, sig: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Option<Vec<Type>> {
+        if self.ast.level_params.get(sig).is_none() && self.ast.ctx_params.get(sig).is_none() {
+            return None;
+        }
+        Some(self.ctx_scheme_names(sig, tvars).iter().map(|n| tvars[n]).collect())
     }
 
     /// The level an explicit `@ctx {.u = l}` argument gives: a number, a

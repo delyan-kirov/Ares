@@ -1,0 +1,17 @@
+$ @mod UNIVERSE_CTX_VARIABLE
+
+# A `@ctx` variable the exposed type does not mention keeps the level bounds
+# the body puts on it (#613): `countt` passes `t` where `@Type 1` is wanted,
+# so a use may not choose `@Type 1` for it, and `counte` puts `{} -> <l> @Int`
+# in `@Type 1`, so a use may not choose `Exn` for `l`.
+$ Ask : @Effect = ask : {} -> @Int,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+$ count : (t: @Type 1) -> @Int = 0
+$ countt : @ctx {t: @Type} -> {} -> @Int = count t
+$ counte : @ctx {l: @Effect} -> {} -> @Int = count ({} -> <l> @Int)
+
+$ fine : @Int = countt @ctx {.t = @Int} {}
+$ fine_effect : @Int = counte @ctx {.l = Ask} {}
+$ big : @Int = countt @ctx {.t = @Type 1} {}  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ qualified : @Int = UNIVERSE_CTX_VARIABLE.countt @ctx {.t = @Type 1} {}  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ big_effect : @Int = counte @ctx {.l = Exn} {}  #~ error[TYPE_MISMATCH]: universe of `Exn`, which an effect variable stands for

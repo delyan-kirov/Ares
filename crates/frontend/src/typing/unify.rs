@@ -713,6 +713,9 @@ impl Unifier {
                         if let Some(l) = self.var_level(id) {
                             self.generalize_rec(l, mono);
                         }
+                        if let Some(&args) = self.label_args.get(&id) {
+                            self.generalize_rec(args, mono);
+                        }
                     }
                 }
             }

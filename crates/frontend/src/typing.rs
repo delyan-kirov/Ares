@@ -248,6 +248,11 @@ pub struct Checker<'a> {
     ctx_sigs: HashMap<StrId, Aol<Ty>>,
     qualified_ctx_sigs: HashMap<(StrId, StrId), Aol<Ty>>,
     own_ctx_sigs: Vec<(StrId, Aol<Ty>)>,
+    /// The context scheme of each signature with a `@ctx` that binds levels
+    /// or fields (own and imported), and this module's own to export.
+    /// See Note [Context schemes].
+    ctx_schemes: HashMap<Aol<Ty>, Type>,
+    own_ctx_schemes: Vec<(Aol<Ty>, Type)>,
     /// Explicit `@ctx {...}` arguments, keyed by the head reference site.
     ctx_given: HashMap<Aol<Expr>, Vec<UseOverride>>,
     /// `@Nat` fields passed at run time (see `ctx_sizes`): the definition whose
@@ -680,6 +685,8 @@ impl<'a> Checker<'a> {
             ctx_sigs: HashMap::new(),
             qualified_ctx_sigs: HashMap::new(),
             own_ctx_sigs: Vec::new(),
+            ctx_schemes: HashMap::new(),
+            own_ctx_schemes: Vec::new(),
             ctx_given: HashMap::new(),
             checking_def: None,
             def_sizes: HashMap::new(),
@@ -1210,6 +1217,10 @@ impl<'a> Checker<'a> {
         for decl in &declared {
             self.unifier.vars_with_levels(*decl, &mut keep);
         }
+        let ctx_schemes: Vec<(Aol<Ty>, Type)> = sig_vars.iter().filter_map(|v| v.ctx_scheme).collect();
+        for (_, scheme) in &ctx_schemes {
+            self.unifier.vars_with_levels(*scheme, &mut keep);
+        }
         if let Err((c, _, _)) = self.unifier.settle_levels(level_mark, &keep) {
             let first = &defs[component[0]];
             let at = first.name_span.or_else(|| self.ast.expr_span(first.body)).unwrap_or(Span::at(0));
@@ -1226,6 +1237,12 @@ impl<'a> Checker<'a> {
             self.unifier.generalize_except(*decl, &mono);
             self.bind(defs[i].name, *decl);
             types.insert(defs[i].name, self.unifier.zonk(*decl));
+        }
+        for (sig, scheme) in ctx_schemes {
+            self.unifier.generalize_except(scheme, &mono);
+            let scheme = self.unifier.zonk(scheme);
+            self.ctx_schemes.insert(sig, scheme);
+            self.own_ctx_schemes.push((sig, scheme));
         }
         Ok(())
     }

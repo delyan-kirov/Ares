@@ -561,6 +561,11 @@ $ id : @ctx {u: @l} -> (t: @Type u) -> t -> t = \x => x
 $ three : @Int = id @ctx {.u = 1} @Int 3
 ```
 
+What the body needs of a `@ctx` variable's level binds every use, also when
+the variable appears only in the `@ctx`: with `$ countt : @ctx {t: @Type} ->
+{} -> @Int = count t` for a `count` that takes a `(t: @Type 1)`, the use
+`countt @ctx {.t = @Type 1} {}` is a universe error (#613).
+
 Without an `if`, the constraints between named levels are inferred as for a
 bare `@Type`. An `if` ending the `@ctx` states them exactly: `<`, `<=`, `>`,
 `>=` and `==` between levels, joined by `&&`. The body may need only what the
