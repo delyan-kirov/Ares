@@ -306,11 +306,13 @@ impl<'a> Walk<'a> {
 
     fn item(&mut self, item: &Item) {
         match item {
-            Item::Def { sig, ctx, body, .. } => {
+            Item::Def { sig, body, .. } => {
                 if let Some(t) = sig {
-                    self.ty(*t);
-                }
-                if let Some(t) = ctx {
+                    if let Some(fields) = self.ast.ctx_params.get(*t) {
+                        for f in self.ast.slice(*fields).to_vec() {
+                            self.ty(f.ty);
+                        }
+                    }
                     self.ty(*t);
                 }
                 self.expr(*body);

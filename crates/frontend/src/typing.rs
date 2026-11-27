@@ -32,6 +32,7 @@ mod algorithm_w;
 pub(crate) mod declarations;
 mod externs;
 mod imports;
+mod ctx_fields;
 mod ctx_sizes;
 mod instances;
 mod patterns;
@@ -273,6 +274,13 @@ pub struct Checker<'a> {
     own_runtime_sizes: Vec<(Aol<Ty>, Vec<StrId>)>,
     size_params: HashMap<Aol<Expr>, Vec<StrId>>,
     size_args: HashMap<Aol<Expr>, Vec<CtxVal>>,
+    /// The instance fields each definition, by its body, binds in its leading
+    /// context parameter (see `ctx_fields`).
+    use_params: HashMap<Aol<Expr>, Vec<StrId>>,
+    /// This module's type-level globals by name, each the type it unfolds
+    /// to, known before their registration so a `@ctx` field's sort can be
+    /// read through one anywhere in the module.
+    own_alias_bodies: HashMap<StrId, Aol<Ty>>,
     /// This module's interface wrappers: a context-bearing definition whose body
     /// only projects one field of its context, mapped to that field (see
     /// [`instances::wrapper_field`]).
@@ -698,6 +706,8 @@ impl<'a> Checker<'a> {
             own_runtime_sizes: Vec::new(),
             size_params: HashMap::new(),
             size_args: HashMap::new(),
+            use_params: HashMap::new(),
+            own_alias_bodies: HashMap::new(),
             own_wrappers: HashMap::new(),
             ctx_args: HashMap::new(),
             ctx_pending: Vec::new(),
@@ -873,6 +883,7 @@ impl<'a> Checker<'a> {
                 self.ambiguous_imports.remove(name);
             }
         }
+        self.note_type_globals(program);
         self.register_types(program)?;
         self.check_type_module_clashes(program);
         self.validate_crepr_structs()?;
@@ -897,13 +908,12 @@ impl<'a> Checker<'a> {
                 Item::Def {
                     name,
                     sig,
-                    ctx,
                     body,
                 } => Some(Def {
                     name: *name,
                     name_span: span.name,
                     sig: *sig,
-                    ctx: *ctx,
+                    ctx: sig.is_some_and(|s| self.has_uses(s)),
                     body: *body,
                 }),
                 _ => None,
@@ -911,8 +921,10 @@ impl<'a> Checker<'a> {
             .collect();
 
         self.local_defs = defs.iter().map(|d| d.name).collect();
-        for def in defs.iter().filter(|d| d.ctx.is_some()) {
-            if let Some(field) = instances::wrapper_field(self.ast, def.body) {
+        for def in defs.iter().filter(|d| d.ctx) {
+            let sig = def.sig.expect("an instance field is declared by a signature");
+            let [one] = self.use_fields(sig)[..] else { continue };
+            if let Some(field) = instances::wrapper_field(self.ast, one.name, def.body) {
                 self.own_wrappers.insert(def.name, field);
             }
         }
@@ -989,9 +1001,11 @@ impl<'a> Checker<'a> {
         // Register context-bearing definitions up front so a use anywhere in the
         // module resolves them regardless of source order.
         for d in &defs {
-            let Some(ctx) = d.ctx else { continue };
-            let sig = d.sig.expect("an instance field is parsed as part of a signature");
-            self.check_ctx_head(d.name, ctx, sig)?;
+            if !d.ctx {
+                continue;
+            }
+            let sig = d.sig.expect("an instance field is declared by a signature");
+            self.check_ctx_head(d.name, sig)?;
             self.own_ctx.push((d.name, sig));
             self.qualified_ctx.insert((self.module_name, d.name), sig);
             self.global_ctx.insert(d.name, sig);
@@ -1001,7 +1015,7 @@ impl<'a> Checker<'a> {
         // instances a context requirement searches.
         for d in &defs {
             let Some(sig) = d.sig else { continue };
-            if self.ast.ctx_params.get(sig).is_some() || self.ast.level_params.get(sig).is_some() {
+            if !self.sort_fields(sig).is_empty() || self.ast.level_params.get(sig).is_some() {
                 self.own_ctx_sigs.push((d.name, sig));
                 self.qualified_ctx_sigs.insert((self.module_name, d.name), sig);
                 self.ctx_sigs.insert(d.name, sig);
@@ -1009,7 +1023,7 @@ impl<'a> Checker<'a> {
             self.check_ctx_fields(sig, true);
             let mut tvars = self.sig_tvars(sig);
             self.ty_reporting(sig, &mut tvars, Some(sig));
-            let (exposed, ctx) = self.scheme_and_ctx(sig, d.ctx.is_some());
+            let (exposed, ctx) = self.scheme_and_ctx(sig);
             let Some(head) = self.ctx_head(self.unifier.zonk(exposed)) else {
                 continue;
             };
@@ -1178,8 +1192,8 @@ impl<'a> Checker<'a> {
             // Nor with a `_`: the body solves it, so until then the signature
             // is only a shape (a partial signature).
             let seen = match (defs[i].sig, defs[i].ctx) {
-                (Some(sig), None) if !self.sig_has_row_tail(sig) && first_wildcard(self.ast, sig).is_none() => {
-                    self.scheme_and_ctx(sig, false).0
+                (Some(sig), false) if !self.sig_has_row_tail(sig) && first_wildcard(self.ast, sig).is_none() => {
+                    self.scheme_and_ctx(sig).0
                 }
                 _ => v,
             };
@@ -1311,7 +1325,7 @@ impl<'a> Checker<'a> {
         for &i in component {
             let d = &defs[i];
             let ty = match (d.sig, d.ctx) {
-                (Some(sig), None) => self.scheme_and_ctx(sig, false).0,
+                (Some(sig), false) => self.scheme_and_ctx(sig).0,
                 _ => self.unifier.types.error(),
             };
             self.unknown_type = None;
@@ -1562,7 +1576,7 @@ impl<'a> Checker<'a> {
     /// open.
     pub(crate) fn show_name(&mut self, name: StrId) -> Option<String> {
         if let Some(sig) = self.global_ctx.get(&name).copied() {
-            let (exposed, ctx) = self.scheme_and_ctx(sig, true);
+            let (exposed, ctx) = self.scheme_and_ctx(sig);
             if let Some(ctx) = ctx {
                 let (fields, exposed) = self.show_with_uses(name, ctx, exposed);
                 return Some(format!("@ctx {{{}}} -> {exposed}", fields.join(", ")));
@@ -1705,11 +1719,11 @@ impl<'a> Checker<'a> {
     /// that constrains the levels, if any.
     fn show_ctx_binder(&self, name: StrId) -> (Vec<String>, String) {
         let Some(&sig) = self.ctx_sigs.get(&name) else { return (Vec::new(), String::new()) };
-        let fields = [self.ast.level_params.get(sig), self.ast.ctx_params.get(sig)];
-        let shown: Vec<String> = fields
-            .into_iter()
-            .flatten()
-            .flat_map(|fs| self.ast.slice(*fs).iter())
+        let levels = self.ast.level_params.get(sig).map_or(&[][..], |fs| self.ast.slice(*fs));
+        let shown: Vec<String> = levels
+            .iter()
+            .copied()
+            .chain(self.sort_fields(sig))
             .map(|f| format!("{}: {}", f.name, self.ast.ty_source(f.ty).unwrap_or_default()))
             .collect();
         let cond = self.ast.level_constraints.get(sig).and_then(|e| self.ast.level_constraint_source(*e, 0));
@@ -1720,10 +1734,7 @@ impl<'a> Checker<'a> {
     /// instance fields `name`'s signature declares, and `exposed`.
     fn show_with_uses(&self, name: StrId, ctx: Type, exposed: Type) -> (Vec<String>, String) {
         let sig = self.global_ctx.get(&name).copied();
-        let fields: Vec<StrId> = match sig.and_then(|s| self.ast.use_params.get(s).copied()) {
-            Some(fs) => self.ast.slice(fs).iter().map(|f| f.name).collect(),
-            None => Vec::new(),
-        };
+        let fields: Vec<StrId> = sig.map(|s| self.use_fields(s).iter().map(|f| f.name).collect()).unwrap_or_default();
         let z = self.unifier.zonk(ctx);
         let mut parts: Vec<Type> = match self.unifier.types.node(z) {
             TypeNode::Tuple(items) if fields.len() > 1 => self.unifier.types.items(items).to_vec(),
@@ -1939,9 +1950,9 @@ struct Def {
     name: StrId,
     name_span: Option<Span>,
     sig: Option<Aol<Ty>>,
-    /// The context parameter's type when the signature declares one. It is also
-    /// `sig`'s first `from`, so the signature stays what the user wrote.
-    ctx: Option<Aol<Ty>>,
+    /// Whether the signature declares an instance field, so the definition
+    /// takes a context parameter (see `ctx_fields`).
+    ctx: bool,
     body: Aol<Expr>,
 }
 

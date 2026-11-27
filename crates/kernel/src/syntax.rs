@@ -230,14 +230,11 @@ impl Lower<'_> {
     fn item(&self, item: &AstItem, span: Span) -> Result<Item> {
         match item {
             AstItem::Def { name, sig: Some(sig), body, .. } | AstItem::Alias { name, sig, body, .. } => {
-                if self.ast.use_params.get(*sig).is_some() {
-                    return Err(self.error(span, "a kernel global takes no instance field"));
-                }
+                self.only_levels(*sig)?;
                 let body = match self.ast.expr(*body) {
                     Expr::Var { module: None, name } if name.as_str() == "@axiom" => ItemBody::Axiom,
                     _ => ItemBody::Definition(self.expr(*body)?),
                 };
-                self.only_levels(*sig)?;
                 Ok(Item {
                     name: name.as_str().into(),
                     span,

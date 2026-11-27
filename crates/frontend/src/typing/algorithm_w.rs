@@ -23,7 +23,9 @@ use super::*;
 impl<'a> Checker<'a> {
     pub(super) fn sig_has_row_tail(&self, sig: Aol<Ty>) -> bool {
         let (mut sites, mut tails) = (Vec::new(), Vec::new());
-        sig_var_sites(self.ast, sig, Span::at(0), &mut sites, &mut tails);
+        for root in self.sig_roots(sig) {
+            sig_var_sites(self.ast, root, Span::at(0), &mut sites, &mut tails);
+        }
         !tails.is_empty()
     }
 
@@ -33,11 +35,7 @@ impl<'a> Checker<'a> {
             return Ok(());
         };
         let mut tvars = self.sig_tvars(sig);
-        let sig_ty = self.ty_of_ast(sig, &mut tvars);
-        let exposed = match (def.ctx, self.unifier.types.node(sig_ty)) {
-            (Some(_), TypeNode::Arrow(_, to, _)) => to,
-            _ => sig_ty,
-        };
+        let (_, exposed) = self.sig_and_ctx(sig, &mut tvars);
         self.unifier.unify(decl, exposed, &format!("against the signature of `{}`", def.name))
     }
 
@@ -50,18 +48,16 @@ impl<'a> Checker<'a> {
             let mut tvars = self.sig_tvars(sig);
             self.unifier.hold_labels(tvars.iter().map(|(n, t)| (*n, *t)));
             self.wildcards.clear();
-            let sig_ty = self.ty_of_ast(sig, &mut tvars);
+            let (ctx, exposed) = self.sig_and_ctx(sig, &mut tvars);
+            let sig_ty = self.with_ctx(ctx, exposed);
             let wildcards = std::mem::take(&mut self.wildcards);
-            // The body sees the context parameter (it binds it like any other
-            // leading parameter); callers do not, so the definition's own type is
-            // the signature with that parameter stripped.
-            let exposed = match (def.ctx, self.unifier.types.node(sig_ty)) {
-                (Some(_), TypeNode::Arrow(from, to, _)) => {
-                    self.decl_ctx.insert(def.name, from);
-                    to
-                }
-                _ => sig_ty,
-            };
+            // The body sees the context parameter, which lowering binds ahead of
+            // its own parameters; callers do not, so the definition's own type
+            // is the signature without it.
+            if let Some(ctx) = ctx {
+                self.decl_ctx.insert(def.name, ctx);
+            }
+            let foreign = matches!(self.node(def.body), Expr::Extern { .. } | Expr::Builtin);
             self.unifier.unify(
                 decl,
                 exposed,
@@ -73,7 +69,14 @@ impl<'a> Checker<'a> {
             let scoped = std::mem::replace(&mut self.scoped_tvars, tvars.clone());
             let checking = self.checking_def.replace(def.name);
             self.bind_size_fields(def.name, sig, def.body, &tvars);
-            let r = self.check(def.body, sig_ty).map_err(|d| self.sig_bound_mismatch(def, sig).unwrap_or(d));
+            let against = match ctx {
+                Some(ctx) if !foreign => {
+                    self.bind_use_fields(sig, def.body, ctx);
+                    exposed
+                }
+                _ => sig_ty,
+            };
+            let r = self.check(def.body, against).map_err(|d| self.sig_bound_mismatch(def, sig).unwrap_or(d));
             self.leave_scope();
             self.checking_def = checking;
             self.scoped_tvars = scoped;
@@ -83,7 +86,9 @@ impl<'a> Checker<'a> {
             // A row tail stays open on purpose: `<| e>` lets the body perform
             // more, which is how an entry point performs any effect.
             let (mut sites, mut tails) = (Vec::new(), Vec::new());
-            sig_var_sites(self.ast, sig, Span::at(0), &mut sites, &mut tails);
+            for root in self.sig_roots(sig) {
+                sig_var_sites(self.ast, root, Span::at(0), &mut sites, &mut tails);
+            }
             let vars = sites
                 .into_iter()
                 .filter(|(name, _)| !tails.contains(name))

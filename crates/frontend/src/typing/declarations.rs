@@ -100,22 +100,23 @@ impl<'a> Checker<'a> {
         Ok(kinds)
     }
 
-    /// The kind a binder's written type gives it: `@Type` (or `@Type n`),
-    /// `@Nat` or `@Row`. `None` for any other type, whose binder is a value.
+    /// The kind a binder's type gives it: `@Type` (or `@Type n`), `@Nat` or
+    /// `@Row`, written or reached through a type-level global
+    /// ([`Self::sort_of_ast`]). `None` for any other type, whose binder is a
+    /// value.
     pub(super) fn kind_of_ast(&self, ty: Aol<Ty>) -> Option<ParamKind> {
-        let named = |t: &Ty, n: &str| matches!(t, Ty::Con { module: None, name } if name.as_str() == n);
-        match self.ast.ty(ty) {
-            t if named(t, "@Type") => Some(ParamKind::Type),
-            Ty::App(head, _) if named(self.ast.ty(*head), "@Type") => Some(ParamKind::Type),
-            t if named(t, "@Nat") => Some(ParamKind::Nat),
-            t if named(t, "@Row") => Some(ParamKind::Row),
+        match self.sort_of_ast(ty)? {
+            ty::UNIVERSE => Some(ParamKind::Type),
+            ty::NAT => Some(ParamKind::Nat),
+            "@Row" => Some(ParamKind::Row),
             _ => None,
         }
     }
 
-    /// Whether a binder's written type is `@Effect`: it stands for one effect.
+    /// Whether a binder's type is `@Effect`, written or reached through a
+    /// type-level global: it stands for one effect.
     pub(super) fn is_effect_kind(&self, ty: Aol<Ty>) -> bool {
-        matches!(self.ast.ty(ty), Ty::Con { module: None, name } if name.as_str() == "@Effect")
+        self.sort_of_ast(ty) == Some("@Effect")
     }
 
     /// The names of a type declaration's binders, an unnamed index called
@@ -385,7 +386,7 @@ impl<'a> Checker<'a> {
         self.reject_dependent_defs(program)?;
         self.reject_declared_wildcards(program)?;
         for item in self.ast.slice(program.items) {
-            if let Item::Def { name, sig: Some(sig), ctx: None, body } = item {
+            if let Item::Def { name, sig: Some(sig), body } = item {
                 if matches!(self.ast.ty(*sig), Ty::Con { module: None, name } if name.as_str() == "@Nat") {
                     self.nat_consts.insert(*name, *body);
                 }
@@ -896,7 +897,7 @@ impl<'a> Checker<'a> {
                 Item::Def { sig: Some(sig), body, .. } if matches!(ast.expr(*body), Expr::Extern { .. } | Expr::Builtin) => {
                     (vec![*sig], "a foreign or builtin signature")
                 }
-                Item::Def { sig: Some(sig), ctx: Some(_), .. } => (vec![*sig], "a signature with instance fields"),
+                Item::Def { sig: Some(sig), .. } if self.has_uses(*sig) => (self.sig_roots(*sig), "a signature with instance fields"),
                 _ => continue,
             };
             if let Some(span) = tys.into_iter().find_map(|t| first_wildcard(ast, t)) {

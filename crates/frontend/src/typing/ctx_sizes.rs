@@ -73,10 +73,8 @@ impl<'a> Checker<'a> {
         }
         // A field that is not a type, size or row is an error already
         // (`check_ctx_fields`); as a local of its type it adds no other.
-        let others: Vec<UseField> = match self.ast.ctx_params.get(sig) {
-            Some(fs) => self.ast.slice(*fs).iter().filter(|f| self.kind_of_ast(f.ty).is_none() && !self.is_effect_kind(f.ty)).copied().collect(),
-            None => Vec::new(),
-        };
+        let others: Vec<UseField> =
+            self.sort_fields(sig).into_iter().filter(|f| self.kind_of_ast(f.ty).is_none() && !self.is_effect_kind(f.ty)).collect();
         for f in others {
             let mut scoped = tvars.clone();
             let ty = self.ty_of_ast(f.ty, &mut scoped);

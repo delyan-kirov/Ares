@@ -1,0 +1,7 @@
+$ @mod CTX_SORT_THROUGH_GLOBAL
+
+# A field whose type is a global standing for a sort binds a variable of that
+# sort (#590): `n` is a type variable, which a size cannot be.
+$ Ty : @Type 2 = @Type
+
+$ width : @ctx { n: Ty } -> @Tensor n @Int -> @Int = \_ => 0  #~ error[TYPE_MISMATCH]: `n` is a `@Type`, but the signature uses it as a size

@@ -54,21 +54,20 @@ pub struct Ast {
     item_spans: Store<ItemSpan>,
     slice_slots: Store<SliceSlot>,
     use_fields: Store<UseField>,
-    /// The instance fields of a definition's signature, the `@ctx` fields whose
-    /// type is no sort, keyed by the signature (the handle `Item::Def::sig` and
-    /// the checker's context table carry), in the order written. Present only
-    /// when the signature declares one.
-    pub use_params: SecondaryMap<Ty, Slice<UseField>>,
     /// The level parameters of a signature's leading `@ctx {u: @l, ...} ->`,
-    /// keyed by the signature like [`Ast::use_params`]. Each field's `ty` is its
-    /// `@l`.
+    /// keyed by the signature (the handle `Item::Def::sig` and the checker's
+    /// context tables carry). Each field's `ty` is its `@l`.
     pub level_params: SecondaryMap<Ty, Slice<UseField>>,
     /// The `if` that closes a signature's leading `@ctx`, `{n: @l, m: @l if
     /// n < m}`: the constraints on its levels, keyed like
     /// [`Ast::level_params`].
     pub level_constraints: SecondaryMap<Ty, Aol<Expr>>,
-    /// The other `@ctx` fields of a signature, keyed like [`Ast::use_params`],
-    /// in the order written: the types, sizes and rows its type variables are.
+    /// The other `@ctx` fields of a signature, keyed like
+    /// [`Ast::level_params`], in the order written. What each is the checker
+    /// decides from its type (#590): a sort (`@Type`, `@Nat`, `@Row`,
+    /// `@Effect`, or a global standing for one) binds a variable unification
+    /// solves; any other field is an instance or a proof, passed in the
+    /// definition's one leading context parameter.
     pub ctx_params: SecondaryMap<Ty, Slice<UseField>>,
     /// Source span of each `Expr` node, for diagnostics. Populated by the parser;
     /// a node absent here (e.g. one synthesized by a later pass) has no span.
@@ -355,15 +354,11 @@ pub struct ItemSpan {
 /// A top-level `$ ...` declaration.
 #[derive(Clone, Debug)]
 pub enum Item {
-    /// `$ name [: ty] = body`. `ctx` is the context parameter's type
-    /// when the signature declares one: an ordinary first parameter that call
-    /// sites do not write, resolved by type and passed as a leading argument. It
-    /// is the same handle as the signature arrow's first `from`, so `sig` stays
-    /// exactly what the user wrote.
+    /// `$ name [: ty] = body`. The `@ctx` fields of `sig` are filed under it
+    /// in [`Ast::level_params`] and [`Ast::ctx_params`].
     Def {
         name: StrId,
         sig: Option<Aol<Ty>>,
-        ctx: Option<Aol<Ty>>,
         body: Aol<Expr>,
     },
     /// `$ Name : sig = @struct [@extern "abi"] field, ...`. `sig` states the
@@ -816,15 +811,13 @@ pub enum FieldInit {
 
 /// One field of a `@ctx {name: Type, ...}` parameter. `before` counts the
 /// explicit parameters the signature declares ahead of it, which is where an
-/// explicit `@ctx {.name = e}` argument goes. `ctx` tells a field unification
-/// solves from an instance field.
+/// explicit `@ctx {.name = e}` argument goes.
 #[derive(Clone, Copy, Debug)]
 pub struct UseField {
     pub name: StrId,
     pub ty: Aol<Ty>,
     pub before: u32,
     pub span: Span,
-    pub ctx: bool,
 }
 
 /// The type of a `@ctx {n: @Nat}` field as a value in its definition's

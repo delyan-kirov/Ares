@@ -125,6 +125,9 @@ pub struct Resolved {
     /// [`Checker::size_params`]).
     pub size_args: HashMap<Aol<Expr>, Vec<CtxVal>>,
     pub size_params: HashMap<Aol<Expr>, Vec<StrId>>,
+    /// The instance fields a definition (keyed by its body) binds in its
+    /// leading context parameter, in order (from [`Checker::use_params`]).
+    pub use_params: HashMap<Aol<Expr>, Vec<StrId>>,
     /// The sites a lenient expansion round left unresolved (from
     /// [`Checker::deferred_sites`]). Lowering marks the globals containing one.
     pub deferred_sites: HashSet<Aol<Expr>>,
@@ -218,6 +221,9 @@ pub fn collect_resolved<'c, 'a: 'c>(checkers: impl IntoIterator<Item = &'c Check
         }
         for (&body, fields) in checker.size_params() {
             resolved.size_params.insert(body, fields.clone());
+        }
+        for (&body, fields) in checker.use_params() {
+            resolved.use_params.insert(body, fields.clone());
         }
         resolved.deferred_sites.extend(checker.deferred_sites());
         resolved.cast_widths.extend(checker.cast_widths());
@@ -348,6 +354,12 @@ impl<'a> Checker<'a> {
     /// The `@Nat` fields each definition, by its body, takes at run time.
     pub fn size_params(&self) -> &HashMap<Aol<Expr>, Vec<StrId>> {
         &self.size_params
+    }
+
+    /// The instance fields each definition, by its body, binds in its
+    /// context parameter.
+    pub fn use_params(&self) -> &HashMap<Aol<Expr>, Vec<StrId>> {
+        &self.use_params
     }
 
     /// Each `@extern` site's marshalling signature: the flattened argument type
