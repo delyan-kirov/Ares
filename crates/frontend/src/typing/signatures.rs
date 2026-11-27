@@ -752,32 +752,31 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// The effect a written type names, as a row label and its arguments: an
-    /// effect applied to its arguments (`State @Int`), or a label variable in
-    /// scope. What an explicit `@ctx {.l = State}` gives a field `l: @Effect`.
-    pub(super) fn label_of_ast(&mut self, ty: Aol<Ty>, span: Span, tvars: &mut HashMap<StrId, Type>) -> Result<(Type, Type)> {
-        if let Ty::Var(name) = self.tnode(ty) {
-            let name = *name;
-            return match tvars.get(&name).copied() {
-                Some(l) if self.unifier.is_label(l) => Ok((l, self.unifier.label_args(l))),
+    /// An expression read as an effect label and its arguments: an effect
+    /// applied to types (`State @Int`), or a label variable in scope. What an
+    /// explicit `@ctx {.l = State}` gives a field `l: @Effect`.
+    pub(super) fn label_of_expr(&mut self, e: Aol<Expr>, span: Span) -> Result<(Type, Type)> {
+        let mut args = Vec::new();
+        let mut head = e;
+        while let Expr::App(f, a) = *self.node(head) {
+            args.push(a);
+            head = f;
+        }
+        args.reverse();
+        let Some(name) = self.type_name_of_expr(head) else {
+            return Err(diag!(Code::TypeMismatch, span, 0, "an effect is named, as in `State` or `State @Int`"));
+        };
+        if !name.as_str().starts_with(|c: char| c.is_ascii_uppercase() || c == '@') {
+            return match self.scoped_tvars.get(&name).copied() {
+                Some(l) if args.is_empty() && self.unifier.is_label(l) => Ok((l, self.unifier.label_args(l))),
                 _ => Err(diag!(Code::TypeMismatch, span, 0, "`{name}` is not an effect")),
             };
         }
-        let mut args = Vec::new();
-        let mut head = ty;
-        while let Ty::App(h, a) = self.tnode(head) {
-            args.push(*a);
-            head = *h;
-        }
-        args.reverse();
-        let Ty::Con { name, .. } = self.tnode(head) else {
-            return Err(diag!(Code::TypeMismatch, span, 0, "an effect is named, as in `State` or `State @Int`"));
-        };
-        let name = *name;
         if let Some(d) = self.not_an_effect(name, span) {
             return Err(d);
         }
-        let args = self.effect_label_args(name, &args, span, tvars);
+        let tys = args.into_iter().map(|a| self.expr_as_type(a)).collect::<Result<Vec<_>>>()?;
+        let args = self.effect_label_tys(name, tys, span);
         Ok((self.unifier.types.con_id(name), args))
     }
 
@@ -815,7 +814,14 @@ impl<'a> Checker<'a> {
         span: Span,
         tvars: &mut HashMap<StrId, Type>,
     ) -> Type {
-        if args.is_empty() {
+        let tys: Vec<Type> = args.iter().map(|&a| self.ty_of_ast(a, tvars)).collect();
+        self.effect_label_tys(name, tys, span)
+    }
+
+    /// The row arguments of the effect `name` given the elaborated `tys`,
+    /// fresh ones for each parameter when none is written.
+    pub(super) fn effect_label_tys(&mut self, name: StrId, tys: Vec<Type>, span: Span) -> Type {
+        if tys.is_empty() {
             if let Some((own, own_args)) = self.effect_self {
                 if own == name {
                     return own_args;
@@ -824,22 +830,21 @@ impl<'a> Checker<'a> {
         }
         let arity = self.effect_arity.get(&name).copied();
         match arity {
-            Some(0) if !args.is_empty() => self.defer_type_error(diag!(
+            Some(0) if !tys.is_empty() => self.defer_type_error(diag!(
                 Code::TypeMismatch, span, 0,
                 "effect `{name}` takes no parameters";
                 note: "only an effect declared with parameters is applied in a row"
             )),
-            Some(n) if !args.is_empty() && args.len() != n => self.defer_type_error(diag!(
+            Some(n) if !tys.is_empty() && tys.len() != n => self.defer_type_error(diag!(
                 Code::TypeMismatch, span, 0,
-                "effect `{name}` takes {n} parameter(s) but {} were given", args.len();
+                "effect `{name}` takes {n} parameter(s) but {} were given", tys.len();
                 help: "write all of them, or none to leave them to inference"
             )),
             _ => {}
         }
-        let tys: Vec<Type> = if args.is_empty() {
-            (0..arity.unwrap_or(0)).map(|_| self.unifier.fresh()).collect()
-        } else {
-            args.iter().map(|&a| self.ty_of_ast(a, tvars)).collect()
+        let tys = match tys.is_empty() {
+            true => (0..arity.unwrap_or(0)).map(|_| self.unifier.fresh()).collect(),
+            false => tys,
         };
         if tys.is_empty() {
             self.unifier.types.row_empty()
@@ -1096,11 +1101,6 @@ impl<'a> Checker<'a> {
                 self.unifier.fresh()
             }
         }
-    }
-
-    /// The level `ty` writes, as in `@Type ty`.
-    pub(super) fn level_of_ty(&mut self, ty: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Type {
-        self.level_of_ast(ty, tvars)
     }
 
     /// `name` stands where a level does, and no `@ctx {name: @l}` binds it.

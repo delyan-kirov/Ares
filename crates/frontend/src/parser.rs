@@ -2995,9 +2995,9 @@ impl<'a> Parser<'a> {
     }
 
     /// `@ctx {.t = @Int, .d = rev_ord, ...}`: values for some of the callee's
-    /// `@ctx` fields, by name. A value that reads as a type stands as one,
-    /// with the expression it was written as kept in [`Ast::ctx_arg_values`]
-    /// for an instance field; any other stays an expression.
+    /// `@ctx` fields, by name, each the expression written. The checker
+    /// elaborates it by its field's sort: a level, a type, a size, an effect,
+    /// an instance or a proof.
     fn parse_ctx_arg(&mut self) -> Result<Aol<Expr>> {
         let start = self.here()?;
         self.bump()?; // '@ctx'
@@ -3007,17 +3007,7 @@ impl<'a> Parser<'a> {
             expect!(self, Kind::Dot, "expected a `.field = value`");
             let name = self.expect_word("expected a field name after '.'")?;
             expect!(self, Kind::Eq, "expected '=' after the field name");
-            let at = self.here()?;
-            let written = self.parse_expr(0)?;
-            let value = match self.to_ty(written) {
-                Ok(ty) => {
-                    let node = self.expr(Expr::Type(ty));
-                    let node = self.stamp(at, node);
-                    self.ast.ctx_arg_values.insert(node, written);
-                    node
-                }
-                Err(_) => written,
-            };
+            let value = self.parse_expr(0)?;
             inits.push(FieldInit::Named { name, value });
             if !self.eat(|k| matches!(k, Kind::Comma))? || matches!(self.peek_kind()?, Kind::RBrace) {
                 break;

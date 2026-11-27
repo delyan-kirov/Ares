@@ -284,7 +284,6 @@ impl<'a> Checker<'a> {
             for init in u.inits {
                 match init {
                     FieldInit::Named { name, value } if names.contains(&name) => {
-                        let value = self.ast.ctx_arg_values.get(value).copied().unwrap_or(value);
                         inst.push(FieldInit::Named { name, value });
                     }
                     other => ctx.push(other),
@@ -393,11 +392,7 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 if self.is_effect_kind(field.ty) {
-                    let Expr::Type(t) = *self.node(value) else {
-                        return Err(diag!(Code::TypeMismatch, span, 0, "`@ctx` field `{f}` of `{name}` takes an effect, not a value"));
-                    };
-                    let mut scoped = self.scoped_tvars.clone();
-                    let (label, args) = self.label_of_ast(t, span, &mut scoped)?;
+                    let (label, args) = self.label_of_expr(value, span)?;
                     let want = tvars[&f];
                     let want_args = self.unifier.label_args(want);
                     let where_ = format!("in the `@ctx` field `{f}` of `{name}`");
@@ -405,18 +400,10 @@ impl<'a> Checker<'a> {
                     self.unifier.unify(want, label, &where_).map_err(|d| d.fill_span(span))?;
                     continue;
                 }
-                let Expr::Type(t) = *self.node(value) else {
-                    let what = self.kind_of_ast(field.ty).map_or("@Type", ParamKind::written);
-                    return Err(diag!(Code::TypeMismatch, span, 0, "`@ctx` field `{f}` of `{name}` takes a `{what}`, not a value"));
-                };
-                let mut scoped = self.scoped_tvars.clone();
-                let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
                 let vt = match self.kind_of_ast(field.ty) {
-                    Some(ParamKind::Nat) => self.size_ty_of_ast(t, &mut scoped),
-                    _ => self.ty_of_ast(t, &mut scoped),
+                    Some(ParamKind::Nat) => self.expr_as_size(value)?,
+                    _ => self.expr_as_type(value)?,
                 };
-                self.free_names = saved;
-                self.report_unbound(None);
                 let want = tvars[&f];
                 self.unifier
                     .unify(want, vt, &format!("in the `@ctx` field `{f}` of `{name}`"))
@@ -463,7 +450,6 @@ impl<'a> Checker<'a> {
                 }
                 _ => Err(bad()),
             },
-            Expr::Type(t) => Ok(self.level_of_ty(t, scoped)),
             _ => Err(bad()),
         }
     }

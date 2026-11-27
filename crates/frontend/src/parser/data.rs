@@ -87,9 +87,6 @@ pub struct Ast {
     /// parser reads as `@Type`: a dictionary is a record to everything after
     /// the instance search.
     pub classes: SecondaryMap<Ty, ()>,
-    /// The expression an explicit `@ctx {.f = e}` argument wrote, keyed by the
-    /// `Expr::Type` it reads as: an instance field takes the expression.
-    pub ctx_arg_values: SecondaryMap<Expr, Aol<Expr>>,
 }
 
 /// An element type stored in a run: names the [`Store`] on the [`Ast`] that holds
