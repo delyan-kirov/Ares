@@ -1,0 +1,14 @@
+$ @mod MAIN
+
+# An imported definition brings the level bounds its body put on a `@ctx`
+# variable its type does not mention, for a bare and a qualified use.
+$ @import COUNT
+
+$ Ask : @Effect = ask : {} -> @Int,
+$ Exn : @Effect = throw : @ctx {a: @Type} -> @Str -> a,
+
+$ fine : @Int = COUNT.countt @ctx {.t = @Int} {}
+$ fine_effect : @Int = counte @ctx {.l = Ask} {}
+$ big : @Int = countt @ctx {.t = @Type 1} {}  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ qualified : @Int = COUNT.countt @ctx {.t = @Type 1} {}  #~ error[TYPE_MISMATCH]: universe level mismatch
+$ big_effect : @Int = COUNT.counte @ctx {.l = Exn} {}  #~ error[TYPE_MISMATCH]: universe of `Exn`, which an effect variable stands for

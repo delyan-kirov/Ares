@@ -89,7 +89,11 @@ impl<'a> Checker<'a> {
                 .filter(|(name, _)| !tails.contains(name))
                 .filter_map(|(name, span)| tvars.get(&name).map(|&ty| (name, span, ty)))
                 .collect();
-            Ok(Some(SigVars { def: def.name, vars, wildcards, opaque }))
+            let ctx_scheme = self.ctx_scheme_items(sig, &tvars).map(|fields| {
+                let items: Vec<Type> = std::iter::once(decl).chain(fields).collect();
+                (sig, self.unifier.types.tuple(items))
+            });
+            Ok(Some(SigVars { def: def.name, vars, wildcards, opaque, ctx_scheme }))
         } else {
             let inferred = self.infer(def.body)?;
             self.unifier.unify(
@@ -1775,7 +1779,7 @@ impl<'a> Checker<'a> {
             let given = self.split_given(site, self.qualified_ctx.get(&(m, name)).copied(), given);
             if given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty()) {
                 let uses = self.qualified_ctx.contains_key(&(m, name));
-                return self.infer_ctx_given(site, name, sig, uses, false, &given.unwrap_or_default());
+                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
             }
             if let Some(sig) = self.qualified_ctx.get(&(m, name)).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
@@ -1819,7 +1823,7 @@ impl<'a> Checker<'a> {
             let ambiguous = !self.local_defs.contains(&name) && self.ambiguous_imports.contains_key(&name);
             if !ambiguous && (given.is_some() || sig.is_some_and(|s| !self.nat_fields(s).is_empty())) {
                 let uses = self.global_ctx.contains_key(&name);
-                return self.infer_ctx_given(site, name, sig, uses, true, &given.unwrap_or_default());
+                return self.infer_ctx_given(site, name, sig, uses, &given.unwrap_or_default());
             }
             if let Some(sig) = self.global_ctx.get(&name).copied() {
                 let (req, exposed) = self.ctx_use_type(sig);
@@ -2658,6 +2662,9 @@ pub(super) struct SigVars {
     wildcards: Vec<(Span, Type)>,
     /// The variables of the constructors the body matched.
     opaque: Vec<OpaqueVar>,
+    /// The signature and its context scheme, before generalising, for one
+    /// with `@ctx` fields. See Note [Context schemes].
+    pub(super) ctx_scheme: Option<(Aol<Ty>, Type)>,
 }
 
 /// Collect the type variables appearing in `ty`, in order of first appearance.
