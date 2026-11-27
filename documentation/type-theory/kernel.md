@@ -93,7 +93,10 @@ each rule's implementation with `// Rule [Name]`, and
 `kernel::axioms` lists the postulates a global rests on, transitively and
 through proofs (Lean's `#print axioms`). A script pins them with a
 `# axioms: a b` line above each declaration that rests on any, which
-`tests/scripts.rs` checks, so a new dependence on a postulate fails a test. `RATIONALS.ares` rests on none: the
+`tests/scripts.rs` checks, so a new dependence on a postulate fails a test.
+The report is complete: `kernel::recheck` checks each global in the
+signature cut down to the globals it rests on, which holds no other
+axiom (#582). `RATIONALS.ares` rests on none: the
 ring laws it needs are proved through unary naturals (#463).
 
 ## 6. Next steps

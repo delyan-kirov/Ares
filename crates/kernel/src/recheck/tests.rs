@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::check::tests::accept;
 use crate::recheck;
+use crate::recheck::recheck_within;
 use crate::signature::{DataId, GlobalId, GlobalKind, Signature};
 use crate::term::Term;
 
@@ -161,4 +162,25 @@ fn a_recursor_follows_the_projections() {
     sig.global_mut(u).kind = recursor;
     sig.data_mut(data).recursor = u;
     rejected(&sig, "Box", "recursor apart from its other globals");
+}
+
+const PROVED: &str = "\n$ Nat : @Type 1 = @union Zero: {}, Succ: Nat\n$ ax : Nat.Zero ~ Nat.Succ.{ Nat.Zero } = @axiom\n$ pr : (p: Nat -> @Type 0) -> p Nat.Zero -> p Nat.Succ.{ Nat.Zero } = \\h => @transp Nat.Zero (\\x => p x) h Nat.Succ.{ Nat.Zero } ax\n";
+
+#[test]
+fn a_global_holds_in_what_it_rests_on() {
+    let sig = accept(PROVED);
+    let pr = sig.lookup("pr").unwrap();
+    let keep = sig.rests_on(pr);
+    assert!(keep.len() < sig.len(), "`pr` rests on every global");
+    recheck_within(&sig, &keep, pr).unwrap();
+}
+
+#[test]
+fn a_global_fails_without_an_axiom_it_needs() {
+    let sig = accept(PROVED);
+    let (pr, ax) = (sig.lookup("pr").unwrap(), sig.lookup("ax").unwrap());
+    let mut keep = sig.rests_on(pr);
+    assert!(keep.remove(&ax), "`pr` does not rest on `ax`");
+    let e = recheck_within(&sig, &keep, pr).unwrap_err();
+    assert!(e.contains("outside its signature"), "{e}");
 }

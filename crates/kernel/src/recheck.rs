@@ -49,27 +49,35 @@ impl fmt::Display for RecheckError {
 
 type Result<T> = std::result::Result<T, String>;
 
-/// Re-check every global of `sig`, in order, each reading only the globals
-/// it rests on.
+/// Re-check every global of `sig`, in order, each in the signature cut down
+/// to the globals it rests on. A declaration's record of its globals is
+/// checked in `sig` as well, where a global left out of the cut could sit
+/// between them.
 /// See Note [The axiom report is complete].
 pub fn recheck(sig: &Signature) -> std::result::Result<(), RecheckError> {
     for id in 0..sig.len() as GlobalId {
-        let checker = Rechecker { sig, current: id };
-        let (checked, read) = sig.recording(|| checker.global(id));
-        let unreported = || {
-            let rests_on = sig.rests_on(id);
-            let missed: Vec<String> = read.difference(&rests_on).map(|g| format!("`{}`", sig.global(*g).name)).collect();
-            if missed.is_empty() {
-                return Ok(());
-            }
-            Err(format!("reads {}, which its axiom report does not follow", missed.join(", ")))
+        let (cut, at) = sig.rests_on_signature(id);
+        let checked = Rechecker { sig: &cut, current: at }.global(at);
+        let recorded = || match sig.global(id).kind {
+            GlobalKind::Data(data) => Rechecker { sig, current: id }.declared_with(id, data),
+            _ => Ok(()),
         };
-        checked.and_then(|()| unreported()).map_err(|message| RecheckError {
+        checked.and_then(|()| recorded()).map_err(|message| RecheckError {
             global: sig.global(id).name.to_string(),
             message,
         })?;
     }
     Ok(())
+}
+
+/// Re-check global `id` alone, in `sig` cut down to the globals `keep`,
+/// which must hold `id` and the type former of every declaration a kept
+/// global belongs to.
+#[cfg(test)]
+pub(crate) fn recheck_within(sig: &Signature, keep: &std::collections::BTreeSet<GlobalId>, id: GlobalId) -> Result<()> {
+    let cut = sig.restrict(keep);
+    let at = keep.range(..id).count() as GlobalId;
+    Rechecker { sig: &cut, current: at }.global(at)
 }
 
 /// Check `t` against `expected` in a context the elaborator built, with every
@@ -501,6 +509,9 @@ impl Rechecker<'_> {
                 None => Err(format!("variable #{ix} is not in scope")),
             },
             Term::Global(id, levels) => {
+                if *id as usize >= self.sig.len() {
+                    return Err("names a global outside its signature".into());
+                }
                 if *id >= self.current {
                     return Err(format!("names global #{id}, which is not declared before it"));
                 }

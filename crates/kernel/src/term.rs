@@ -509,7 +509,27 @@ pub fn shift(t: &Term, cutoff: Index, by: Index) -> Term {
 /// `t` with every variable at index `cutoff` or above, `cutoff + i`, moved to
 /// `cutoff + f(i)`: a shift, or a move to a context with other binders.
 pub fn rename(t: &Term, cutoff: Index, f: &dyn Fn(Index) -> Index) -> Term {
-    let go = |t: &Rc<Term>, cutoff| Rc::new(rename(t, cutoff, f));
+    rebuild(t, cutoff, &|leaf, cutoff| match leaf {
+        Term::Var(i) if *i >= cutoff => Term::Var(cutoff + f(i - cutoff)),
+        _ => leaf.clone(),
+    })
+}
+
+/// `t` with every global `g` it names, a numeral's included, moved to
+/// `f(g)`: the same term in a signature with other ids.
+pub fn renumber(t: &Term, f: &dyn Fn(GlobalId) -> GlobalId) -> Term {
+    rebuild(t, 0, &|leaf, _| match leaf {
+        Term::Global(g, levels) => Term::Global(f(*g), levels.clone()),
+        Term::Nat(g, n) => Term::Nat(f(*g), *n),
+        _ => leaf.clone(),
+    })
+}
+
+/// `t` with every leaf (a variable, global, sort, constant or numeral)
+/// replaced by `leaf` of it and the number of binders, from `cutoff`, it is
+/// under.
+fn rebuild(t: &Term, cutoff: Index, leaf: &dyn Fn(&Term, Index) -> Term) -> Term {
+    let go = |t: &Rc<Term>, cutoff| Rc::new(rebuild(t, cutoff, leaf));
     let binding = |b: &Binding| {
         Rc::new(Binding {
             name: b.name.clone(),
@@ -520,9 +540,8 @@ pub fn rename(t: &Term, cutoff: Index, f: &dyn Fn(Index) -> Index) -> Term {
         })
     };
     match t {
-        Term::Var(i) if *i >= cutoff => Term::Var(cutoff + f(i - cutoff)),
         Term::Var(_) | Term::Global(..) | Term::Sort(_) | Term::Top | Term::Tt | Term::Bottom | Term::Irrelevant | Term::Nat(..) => {
-            t.clone()
+            leaf(t, cutoff)
         }
         Term::Eq(l, ty, a, b) => Term::Eq(l.clone(), go(ty, cutoff), go(a, cutoff), go(b, cutoff)),
         Term::Cast(x, y, e, v) => Term::Cast(go(x, cutoff), go(y, cutoff), go(e, cutoff), go(v, cutoff)),
