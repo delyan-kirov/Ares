@@ -12,12 +12,11 @@
 //!
 //! Entry point: [`Signature`].
 
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::level::Level;
-use crate::term::{globals, Name, Term};
+use crate::term::{globals, renumber, Name, Term};
 
 /// A global's position in the signature.
 pub type GlobalId = u32;
@@ -122,6 +121,24 @@ impl Builtins {
     pub fn arithmetic(&self, id: GlobalId) -> Option<Arithmetic> {
         self.arithmetic.iter().find(|(g, _)| *g == id).map(|(_, op)| *op)
     }
+
+    /// The same builtins in a signature where global `g` is `f(g)`.
+    fn renumbered(&self, f: &dyn Fn(GlobalId) -> GlobalId) -> Builtins {
+        Builtins {
+            bool: f(self.bool),
+            true_ctor: f(self.true_ctor),
+            false_ctor: f(self.false_ctor),
+            true_value: f(self.true_value),
+            bool_if: f(self.bool_if),
+            nat: f(self.nat),
+            zero: f(self.zero),
+            succ: f(self.succ),
+            int: f(self.int),
+            int_pos: f(self.int_pos),
+            int_neg_succ: f(self.int_neg_succ),
+            arithmetic: self.arithmetic.map(|(g, op)| (f(g), op)),
+        }
+    }
 }
 
 /// A prelude function on `@Nat` that numeral arguments compute directly.
@@ -177,8 +194,6 @@ pub struct Signature {
     /// global may take a prelude global's name, which then names it.
     prelude: GlobalId,
     builtins: Option<Builtins>,
-    /// The globals read since [`Signature::recording`] started, if it has.
-    consulted: RefCell<Option<BTreeSet<GlobalId>>>,
 }
 
 impl Signature {
@@ -187,8 +202,7 @@ impl Signature {
     }
 
     pub fn global(&self, id: GlobalId) -> &Global {
-        self.consult(id);
-        &self.globals[id as usize]
+        self.globals.get(id as usize).unwrap_or_else(|| panic!("global #{id} is not in the signature"))
     }
 
     pub fn lookup(&self, name: &str) -> Option<GlobalId> {
@@ -238,28 +252,8 @@ impl Signature {
         self.by_name.insert(global.name.clone(), id);
     }
 
-    /// An inductive declaration; reading it reads its type former.
     pub fn data(&self, id: DataId) -> &DataDecl {
-        let decl = &self.datas[id as usize];
-        self.consult(decl.global);
-        decl
-    }
-
-    fn consult(&self, id: GlobalId) {
-        if let Some(seen) = self.consulted.borrow_mut().as_mut() {
-            seen.insert(id);
-        }
-    }
-
-    /// Run `f`, and return with its result every global it read through
-    /// [`Signature::global`] or [`Signature::data`].
-    /// See Note [The axiom report is complete].
-    pub(crate) fn recording<R>(&self, f: impl FnOnce() -> R) -> (R, BTreeSet<GlobalId>) {
-        let previous = self.consulted.replace(Some(BTreeSet::new()));
-        assert!(previous.is_none(), "recordings of the globals read do not nest");
-        let result = f();
-        let seen = self.consulted.take().expect("the recording is still on");
-        (result, seen)
+        &self.datas[id as usize]
     }
 
     pub fn data_mut(&mut self, id: DataId) -> &mut DataDecl {
@@ -291,8 +285,8 @@ impl Signature {
         id
     }
 
-    /// The globals global `id`'s type and body name, and for a type former
-    /// the other globals its declaration gives.
+    /// The globals global `id`'s type and body name, for a type former the
+    /// other globals its declaration gives, and for those the type former.
     /// See Note [Axioms are read off the terms].
     fn uses(&self, id: GlobalId) -> BTreeSet<GlobalId> {
         let global = &self.globals[id as usize];
@@ -301,7 +295,10 @@ impl Signature {
         match &global.kind {
             GlobalKind::Definition(body) => globals(body, &mut out),
             GlobalKind::Data(data) => out.extend(self.declared_with(*data)),
-            _ => {}
+            GlobalKind::Constructor(data, _) | GlobalKind::Recursor(data) | GlobalKind::Projection(data, _, _) => {
+                out.insert(self.datas[*data as usize].global);
+            }
+            GlobalKind::Axiom => {}
         }
         out
     }
@@ -335,6 +332,88 @@ impl Signature {
     pub fn axioms(&self, id: GlobalId) -> Vec<GlobalId> {
         self.rests_on(id).into_iter().filter(|g| matches!(self.globals[*g as usize].kind, GlobalKind::Axiom)).collect()
     }
+
+    /// The signature cut down to the globals global `id` rests on, and
+    /// `id`'s number in it. Its axioms are the ones [`Signature::axioms`]
+    /// reports for `id`.
+    /// See Note [The axiom report is complete].
+    pub fn rests_on_signature(&self, id: GlobalId) -> (Signature, GlobalId) {
+        let keep = self.rests_on(id);
+        let at = keep.range(..id).count() as GlobalId;
+        (self.restrict(&keep), at)
+    }
+
+    /// The signature of the globals in `keep` alone, in their order and
+    /// numbered from 0, with the declarations whose type formers are kept.
+    /// A term that names a global left out names `GlobalId::MAX`, which is
+    /// no global, and a builtin left out is `GlobalId::MAX` too.
+    pub(crate) fn restrict(&self, keep: &BTreeSet<GlobalId>) -> Signature {
+        let mut ids = vec![GlobalId::MAX; self.globals.len()];
+        for (new, old) in keep.iter().enumerate() {
+            ids[*old as usize] = new as GlobalId;
+        }
+        let mut data_ids = vec![DataId::MAX; self.datas.len()];
+        let mut kept_datas = Vec::new();
+        for (old, decl) in self.datas.iter().enumerate().filter(|(_, d)| keep.contains(&d.global)) {
+            data_ids[old] = kept_datas.len() as DataId;
+            kept_datas.push(decl);
+        }
+        let global = |g: GlobalId| ids.get(g as usize).copied().unwrap_or(GlobalId::MAX);
+        let term = |t: &Rc<Term>| Rc::new(renumber(t, &global));
+        let param = |p: &Param| Param {
+            name: p.name.clone(),
+            ty: term(&p.ty),
+            level: p.level.clone(),
+        };
+        let data = |d: DataId| {
+            let new = data_ids[d as usize];
+            assert!(new != DataId::MAX, "a global is kept without its declaration's type former");
+            new
+        };
+        let mut out = Signature {
+            prelude: keep.range(..self.prelude).count() as GlobalId,
+            builtins: self.builtins.map(|b| b.renumbered(&global)),
+            ..Signature::default()
+        };
+        for &old in keep {
+            let g = &self.globals[old as usize];
+            let kind = match &g.kind {
+                GlobalKind::Definition(body) => GlobalKind::Definition(term(body)),
+                GlobalKind::Axiom => GlobalKind::Axiom,
+                GlobalKind::Data(d) => GlobalKind::Data(data(*d)),
+                GlobalKind::Constructor(d, index) => GlobalKind::Constructor(data(*d), *index),
+                GlobalKind::Recursor(d) => GlobalKind::Recursor(data(*d)),
+                GlobalKind::Projection(d, index, field) => GlobalKind::Projection(data(*d), *index, *field),
+            };
+            out.by_name.insert(g.name.clone(), out.next_global());
+            out.globals.push(Global {
+                name: g.name.clone(),
+                level_params: g.level_params.clone(),
+                ty: term(&g.ty),
+                kind,
+            });
+        }
+        for decl in kept_datas {
+            let constructors = decl.constructors.iter().map(|c| ConstructorDecl {
+                name: c.name.clone(),
+                global: global(c.global),
+                fields: c.fields.iter().map(param).collect(),
+                recursive: c.recursive.clone(),
+                surface: c.surface.iter().map(param).collect(),
+                indices: c.indices.iter().map(term).collect(),
+            });
+            out.datas.push(DataDecl {
+                global: global(decl.global),
+                params: decl.params.iter().map(param).collect(),
+                uniform: decl.uniform,
+                level: decl.level.clone(),
+                constructors: constructors.collect(),
+                projections: decl.projections.iter().map(|g| global(*g)).collect(),
+                recursor: global(decl.recursor),
+            });
+        }
+        out
+    }
 }
 
 // Note [Axioms are read off the terms]
@@ -346,47 +425,40 @@ impl Signature {
 //
 // An inductive declaration is one declaration, as in Lean's `#print axioms`:
 // its type former rests on its constructors, projections and recursor, and
-// each of those names the type former, so all of them rest on the same
-// globals. The constructors carry the field types, so a type whose field is
+// each of those rests on the type former its kind belongs to (and names it
+// in its type besides), so all of them rest on the same globals. The constructors carry the field types, so a type whose field is
 // a postulate rests on it, and so does every global that names the type.
 // See Note [Proofs evaluate to an irrelevant witness].
 
 // Note [The axiom report is complete]
 //
-// The claim: every global a derivation of global `g` reads is one `g` rests
-// on, so the axioms `g` rests on are all the axioms its derivation uses. The
-// derivation meant is the re-check, which checks `g` from its stored terms
-// alone (see the `recheck` module). The elaborator reads more (it resolves
-// names and suggests spellings), but what it builds is what is re-checked.
+// The claim: global `g` holds in a signature whose axioms are exactly the
+// ones `g` rests on, so the axioms `Signature::axioms` reports for `g` are
+// all the axioms a derivation of `g` needs. The derivation meant is the
+// re-check, which checks `g` from its stored terms alone (see the `recheck`
+// module). The elaborator reads more (it resolves names and suggests
+// spellings), but what it builds is what is re-checked.
 //
-// Why it holds. Inside the kernel a global is a `GlobalId`, and an id comes
-// from one of three places:
+// How it is shown. `recheck` cuts the signature down to the globals `g`
+// rests on (`Signature::rests_on_signature`): those globals alone, in their
+// order and numbered from 0, with the declarations whose type formers are
+// among them, and every term renumbered to match. It then re-checks `g` in
+// that signature. Nothing else is in it, so there is nothing else for the
+// re-check to read, by id, by name or by any route a future change adds;
+// a term that named a global left out would name no global at all and fail.
+// So every script the tests re-check, and every one `ares check` hands to
+// the kernel, shows the claim for each of its globals directly.
 //
-// 1. a `Term::Global` in a term. The re-check of `g` starts from `g`'s type
-//    and body, whose globals `uses` reads; every other term it meets is the
-//    type or body of a global it read (evaluation unfolds a definition,
-//    inference reads a type), or is built from values of those;
-// 2. an inductive declaration read through `Signature::data`: its type
-//    former, constructors, recursor and the types of its fields, which the
-//    computation rules (Data-Iota, Eq-Ctor, Cast-Ctor) and the read-back of
-//    a value use. Reading a declaration reads its type former, which rests
-//    on all of them (See Note [Axioms are read off the terms]);
-// 3. `Signature::lookup`, `Signature::names` and `Signature::visible_names`,
-//    which resolve a name. Only
-//    the elaborator calls them, never the re-check or the evaluator,
-//    conversion and computation rules it shares.
+// The cut is closed: every global in it rests only on globals in it, and a
+// kept constructor, projection or recursor keeps its type former, since it
+// names it. So the cut is a signature of its own, and the whole signature
+// extends it with globals no term of `g`'s derivation names, which the
+// derivation cannot meet: `g` holds there too, and is not checked again.
 //
-// A computation rule that needs a proof passes the irrelevant witness. The
-// proof it stands for is built from proofs already in the derivation and
-// from the projections of a declaration already read, so it names no global
-// the derivation did not read.
-//
-// How it is kept. `recheck` records every global it reads through
-// `Signature::global` and `Signature::data` while it checks each global,
-// and fails when one of them is not a global it rests on. So every script the
-// tests re-check, and every one `ares check` hands to the kernel, checks the
-// claim on that script. `tests/axioms.rs` checks that the modules the
-// re-check runs never resolve a name, which is the third case.
+// One check stays on the whole signature: a declaration's record of its
+// globals must run without a gap, and a global between them that the
+// declaration does not rest on would be cut away.
+// See Note [A declaration's globals are contiguous].
 // See Algorithm [Transitive axioms].
 
 // Note [A declaration's globals are contiguous]

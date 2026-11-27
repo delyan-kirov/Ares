@@ -166,11 +166,12 @@ and body name, proofs included, with an inductive type resting on the other
 globals its declaration gives, as Lean's `#print axioms` does. A declaration
 records those globals in its `DataDecl`, and `recheck` checks the record
 (#583, Note [A declaration's globals are contiguous]). That the edges
-are complete (#480) is argued in Note [The axiom report is complete], in
-`crates/kernel/src/signature.rs`, and checked rather than proved: `recheck`
-fails when re-checking a global reads a global it does not rest on, so
-every re-checked script tests it, and `crates/kernel/tests/axioms.rs` checks
-that the re-check never resolves a name.
+are complete (#480) is shown for each script rather than proved in
+general: `recheck` checks every global in the signature cut down to the
+globals it rests on, renumbered, so the global holds with only the axioms
+reported for it (#582, Note [The axiom report is complete] in
+`crates/kernel/src/signature.rs`). Every re-checked script, and every one
+`ares check` hands to the kernel, shows it for each of its globals.
 
 ## Rules
 
