@@ -354,7 +354,11 @@ A signature binds its type variables in a `@ctx` parameter (#537): a type
 `l: @Effect` (8.5), each solved by unification. The same record names the instances the signature needs, fields
 whose type is a `@Class`, which instance search solves (7.4), and the
 propositions it needs, which the checker proves at each use (3.13): the sort
-of a field's type decides how it is solved. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
+of a field's type decides how it is solved. The checker reads that sort with
+the type-level globals at the type's head unfolded (#590), so after
+`$ Ty : @Type 2 = @Type`, a field `t: Ty` is a type variable, and a class or
+proposition written through a type-level function is still an instance field
+or a precondition. A lowercase name in a type is whatever is in scope: a `@ctx` field, a
 `(t: @Type)` parameter, or a global (3.10). A name nothing binds is a
 `TYPE_UNBOUND` error whose fix adds it to the signature's `@ctx`, with the kind
 its uses give it. A field the signature uses as a size is a `@Nat`.

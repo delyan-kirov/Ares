@@ -1,0 +1,7 @@
+$ @mod CTX_VALUE_THROUGH_GLOBAL
+
+# A field whose type unfolds to no sort is an instance field (#590), and an
+# instance field's type is a class: `@Int` is neither.
+$ Num : @Type = @Int
+
+$ get : @ctx { d: Num } -> @Int = d  #~ error[UNSUPPORTED]: a `@ctx` field that is a value needs dependent types

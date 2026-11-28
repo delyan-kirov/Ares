@@ -703,13 +703,12 @@ impl<'a> Parser<'a> {
                     "expected ':' and a type for '@build'"
                 };
                 expect!(self, Kind::Colon, want_sig);
-                let (sig, ctx) = self.parse_signature()?;
+                let sig = self.parse_signature()?;
                 let body = self.parse_def_body()?;
                 let body = self.bind_signature(sig, body);
                 Ok(Item::Def {
                     name,
                     sig: Some(sig),
-                    ctx,
                     body,
                 })
             }
@@ -722,7 +721,7 @@ impl<'a> Parser<'a> {
                 let at_tok = self.bump()?; // the '@I...' token
                 let iname = self.intern(self.text(at_tok));
                 expect!(self, Kind::Colon, "expected ':' and a signature for the interface type");
-                let (sig, _) = self.parse_signature()?;
+                let sig = self.parse_signature()?;
                 expect!(self, Kind::Eq, "expected '=' after the type signature");
                 if !self.at_intrinsic("struct")? {
                     return Err(self.unexpected(
@@ -738,7 +737,7 @@ impl<'a> Parser<'a> {
                 let at_tok = self.bump()?;
                 let name = self.intern(self.text(at_tok));
                 self.bump()?; // ':'
-                let (sig, ctx) = self.parse_signature()?;
+                let sig = self.parse_signature()?;
                 let body = self.parse_def_body()?;
                 if !matches!(self.ast.expr(body), Expr::Builtin) {
                     return Err(self.unexpected(
@@ -754,7 +753,6 @@ impl<'a> Parser<'a> {
                 Ok(Item::Def {
                     name,
                     sig: Some(sig),
-                    ctx,
                     body,
                 })
             }
@@ -782,13 +780,12 @@ impl<'a> Parser<'a> {
         let op = self.intern(self.text(op_tok));
         expect!(self, Kind::RParen, "expected ')' after the operator");
         expect!(self, Kind::Colon, "expected ':' and a type for the operator");
-        let (sig, ctx) = self.parse_signature()?;
+        let sig = self.parse_signature()?;
         let body = self.parse_def_body()?;
         let body = self.bind_signature(sig, body);
         Ok(Item::Def {
             name: op,
             sig: Some(sig),
-            ctx,
             body,
         })
     }
@@ -841,7 +838,6 @@ impl<'a> Parser<'a> {
             return Ok(Item::Def {
                 name,
                 sig: None,
-                ctx: None,
                 body: self.parse_expr(0)?,
             });
         }
@@ -851,7 +847,7 @@ impl<'a> Parser<'a> {
         // the parameters: `$ Vec : (a: @Type) -> @Nat -> @Type = @union Nil:
         // {} -> Vec a 0, ...`. A signature ending in `@Effect` declares an
         // effect, its body the operations: `$ Fail : @Effect = fail : ...`.
-        let (sig, ctx) = self.parse_signature()?;
+        let sig = self.parse_signature()?;
         let effect = self.ends_in_effect(sig);
         if effect || self.at_type_decl()? {
             self.require_type_capital(self.text(name_tok), &name_tok)?;
@@ -869,7 +865,7 @@ impl<'a> Parser<'a> {
             if let Some(item) = self.type_function(name, sig, body)? {
                 return Ok(item);
             }
-            return Ok(Item::Def { name, sig: Some(sig), ctx, body });
+            return Ok(Item::Def { name, sig: Some(sig), body });
         }
         let body = self.parse_def_body()?;
         let body = self.bind_signature(sig, body);
@@ -879,7 +875,6 @@ impl<'a> Parser<'a> {
         Ok(Item::Def {
             name,
             sig: Some(sig),
-            ctx,
             body,
         })
     }
@@ -940,21 +935,14 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         if let Some(f) = self.ast.ctx_params.get(sig).map(|fs| self.ast.slice(*fs)[0]) {
+            let written = self.ast.ty_span(f.ty).map_or("@Type", |s| &self.src[s.start..s.end]);
             return Err(Diagnostic::error(
                 Code::UnexpectedToken,
                 f.span,
                 at_tok.line,
                 format!("a type declaration binds `{}` as a parameter, not in `@ctx`", f.name),
             )
-            .with_help(format!("write it on the signature's arrows: `({}: @Type) -> ... -> @Type`", f.name)));
-        }
-        if let Some(f) = self.ast.use_params.get(sig).map(|fs| self.ast.slice(*fs)[0]) {
-            return Err(Diagnostic::error(
-                Code::UnexpectedToken,
-                f.span,
-                at_tok.line,
-                format!("a type declaration takes no instance, as `{}` is", f.name),
-            ));
+            .with_help(format!("write it on the signature's arrows: `({}: {written}) -> ... -> @Type`", f.name)));
         }
         self.class_universe(sig, kw, &at_tok)?;
         if kw != "effect" {
@@ -1079,7 +1067,7 @@ impl<'a> Parser<'a> {
     /// type-level function (#535): its body read as a type is what the checker
     /// unfolds. Any other shape stays a definition.
     fn type_function(&mut self, name: StrId, sig: Aol<Ty>, body: Aol<Expr>) -> Result<Option<Item>> {
-        if self.ast.use_params.get(sig).is_some() || self.ast.ctx_params.get(sig).is_some() {
+        if self.ast.ctx_params.get(sig).is_some() {
             return Ok(None);
         }
         let mut arity = 0;
@@ -1117,24 +1105,21 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a definition's type signature. `@ctx {f: T, ...} ->` parameters may
-    /// stand anywhere on its arrow spine. Their instance fields, those whose
-    /// type is no sort ([`Self::is_sort`]), are gathered into ONE leading
-    /// context parameter (the field's type alone, or the tuple of several), which
-    /// is how the checker and both backends pass instances; those fields, with the
-    /// place each was written, go in [`Ast::use_params`] under the returned
-    /// signature, whose first `from` is that context parameter.
-    fn parse_signature(&mut self) -> Result<(Aol<Ty>, Option<Aol<Ty>>)> {
-        let start = self.here()?;
+    /// stand anywhere on its arrow spine. Their fields, with the place each was
+    /// written, go in [`Ast::level_params`] (the `@l` ones) and
+    /// [`Ast::ctx_params`] (the rest) under the returned signature, the arrows
+    /// written between them. Which of the rest are instance fields the checker
+    /// decides, from each field's type.
+    fn parse_signature(&mut self) -> Result<Aol<Ty>> {
         let mut levels: Vec<UseField> = Vec::new();
         let mut ctx: Vec<UseField> = Vec::new();
-        let mut fields: Vec<UseField> = Vec::new();
         let mut params: Vec<(usize, Option<(StrId, Span)>, Aol<Ty>, Option<EffectRow>)> = Vec::new();
         let mut level_cond = None;
         self.ctx_written = None;
         let result = loop {
             if self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace) {
-                let leading = params.is_empty() && ctx.is_empty() && levels.is_empty() && fields.is_empty();
-                let cond = self.parse_ctx_fields(params.len() as u32, leading, &mut levels, &mut ctx, &mut fields)?;
+                let leading = params.is_empty() && ctx.is_empty() && levels.is_empty();
+                let cond = self.parse_ctx_fields(params.len() as u32, leading, &mut levels, &mut ctx)?;
                 if cond.is_some() {
                     level_cond = cond;
                 }
@@ -1168,26 +1153,8 @@ impl<'a> Parser<'a> {
         for (at, binder, from, effect) in params.into_iter().rev() {
             to = self.arrow_ty(at, binder, from, effect, to);
         }
-        let (Some(first), Some(last)) = (fields.first().copied(), fields.last().copied()) else {
-            self.record_ctx(to, levels, ctx, level_cond);
-            return Ok((to, None));
-        };
-        let bundle = match fields.as_slice() {
-            [one] => one.ty,
-            many => {
-                let tys: Vec<Aol<Ty>> = many.iter().map(|f| f.ty).collect();
-                let tys = self.ast.make_slice(tys);
-                let node = self.ty(Ty::Tuple(tys));
-                self.ast.ty_spans.insert(node, Span::new(first.span.start, last.span.end));
-                node
-            }
-        };
-        let node = self.ty(Ty::Arrow { binder: None, from: bundle, effect: None, to });
-        let sig = self.stamp_ty(start, node);
-        let fields = self.ast.make_slice(fields);
-        self.ast.use_params.insert(sig, fields);
-        self.record_ctx(sig, levels, ctx, level_cond);
-        Ok((sig, Some(bundle)))
+        self.record_ctx(to, levels, ctx, level_cond);
+        Ok(to)
     }
 
     /// File a signature's `@ctx` levels and other fields under it.
@@ -1236,7 +1203,6 @@ impl<'a> Parser<'a> {
         leading: bool,
         levels: &mut Vec<UseField>,
         ctx: &mut Vec<UseField>,
-        uses: &mut Vec<UseField>,
     ) -> Result<Option<Aol<Expr>>> {
         self.bump()?; // '@ctx'
         self.bump()?; // '{'
@@ -1256,7 +1222,7 @@ impl<'a> Parser<'a> {
             let (names, mark) = self.group_names(n)?;
             for (t, name) in names {
                 self.group_type(mark);
-                self.parse_ctx_field(t, name, before, leading, levels, ctx, uses)?;
+                self.parse_ctx_field(t, name, before, leading, levels, ctx)?;
             }
             if matches!(self.peek_kind()?, Kind::If) {
                 let at = self.peek()?;
@@ -1277,9 +1243,8 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// One `@ctx` field `name: T`, its name `t` read and the cursor on `T`,
-    /// filed by its type as [`Self::parse_ctx_fields`] says.
-    #[allow(clippy::too_many_arguments)]
+    /// One `@ctx` field `name: T`, its name `t` read and the cursor on `T`:
+    /// a level `@l` goes in `levels`, any other field in `ctx`.
     fn parse_ctx_field(
         &mut self,
         t: Token,
@@ -1288,7 +1253,6 @@ impl<'a> Parser<'a> {
         leading: bool,
         levels: &mut Vec<UseField>,
         ctx: &mut Vec<UseField>,
-        uses: &mut Vec<UseField>,
     ) -> Result<()> {
         // `@l if ...`: the `if` ends the fields, never an argument of `@l`.
         let ty = if self.at_intrinsic("l")? && matches!(self.peek_kind_at(1)?, Kind::If) {
@@ -1302,7 +1266,7 @@ impl<'a> Parser<'a> {
             self.parse_type()?
         };
         let span = Span::new(t.span.start, self.last_end);
-        if levels.iter().chain(ctx.iter()).chain(uses.iter()).any(|f| f.name == name) {
+        if levels.iter().chain(ctx.iter()).any(|f| f.name == name) {
             return Err(Diagnostic::error(
                 Code::DuplicateSymbol,
                 t.span,
@@ -1310,7 +1274,7 @@ impl<'a> Parser<'a> {
                 format!("`{name}` is bound twice in this signature"),
             ));
         }
-        let field = UseField { name, ty, before, span, ctx: true };
+        let field = UseField { name, ty, before, span };
         match self.ast.ty(ty) {
             Ty::Con { module: None, name: k } if k.as_str() == "@l" => {
                 if !leading {
@@ -1319,7 +1283,6 @@ impl<'a> Parser<'a> {
                 }
                 levels.push(field);
             }
-            _ if !self.is_sort(ty) => uses.push(UseField { ctx: false, ..field }),
             _ => ctx.push(field),
         }
         Ok(())
@@ -1332,15 +1295,11 @@ impl<'a> Parser<'a> {
         if !(self.at_ctx()? && matches!(self.peek_kind_at(1)?, Kind::LBrace)) {
             return Ok(Vec::new());
         }
-        let (mut levels, mut ctx, mut uses) = (Vec::new(), Vec::new(), Vec::new());
-        self.parse_ctx_fields(0, true, &mut levels, &mut ctx, &mut uses)?;
+        let (mut levels, mut ctx) = (Vec::new(), Vec::new());
+        self.parse_ctx_fields(0, true, &mut levels, &mut ctx)?;
         if let Some(l) = levels.first() {
             return Err(Diagnostic::error(Code::UnexpectedToken, l.span, 0, format!("{what} binds no level"))
                 .with_help(format!("bind `{}` in the declaration's signature", l.name)));
-        }
-        if let Some(u) = uses.first() {
-            return Err(Diagnostic::error(Code::UnexpectedToken, u.span, 0, format!("{what} takes no instance"))
-                .with_note("its `@ctx` binds what unification solves: types, sizes and rows"));
         }
         self.binder_arrow("@ctx")?;
         Ok(ctx)
@@ -1458,27 +1417,24 @@ impl<'a> Parser<'a> {
     }
 
     /// The body of a definition, with the parameters its signature binds made
-    /// explicit: the instance fields, then the leading run of parameters that
-    /// bind by name ([`Self::named_binding`]). The written lambdas bind the rest,
-    /// left to right, so which parameter a lambda binds is read off the
-    /// signature alone (#437).
+    /// explicit: the leading run of parameters that bind by name
+    /// ([`Self::named_binding`]). The written lambdas bind the rest, left to
+    /// right, so which parameter a lambda binds is read off the signature alone
+    /// (#437). The instance fields are the checker's to bind, once it knows
+    /// which `@ctx` fields they are.
     fn bind_signature(&mut self, sig: Aol<Ty>, body: Aol<Expr>) -> Aol<Expr> {
         if matches!(self.ast.expr(body), Expr::Extern { .. } | Expr::Builtin) {
             return body;
         }
-        let mut cur = match (self.ast.use_params.get(sig).is_some(), self.ast.ty(sig)) {
-            (true, Ty::Arrow { to, .. }) => *to,
-            _ => sig,
-        };
+        let mut cur = sig;
         let mut pats = Vec::new();
         while let &Ty::Arrow { from, to, .. } = self.ast.ty(cur) {
             let Some(pat) = self.named_binding(cur, from) else { break };
             pats.push(LamParam { pat, sig: None });
             cur = to;
         }
-        let added = pats.len() as u32 + u32::from(self.ast.use_params.get(sig).is_some());
+        let added = pats.len() as u32;
         let body = self.prepend_params(pats, body);
-        let body = self.bind_uses(sig, body);
         if added > 0 {
             self.ast.sig_bound.insert(body, added);
         }
@@ -1532,40 +1488,6 @@ impl<'a> Parser<'a> {
             self.ast.expr_spans.insert(node, span);
         }
         node
-    }
-
-    /// The body of a definition whose signature declares instance fields: the
-    /// fields are bound by name, as the context parameter's pattern, ahead of the
-    /// parameters the body's lambda declares (`\x y => e` becomes
-    /// `\d x y => e`, and with several fields `\{a, b} x y => e`).
-    fn bind_uses(&mut self, sig: Aol<Ty>, body: Aol<Expr>) -> Aol<Expr> {
-        let Some(fields) = self.ast.use_params.get(sig).copied() else {
-            return body;
-        };
-        let fields = self.ast.slice(fields).to_vec();
-        let pat = match fields.as_slice() {
-            [one] => self.pat(Pattern::Var(one.name)),
-            many => {
-                let parts: Vec<Aol<Pattern>> = many.iter().map(|f| self.pat(Pattern::Var(f.name))).collect();
-                let parts = self.ast.make_slice(parts);
-                self.pat(Pattern::Tuple(parts))
-            }
-        };
-        self.prepend_params(vec![LamParam { pat, sig: None }], body)
-    }
-
-    /// Whether a `@ctx` field's type is a sort, which unification solves:
-    /// `@Type`, `@Type n`, `@Nat`, `@Row`, `@Effect`, `@Class` or a level `@l`.
-    /// A field of any other type is an instance, found by search.
-    fn is_sort(&self, ty: Aol<Ty>) -> bool {
-        let sort = |t: &Ty| {
-            matches!(t, Ty::Con { module: None, name }
-                if matches!(name.as_str(), "@Type" | "@Nat" | "@Row" | "@Effect" | "@Class" | "@l"))
-        };
-        match self.ast.ty(ty) {
-            Ty::App(head, _) => sort(self.ast.ty(*head)),
-            t => sort(t),
-        }
     }
 
     /// Is the next token the `@ctx` keyword?

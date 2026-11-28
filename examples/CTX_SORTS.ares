@@ -1,0 +1,55 @@
+$ @mod CTX_SORTS
+
+# \file CTX_SORTS.ares
+# \info What a `@ctx` field is follows from its type, read through the
+#       type-level globals at its head (#590): a field whose type is a sort,
+#       written or named by a global, binds a variable unification solves;
+#       any other field is an instance, found by search, or a proposition,
+#       proved at each use.
+
+$ @import ARESxALGO
+
+# Globals standing for sorts.
+$ Ty : @Type 2 = @Type
+$ Size : @Type 1 = @Nat
+
+$ ident : @ctx { t: Ty } -> t -> t = \x => x
+
+$ size_of : @ctx { n: Size, a: Ty } -> @Tensor n a -> @Nat = \_ => n
+
+$ apply : @ctx { a b: Ty, e: @Row } -> (a -> <e> b) -> a -> <e> b = \f x => f x
+
+# A class reached through a type-level function is still an instance field.
+$ OrdOf : @Type -> @Type = \t => IOrd t
+
+$ smaller : @ctx { t: Ty, d: OrdOf t } -> t -> t -> t = \a b => if a < b => a else b
+
+# Several instance fields travel together, whatever sorts stand between them.
+$ least_or_zero : @ctx { t: Ty, o: IOrd t, n: Size, z: IZero t } -> @Tensor n t -> t -> t = \_ x =>
+    if n == 0 => z.zero else smaller x z.zero
+
+# A proposition reached through a type-level function is proved at each use.
+$ Pos : (n: @Nat) -> @Type 0 = 0 < n
+
+$ pred : @ctx { n: Size, ok: Pos n } -> @Nat = n - 1
+
+$ v : @Tensor 3 @Int = [4, 5, 6]
+
+$ test : @Int =
+    if ident 7 != 7 =>
+        1
+    else if ident @ctx { .t = @Int } 8 != 8 =>
+        2
+    else if size_of v != 3 =>
+        3
+    else if apply (\x => x * 2) 21 != 42 =>
+        4
+    else if smaller 3 4 != 3 =>
+        5
+    else if least_or_zero v 4 != 0 =>
+        6
+    else if pred @ctx { .n = 3 } != 2 =>
+        7
+    else
+        0
+$ !assert (test == 0) "CTX_SORTS: a check failed"

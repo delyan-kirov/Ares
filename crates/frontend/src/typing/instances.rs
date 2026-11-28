@@ -28,21 +28,11 @@ impl<'a> Checker<'a> {
     /// Elaborate a signature into the type callers see and, when it has
     /// instance fields, the context parameter that carries them. Both are generalized together (as
     /// one tuple) so a variable they share becomes the same `Generic` in each.
-    pub(super) fn scheme_and_ctx(&mut self, sig: Aol<Ty>, has_ctx: bool) -> (Type, Option<Type>) {
+    pub(super) fn scheme_and_ctx(&mut self, sig: Aol<Ty>) -> (Type, Option<Type>) {
         self.unifier.enter_level();
         let mut tvars = self.sig_tvars(sig);
-        let full = self.ty_of_ast(sig, &mut tvars);
+        let (ctx, exposed) = self.sig_and_ctx(sig, &mut tvars);
         self.unifier.leave_level();
-        let (ctx, exposed) = if has_ctx {
-            match self.unifier.types.node(full) {
-                TypeNode::Arrow(from, to, _) => (Some(from), to),
-                // A context signature is built as an arrow by the parser; an alias
-                // could still hide one, in which case there is nothing to strip.
-                _ => (None, full),
-            }
-        } else {
-            (None, full)
-        };
         let items: Vec<Type> = std::iter::once(exposed).chain(ctx).collect();
         let bundle = self.unifier.types.tuple(items);
         self.unifier.generalize(bundle);
@@ -60,10 +50,9 @@ impl<'a> Checker<'a> {
     /// `Ito_string t -> t -> @Str` ties the requirement to the argument.
     pub(super) fn ctx_use_type(&mut self, sig: Aol<Ty>) -> (Type, Type) {
         let mut tvars = self.sig_tvars(sig);
-        let full = self.ty_of_ast(sig, &mut tvars);
-        match self.unifier.types.node(full) {
-            TypeNode::Arrow(from, to, _) => (from, to),
-            _ => (full, full),
+        match self.sig_and_ctx(sig, &mut tvars) {
+            (Some(ctx), exposed) => (ctx, exposed),
+            (None, exposed) => (exposed, exposed),
         }
     }
 
@@ -79,29 +68,16 @@ impl<'a> Checker<'a> {
     /// type would turn the search into "any value of this type in scope", which
     /// is never what is meant; the error belongs at the declaration rather than
     /// at every call site.
-    pub(super) fn check_ctx_head(&mut self, name: StrId, ctx: Aol<Ty>, sig: Aol<Ty>) -> Result<()> {
-        let fields: Vec<UseField> = match self.ast.use_params.get(sig) {
-            Some(fs) => self.ast.slice(*fs).to_vec(),
-            None => Vec::new(),
-        };
+    pub(super) fn check_ctx_head(&mut self, name: StrId, sig: Aol<Ty>) -> Result<()> {
         let mut tvars = self.sig_tvars(sig);
-        let ty = self.ty_of_ast(ctx, &mut tvars);
-        let zonked = self.unifier.zonk(ty);
-        // A bundle of several contexts travels as a tuple; each component carries
-        // the same requirement.
-        let parts = match self.unifier.types.node(zonked) {
-            TypeNode::Tuple(items) if fields.len() > 1 => self.unifier.types.items(items).to_vec(),
-            _ => vec![zonked],
-        };
-        for (i, part) in parts.into_iter().enumerate() {
+        for f in self.use_fields(sig) {
             // An unspliced `!` stands as a fresh variable until expansion.
-            if fields.get(i).is_some_and(|f| matches!(self.ast.ty(f.ty), Ty::MetaE(_))) {
+            if matches!(self.ast.ty(f.ty), Ty::MetaE(_)) {
                 continue;
             }
-            let (field, span, written) = match fields.get(i) {
-                Some(f) => (format!("`{}`", f.name), f.span, self.ast.ty_source(f.ty)),
-                None => ("a field".to_string(), self.ast.ty_span(ctx).unwrap_or_else(|| Span::at(0)), None),
-            };
+            let ty = self.ty_of_ast(f.ty, &mut tvars);
+            let part = self.unifier.zonk(ty);
+            let (field, span, written) = (format!("`{}`", f.name), f.span, self.ast.ty_source(f.ty));
             // A proposition field is proved at each use, not searched for.
             if self.is_prop(part) {
                 continue;
@@ -129,17 +105,10 @@ impl<'a> Checker<'a> {
     /// [`CTX_DEPTH`] is only a backstop.
     pub(super) fn check_instance_terminates(&mut self, name: StrId, sig: Aol<Ty>, exposed: Type, ctx: Option<Type>) {
         let Some(ctx) = ctx else { return };
-        let fields: Vec<UseField> = match self.ast.use_params.get(sig) {
-            Some(fs) => self.ast.slice(*fs).to_vec(),
-            None => return,
-        };
+        let fields = self.use_fields(sig);
         let (mut head_size, mut head_occ) = (0, HashMap::new());
         self.paterson_measure(exposed, &mut head_size, &mut head_occ);
-        let provided = match self.ast.ty(sig) {
-            Ty::Arrow { to, .. } => self.ast.ty_source(*to),
-            _ => None,
-        };
-        let provided = provided.unwrap_or_else(|| self.show(self.unifier.zonk(exposed)));
+        let provided = self.ast.ty_source(sig).unwrap_or_else(|| self.show(self.unifier.zonk(exposed)));
         let ctx = self.unifier.zonk(ctx);
         let parts = match self.unifier.types.node(ctx) {
             TypeNode::Tuple(items) if fields.len() > 1 => self.unifier.types.items(items).to_vec(),
@@ -296,10 +265,10 @@ impl<'a> Checker<'a> {
         given: Option<Vec<UseOverride>>,
     ) -> Option<Vec<UseOverride>> {
         let given = given?;
-        let Some(fields) = uses.and_then(|s| self.ast.use_params.get(s).copied()) else {
+        let Some(sig) = uses else {
             return Some(given);
         };
-        let names: Vec<StrId> = self.ast.slice(fields).iter().map(|f| f.name).collect();
+        let names: Vec<StrId> = self.use_fields(sig).iter().map(|f| f.name).collect();
         let (mut rest, mut found) = (Vec::new(), Vec::new());
         for u in given {
             let (mut ctx, mut inst) = (Vec::new(), Vec::new());
@@ -356,11 +325,9 @@ impl<'a> Checker<'a> {
             Some(fs) => self.ast.slice(*fs).to_vec(),
             None => Vec::new(),
         };
-        if let Some(fs) = self.ast.ctx_params.get(sig) {
-            fields.extend(self.ast.slice(*fs).iter().copied());
-        }
+        fields.extend(self.sort_fields(sig));
         let mut tvars = self.sig_tvars(sig);
-        let full = self.ty_of_ast(sig, &mut tvars);
+        let (req, full) = self.sig_and_ctx(sig, &mut tvars);
         // See Note [Context schemes].
         if let Some(&scheme) = self.ctx_schemes.get(&sig) {
             let inst = self.unifier.instantiate(scheme);
@@ -368,10 +335,7 @@ impl<'a> Checker<'a> {
                 unreachable!("a context scheme is a tuple")
             };
             let items = self.unifier.types.items(items).to_vec();
-            let exposed = match (uses, self.unifier.types.node(full)) {
-                (true, TypeNode::Arrow(_, to, _)) => to,
-                _ => full,
-            };
+            let exposed = full;
             let where_ = format!("against the signature of `{name}`");
             self.unifier.pair_labels(items[0], exposed)?;
             self.unifier.unify(items[0], exposed, &where_)?;
@@ -387,7 +351,7 @@ impl<'a> Checker<'a> {
                 let FieldInit::Named { name: f, value } = init else { continue };
                 let span = self.ast.expr_span(value).or(self.ast.expr_span(u.site)).unwrap_or(Span::at(0));
                 let Some(field) = fields.iter().find(|x| x.name == f).copied() else {
-                    let uses = self.ast.use_params.get(sig).map(|fs| self.ast.slice(*fs).to_vec()).unwrap_or_default();
+                    let uses = self.use_fields(sig);
                     let known: Vec<&str> = fields.iter().chain(&uses).map(|x| x.name.as_str()).collect();
                     let mut d = diag!(Code::TypeMismatch, span, 0, "`{name}` has no `@ctx` field `{f}`");
                     if let Some(c) = utilities::error::closest(f.as_str(), known.iter().copied()) {
@@ -436,13 +400,10 @@ impl<'a> Checker<'a> {
             }
         }
         self.note_size_use(site, name, sig, &tvars);
-        if !uses {
-            return Ok(full);
-        }
-        match self.unifier.types.node(full) {
-            TypeNode::Arrow(req, exposed, _) => {
+        match req {
+            Some(req) if uses => {
                 self.plan_ctx(site, name, req, Some(sig))?;
-                Ok(exposed)
+                Ok(full)
             }
             _ => Ok(full),
         }
@@ -452,14 +413,13 @@ impl<'a> Checker<'a> {
     /// order its context scheme lists them. See Note [Context schemes].
     pub(super) fn ctx_scheme_names(&self, sig: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Vec<StrId> {
         let levels = self.ast.level_params.get(sig).map(|fs| self.ast.slice(*fs)).unwrap_or(&[]);
-        let fields = self.ast.ctx_params.get(sig).map(|fs| self.ast.slice(*fs)).unwrap_or(&[]);
-        levels.iter().chain(fields).map(|f| f.name).filter(|n| tvars.contains_key(n)).collect()
+        levels.iter().copied().chain(self.sort_fields(sig)).map(|f| f.name).filter(|n| tvars.contains_key(n)).collect()
     }
 
     /// The variables a context scheme lists after the exposed type, for a
     /// signature with a `@ctx` that binds levels or fields.
     pub(super) fn ctx_scheme_items(&self, sig: Aol<Ty>, tvars: &HashMap<StrId, Type>) -> Option<Vec<Type>> {
-        if self.ast.level_params.get(sig).is_none() && self.ast.ctx_params.get(sig).is_none() {
+        if self.ast.level_params.get(sig).is_none() && self.sort_fields(sig).is_empty() {
             return None;
         }
         Some(self.ctx_scheme_names(sig, tvars).iter().map(|n| tvars[n]).collect())
@@ -517,10 +477,7 @@ impl<'a> Checker<'a> {
         sig: Option<Aol<Ty>>,
         uses: &[UseOverride],
     ) -> Result<Vec<(usize, Aol<Expr>)>> {
-        let fields: Vec<UseField> = match sig.and_then(|s| self.ast.use_params.get(s).copied()) {
-            Some(fs) => self.ast.slice(fs).to_vec(),
-            None => Vec::new(),
-        };
+        let fields: Vec<UseField> = sig.map(|s| self.use_fields(s)).unwrap_or_default();
         let parts = self.bundle_items(req);
         let mut out: Vec<(usize, Aol<Expr>)> = Vec::new();
         for u in uses {
@@ -1091,10 +1048,8 @@ impl<'a> Checker<'a> {
     /// diagnostic's suggested explicit argument; `field` when it cannot tell.
     fn use_field_hint(&self, fname: StrId, req: Type) -> String {
         let sig = self.global_ctx.get(&fname).copied();
-        let fields: Vec<UseField> = match sig.and_then(|s| self.ast.use_params.get(s).copied()) {
-            Some(fs) => self.ast.slice(fs).to_vec(),
-            None => return "field".to_string(),
-        };
+        let Some(sig) = sig else { return "field".to_string() };
+        let fields = self.use_fields(sig);
         let want = self.ctx_head(self.unifier.zonk(req));
         let hits: Vec<&UseField> = fields
             .iter()
@@ -1110,8 +1065,7 @@ impl<'a> Checker<'a> {
     /// The name of `fname`'s instance field at position `i` of its bundle.
     fn use_field_at(&self, fname: StrId, i: usize) -> Option<StrId> {
         let sig = self.global_ctx.get(&fname).copied()?;
-        let fields = self.ast.use_params.get(sig).copied()?;
-        self.ast.slice(fields).get(i).map(|f| f.name)
+        self.use_fields(sig).get(i).map(|f| f.name)
     }
 
     /// The constructor a written type is headed by: `IOrd` in `IOrd t`.
@@ -1542,23 +1496,30 @@ pub(super) const CTX_DEPTH: usize = 32;
 
 // ## Interface wrappers
 
-/// The field an interface wrapper projects: `body` must be exactly
-/// `\d p1 .. pn => d.field p1 .. pn`, with `d` and the parameters distinct variable
-/// patterns applied in order. Anything else (`neg`'s `ds.0.sub ds.1.zero x`, a
-/// wrapper that reorders or transforms) returns `None`.
-pub(super) fn wrapper_field(ast: &Ast, body: Aol<Expr>) -> Option<StrId> {
-    let Expr::Lambda { params, body } = ast.expr(body) else {
-        return None;
+/// The field an interface wrapper projects: `body`, of a definition whose one
+/// instance field is `ctx`, must be exactly `\p1 .. pn => ctx.field p1 .. pn`
+/// (or `ctx.field`), with the parameters distinct variable patterns applied in
+/// order. Anything else (`neg`'s `ds.0.sub ds.1.zero x`, a wrapper that
+/// reorders or transforms) returns `None`.
+pub(super) fn wrapper_field(ast: &Ast, ctx: StrId, body: Aol<Expr>) -> Option<StrId> {
+    let (rest, body) = match ast.expr(body) {
+        Expr::Lambda { params, body } => {
+            let names = ast
+                .slice(*params)
+                .iter()
+                .map(|p| match ast.pat(p.pat) {
+                    Pattern::Var(n) => Some(*n),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            (names, *body)
+        }
+        _ => (Vec::new(), body),
     };
-    let params = ast.slice(*params);
-    let names: Vec<StrId> = params
-        .iter()
-        .map(|p| match ast.pat(p.pat) {
-            Pattern::Var(n) => Some(*n),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let (ctx, rest) = names.split_first()?;
+    if rest.contains(&ctx) {
+        return None;
+    }
+    let (ctx, rest, body) = (&ctx, rest.as_slice(), &body);
     // Peel the applications off the spine; they must be the parameters in order.
     let mut args = Vec::new();
     let mut head = *body;

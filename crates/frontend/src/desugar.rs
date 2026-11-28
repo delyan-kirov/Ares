@@ -104,15 +104,16 @@ pub fn desugar_program(
                 globals.push((*name, term));
             }
             Item::Def {
-                name, sig, ctx, body,
+                name, sig, body,
             } => {
                 if let Some(sig) = sig {
                     lw.collect_meta_types(*sig);
                 }
                 let term = lw.watched(*name, |lw| lw.expr(*body));
+                let term = lw.use_params(*body, term);
                 let term = lw.size_params(*body, term);
                 globals.push((*name, term));
-                if ctx.is_some() {
+                if lw.resolved.use_params.contains_key(body) {
                     ctx_globals.push(*name);
                 }
             }
@@ -908,6 +909,27 @@ impl<'a> Desugarer<'a> {
         };
         let arg = self.ctx_term(&val);
         self.app(base, arg)
+    }
+
+    /// A definition's body with its instance fields bound ahead of its own
+    /// parameters, as one context parameter: the field itself, or the tuple
+    /// of several (`\x y => e` becomes `\d x y => e`, and with fields `a` and
+    /// `b`, `\c x y => let a = c.0 in let b = c.1 in e`).
+    fn use_params(&mut self, body: Aol<Expr>, term: Aol<Term>) -> Aol<Term> {
+        let Some(fields) = self.resolved.use_params.get(&body).cloned() else {
+            return term;
+        };
+        if let [one] = fields.as_slice() {
+            return self.terms.lam(*one, term);
+        }
+        let bundle = self.fresh();
+        let mut term = term;
+        for (i, f) in fields.iter().enumerate().rev() {
+            let whole = self.var(bundle);
+            let part = self.field(whole, i.to_string());
+            term = self.terms.let_(*f, part, term);
+        }
+        self.terms.lam(bundle, term)
     }
 
     /// A definition's body with the `@Nat` fields it takes at run time bound

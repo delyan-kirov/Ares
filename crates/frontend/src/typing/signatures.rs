@@ -273,8 +273,14 @@ impl<'a> Checker<'a> {
     /// annotation inside a body.
     pub(super) fn ty_reporting(&mut self, ty: Aol<Ty>, tvars: &mut HashMap<StrId, Type>, sig: Option<Aol<Ty>>) -> Type {
         let saved = std::mem::replace(&mut self.free_names, FreeNames::Report);
-        let t = self.ty_of_ast(ty, tvars);
+        let (ctx, t) = match sig {
+            Some(s) if s == ty => self.sig_and_ctx(s, tvars),
+            _ => (None, self.ty_of_ast(ty, tvars)),
+        };
         self.free_names = saved;
+        if let Some(ctx) = ctx {
+            self.mark_sizes(ctx);
+        }
         self.mark_sizes(t);
         self.report_unbound(sig);
         if let Some(sig) = sig {
@@ -392,9 +398,6 @@ impl<'a> Checker<'a> {
                 bound.extend(self.ast.slice(*fs).iter().copied());
             }
         }
-        if let Some(fs) = self.ast.use_params.get(sig) {
-            bound.extend(self.ast.slice(*fs).iter().copied());
-        }
         let leading = bound.iter().filter(|f| f.before == 0).map(|f| f.span.end).max();
         match leading {
             Some(end) => Some(Edit::new(Span::at(end), format!(", {}", fields.join(", ")))),
@@ -409,8 +412,7 @@ impl<'a> Checker<'a> {
     /// binds a type, a size or a row, or with `labels` (a global's signature)
     /// an effect.
     pub(super) fn check_ctx_fields(&mut self, sig: Aol<Ty>, labels: bool) {
-        let Some(fields) = self.ast.ctx_params.get(sig).copied() else { return };
-        for f in self.ast.slice(fields).to_vec() {
+        for f in self.sort_fields(sig) {
             if self.kind_of_ast(f.ty).is_some() {
                 continue;
             }

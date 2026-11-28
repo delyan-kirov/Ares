@@ -38,7 +38,13 @@ type is the arrow without the context, so `to_string 1` is a complete call.
 | --- | --- |
 | `@Type`, `@Nat`, `@Row`, levels `@l` | unification |
 | `@Class` | instance search |
-| `@Type 0` (propositions) | a decision procedure (#540, not yet) |
+| `@Type 0` (propositions) | a decision procedure (#540) |
+
+The sort is read by the checker, with the type-level globals at the head of
+the field's type unfolded (#590): after `$ Ty : @Type 2 = @Type`, `t: Ty` is
+solved by unification, and `d: OrdOf t` with `$ OrdOf : @Type -> @Type = \t =>
+IOrd t` is an instance field. The parser files every field but the levels
+together, in the order written.
 
 `@Class` is an elaborator sort. Past the search a dictionary is a record, so the
 kernel sees `@Type`: no kernel rule, ledger row or Lean change goes with it.
@@ -107,11 +113,12 @@ Five diagnostics, each with its own escape:
 
 ## Elaboration
 
-The parser gathers a signature's instance fields into one leading parameter and
-binds them by name ahead of the body's own parameters (`\x y => e` becomes
-`\d x y => e`, or `\{o, s, z} x => e` for several fields). `Desugarer::def`
-then treats it as an ordinary first parameter, and every use site injects the
-resolved value as a leading argument (`apply_ctx`). A resolved
+The checker gathers a signature's instance fields (`typing/ctx_fields.rs`) into
+one leading parameter, the field's type or the tuple of several, and binds
+them by name in the body's scope. Lowering binds that parameter ahead of the
+body's own (`\x y => e` becomes `\d x y => e`, or with several fields
+`\c x y => let o = c.0 in ...`; `Desugarer::use_params`), and every use site
+injects the resolved value as a leading argument (`apply_ctx`). A resolved
 context is a `CtxVal`: a bare local name, a qualified global, an instance applied to
 the context resolved for it, a tuple built here, a projection out of a bundle
 already in scope, or an explicit expression. The backends need no support at all.

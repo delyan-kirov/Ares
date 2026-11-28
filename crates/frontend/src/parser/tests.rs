@@ -1063,7 +1063,7 @@ fn grouped_field_binders_expand_to_one_field_per_name() {
     let Item::Def { sig: Some(sig), .. } = p.ast.slice(p.program.items)[0] else { panic!("expected a def") };
     let ctx = p.ast.slice(*p.ast.ctx_params.get(sig).expect("the `@ctx` fields"));
     let names: Vec<&str> = ctx.iter().map(|f| p.ast.text(f.name)).collect();
-    assert_eq!(names, ["a", "b"]);
+    assert_eq!(names, ["a", "b", "o"], "every field but a level, in the order written");
     assert_ne!(ctx[0].ty, ctx[1].ty, "each name parses the group's type afresh");
 
     let fields = |src: &str| {

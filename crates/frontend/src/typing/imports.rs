@@ -361,8 +361,12 @@ impl<'a> Checker<'a> {
             }
         }
         roots.extend(other.aliases.values().map(|(_, t)| *t));
-        roots.extend(other.own_ctx.iter().map(|(_, t)| *t));
-        roots.extend(other.own_ctx_sigs.iter().map(|(_, t)| *t));
+        for &(_, sig) in other.own_ctx.iter().chain(&other.own_ctx_sigs) {
+            roots.push(sig);
+            if let Some(fields) = self.ast.ctx_params.get(sig) {
+                roots.extend(self.ast.slice(*fields).iter().map(|f| f.ty));
+            }
+        }
         for root in roots {
             collect_ty_nodes(self.ast, root, &mut self.foreign_tys);
         }
